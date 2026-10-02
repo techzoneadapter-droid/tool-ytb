@@ -69,6 +69,14 @@ type Store = {
   hasKey: boolean;
   providers?: Awaited<ReturnType<typeof providerStatus>>;
 };
+const defaultDraft: Settings = {
+  ...defaults,
+  ttsProvider: "vieneu-local",
+  voice: "ngoc_huyen",
+  imageEnabled: true,
+  imageProvider: "flux2-local",
+  motionMode: "off",
+};
 const url = (name?: string) => (name ? `/api/files/${name}` : "");
 export default function Studio() {
   const [data, setData] = useState<Store>({
@@ -77,18 +85,19 @@ export default function Studio() {
     presets: [],
     hasKey: false,
   });
-  const [page, setPage] = useState("Tổng quan");
+  const [page, setPage] = useState("Tạo video");
   const [pid, setPid] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [chapterId, setChapterId] = useState("");
   const [modal, setModal] = useState(false);
   const [name, setName] = useState("");
   const [text, setText] = useState("");
+  const [splitChapters, setSplitChapters] = useState(true);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [merge, setMerge] = useState(false);
   const [channel, setChannel] = useState("YouTube");
-  const [draft, setDraft] = useState<Settings>(defaults);
+  const [draft, setDraft] = useState<Settings>(defaultDraft);
   const [sceneDraft, setSceneDraft] = useState<Scene | null>(null);
   const [previews, setPreviews] = useState<
     Record<string, { file?: string; error?: string; busy?: boolean }>
@@ -197,6 +206,38 @@ export default function Studio() {
       return null;
     } finally {
       setBusy(false);
+    }
+  }
+  function currentSettings(): Settings {
+    return {
+      ...defaultDraft,
+      ...draft,
+      ttsProvider: draft.ttsProvider || "vieneu-local",
+      voice: draft.voice || "ngoc_huyen",
+      imageEnabled: draft.imageEnabled !== false,
+      imageProvider: draft.imageProvider || "flux2-local",
+      motionMode: draft.motionMode || "off",
+    };
+  }
+  async function createStoryProject() {
+    const p = (await action(
+      {
+        action: "create",
+        name,
+        text,
+        splitChapters,
+        settings: currentSettings(),
+      },
+      splitChapters
+        ? "Đã tạo dự án và tách chương."
+        : "Đã tạo dự án một chương.",
+    )) as Project | null;
+    if (p) {
+      setModal(false);
+      setName("");
+      setText("");
+      setSplitChapters(true);
+      openProject(p);
     }
   }
   async function upload(file: File) {
@@ -369,8 +410,42 @@ export default function Studio() {
               s.imageStatus !== "working",
           ),
       );
-  function jobsView(limit?: number) {
-    const jobs = limit ? data.jobs.slice(0, limit) : data.jobs;
+  const voiceOptions =
+    data.providers?.voices && data.providers.voices.length
+      ? [...data.providers.voices].sort(
+          (a, b) =>
+            Number(b.provider === "vieneu-local") -
+            Number(a.provider === "vieneu-local"),
+        )
+      : [
+          {
+            id: "ngoc_huyen",
+            name: "Ngọc Huyền",
+            description: "VieNeu-TTS local, giọng ưu tiên cho sách nói.",
+            gender: "Nữ" as const,
+            categories: ["Sách nói", "Kể chuyện"],
+            provider: "vieneu-local" as const,
+            key: "vieneu-local:ngoc_huyen",
+            configured: false,
+            voiceId: "Ngọc Huyền",
+            status: "Đang chờ kiểm tra VieNeu-TTS local",
+          },
+        ];
+  const selectedVoiceKey = `${draft.ttsProvider || "vieneu-local"}:${draft.voice}`;
+  const selectedVoice =
+    voiceOptions.find((v) => v.key === selectedVoiceKey) || voiceOptions[0];
+  const latestOutputJob = [...data.jobs]
+    .filter((j) => j.output && (!project || j.projectId === project.id))
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    )[0];
+  const projectJobs = project
+    ? data.jobs.filter((j) => j.projectId === project.id)
+    : data.jobs;
+  const showCommandCenter = page === "Tổng quan" || page === "Tạo video";
+  function jobsView(limit?: number, source = data.jobs) {
+    const jobs = limit ? source.slice(0, limit) : source;
     return jobs.length ? (
       <div className="job-list">
         {jobs.map((j) => (
@@ -466,9 +541,13 @@ export default function Studio() {
     );
   }
   const needsProject =
-    !["Tổng quan", "Dự án truyện", "Quản lý kênh", "Xuất video"].includes(
-      page,
-    ) && !project;
+    ![
+      "Tổng quan",
+      "Dự án truyện",
+      "Tạo video",
+      "Quản lý kênh",
+      "Xuất video",
+    ].includes(page) && !project;
   return (
     <div className="app">
       <aside>
@@ -547,6 +626,358 @@ export default function Studio() {
               <Plus size={18} /> Tạo dự án mới
             </button>
           </div>
+          {showCommandCenter && (
+            <section className="panel command-center">
+              <div className="command-title">
+                <div>
+                  <span className="badge">Bảng điều khiển chính</span>
+                  <h2>Làm video truyện trong một màn hình</h2>
+                  <p className="muted">
+                    Dán truyện, chọn giọng, bật ảnh/phụ đề rồi chạy từng bước.
+                    Ảnh động tắt mặc định để video dài nhẹ hơn.
+                  </p>
+                </div>
+                <div className="command-status">
+                  <span>{data.projects.length} dự án</span>
+                  <span>{active.length} tác vụ đang chạy</span>
+                  <span>{done} video đã xuất</span>
+                </div>
+              </div>
+              <div className="command-layout">
+                <div className="quick-story">
+                  {data.projects.length > 0 && (
+                    <label>
+                      Dự án đang chọn
+                      <select
+                        value={project?.id || ""}
+                        onChange={(e) => {
+                          setPid(e.target.value);
+                          const next = data.projects.find(
+                            (p) => p.id === e.target.value,
+                          );
+                          if (next) {
+                            setDraft(next.settings);
+                            setSelected(next.chapters.map((c) => c.id));
+                            setChapterId(next.chapters[0]?.id || "");
+                          }
+                        }}
+                      >
+                        {data.projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <label>
+                    Tên truyện / dự án mới
+                    <input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="Ví dụ: Phàm Nhân Tu Tiên chương 1-50"
+                    />
+                  </label>
+                  <label className="upload-box compact-upload">
+                    <Upload size={22} />
+                    <strong>Tải TXT/DOCX hoặc dán truyện bên dưới</strong>
+                    <span>Nội dung tải lên sẽ tự điền vào ô truyện</span>
+                    <input
+                      type="file"
+                      accept=".txt,.docx"
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (f) {
+                          setBusy(true);
+                          try {
+                            const d = await upload(f);
+                            setText(d.text);
+                            if (!name) setName(f.name.replace(/\.[^.]+$/, ""));
+                          } catch (e) {
+                            setFormError(
+                              e instanceof Error
+                                ? e.message
+                                : "Không đọc được tệp truyện. Vui lòng thử lại.",
+                            );
+                          } finally {
+                            setBusy(false);
+                          }
+                        }
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Toàn bộ câu chuyện
+                    <textarea
+                      rows={11}
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                      placeholder={
+                        "Chương 1: Khởi đầu\nDán toàn bộ truyện ở đây...\n\nChương 2: Tiếp diễn..."
+                      }
+                    />
+                  </label>
+                  <div className="quick-toggles">
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={splitChapters}
+                        onChange={(e) => setSplitChapters(e.target.checked)}
+                      />{" "}
+                      Tự tách chương
+                    </label>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={draft.imageEnabled !== false}
+                        onChange={(e) =>
+                          field("imageEnabled", e.target.checked)
+                        }
+                      />{" "}
+                      Tạo ảnh minh họa
+                    </label>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={draft.burnSubtitles}
+                        onChange={(e) =>
+                          field("burnSubtitles", e.target.checked)
+                        }
+                      />{" "}
+                      Thêm phụ đề
+                    </label>
+                  </div>
+                  <button
+                    className="primary wide"
+                    disabled={busy}
+                    onClick={createStoryProject}
+                  >
+                    {busy ? "Đang tạo dự án..." : "Tạo dự án từ truyện"}
+                    <ArrowRight size={17} />
+                  </button>
+                  {formError && (
+                    <div className="form-error" role="alert">
+                      {formError}
+                    </div>
+                  )}
+                </div>
+                <div className="quick-settings">
+                  <div className="quick-grid">
+                    <label>
+                      Giọng đọc
+                      <select
+                        value={selectedVoiceKey}
+                        onChange={(e) => {
+                          const [provider, voice] = e.target.value.split(":");
+                          setDraft((p) => ({
+                            ...p,
+                            ttsProvider:
+                              provider as import("@/modules/tts/local-voices").TTSProvider,
+                            voice,
+                          }));
+                        }}
+                      >
+                        {voiceOptions.map((v) => (
+                          <option key={v.key} value={v.key}>
+                            {v.name} -{" "}
+                            {v.provider === "vieneu-local"
+                              ? "VieNeu local"
+                              : v.provider === "korva-local"
+                                ? "Korva local"
+                                : "API"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Phong cách ảnh
+                      <select
+                        value={draft.style}
+                        onChange={(e) => field("style", e.target.value)}
+                      >
+                        {styles.map((s) => (
+                          <option key={s}>{s}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Tỉ lệ video
+                      <select
+                        value={draft.aspect}
+                        onChange={(e) =>
+                          field("aspect", e.target.value as Settings["aspect"])
+                        }
+                      >
+                        <option>16:9</option>
+                        <option>9:16</option>
+                      </select>
+                    </label>
+                    <label>
+                      Ảnh động
+                      <select
+                        value={draft.motionMode || "off"}
+                        onChange={(e) =>
+                          field(
+                            "motionMode",
+                            e.target.value as Settings["motionMode"],
+                          )
+                        }
+                      >
+                        <option value="off">Tắt cho video dài</option>
+                        <option value="selected">Chỉ cảnh đã chọn</option>
+                        <option value="all">Tất cả cảnh</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label>
+                    Mô tả phong cách bổ sung
+                    <textarea
+                      rows={3}
+                      value={draft.customPrompt}
+                      onChange={(e) => field("customPrompt", e.target.value)}
+                      placeholder="Ví dụ: tu tiên, tiên hiệp, linh khí, tông môn, cổ trang Trung Hoa, màu điện ảnh..."
+                    />
+                  </label>
+                  <div className="quick-toggles">
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={merge}
+                        onChange={(e) => setMerge(e.target.checked)}
+                      />{" "}
+                      Ghép chương đã chọn thành một video
+                    </label>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={draft.humanCheck}
+                        onChange={(e) => field("humanCheck", e.target.checked)}
+                      />{" "}
+                      Duyệt trước khi xuất
+                    </label>
+                  </div>
+                  <div className="quick-actions">
+                    <button
+                      className="secondary"
+                      disabled={!!previews[selectedVoice.key]?.busy}
+                      onClick={() =>
+                        previewVoice(selectedVoice.id, selectedVoice.provider)
+                      }
+                    >
+                      <Play size={14} />
+                      {previews[selectedVoice.key]?.busy
+                        ? "Đang tạo nghe thử..."
+                        : "Nghe thử giọng"}
+                    </button>
+                    <button
+                      className="secondary"
+                      disabled={!project || busy}
+                      onClick={() => enqueue(true)}
+                    >
+                      <Images size={16} />
+                      Tạo lời đọc & ảnh
+                    </button>
+                    <button
+                      className="primary"
+                      disabled={!project || busy || !renderReady}
+                      onClick={() => enqueue()}
+                    >
+                      <Play size={16} />
+                      Xuất video
+                    </button>
+                  </div>
+                  {previews[selectedVoice.key]?.file && (
+                    <audio
+                      controls
+                      autoPlay
+                      preload="metadata"
+                      src={url(previews[selectedVoice.key].file)}
+                    />
+                  )}
+                  {previews[selectedVoice.key]?.error && (
+                    <p role="alert" className="form-error">
+                      {previews[selectedVoice.key].error}
+                    </p>
+                  )}
+                  <div className="run-summary">
+                    <strong>
+                      {project
+                        ? `${selected.length}/${project.chapters.length} chương đã chọn`
+                        : "Chưa chọn dự án"}
+                    </strong>
+                    <span>{count} cảnh</span>
+                    <span>{charCount.toLocaleString("vi-VN")} ký tự TTS</span>
+                    <span>
+                      ~{Math.max(1, Math.round(charCount / 14 / 60))} phút
+                    </span>
+                  </div>
+                  <div className="notice compact">
+                    <p>
+                      VieNeu:{" "}
+                      {data.providers?.local.vieneu.message ||
+                        "đang chờ kiểm tra"}
+                    </p>
+                    <p>
+                      Ảnh:{" "}
+                      {draft.imageProvider === "flux2-local"
+                        ? "chạy worker FLUX local khi cần tạo ảnh"
+                        : data.providers?.image.configured
+                          ? "API ảnh đã cấu hình"
+                          : "chưa cấu hình API ảnh"}
+                    </p>
+                    <p>
+                      Worker video: mở terminal thứ hai và chạy{" "}
+                      <code>npm run worker</code>.
+                    </p>
+                  </div>
+                  <div className="quick-output">
+                    <div className="section-head">
+                      <h3>Video vừa tạo</h3>
+                      <button
+                        className="text-btn"
+                        onClick={() => setPage("Xuất video")}
+                      >
+                        Xem hàng đợi <ArrowRight size={14} />
+                      </button>
+                    </div>
+                    {latestOutputJob?.output ? (
+                      <>
+                        <video
+                          controls
+                          preload="metadata"
+                          className="output-video"
+                          src={url(latestOutputJob.output)}
+                        />
+                        <div className="row downloads">
+                          <a href={url(latestOutputJob.output)} download>
+                            <Download size={14} /> MP4
+                          </a>
+                          <a href={url(latestOutputJob.srt)} download>
+                            SRT
+                          </a>
+                          <a href={url(latestOutputJob.vtt)} download>
+                            VTT
+                          </a>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="empty compact mini-empty">
+                        <MonitorPlay />
+                        <h3>Chưa có video để xem</h3>
+                        <p>
+                          Sau khi worker xuất xong, MP4 sẽ xuất hiện ngay tại
+                          đây.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {projectJobs.length > 0 && (
+                <div className="command-jobs">{jobsView(3, projectJobs)}</div>
+              )}
+            </section>
+          )}
           {page === "Tổng quan" && (
             <>
               <section className="stats">
@@ -2038,6 +2469,32 @@ export default function Studio() {
             Tự nhận diện tiêu đề chương và dòng kết thúc phần. Nếu không có tiêu
             đề, toàn bộ nội dung được lưu thành một chương.
           </p>
+          <div className="quick-toggles">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={splitChapters}
+                onChange={(e) => setSplitChapters(e.target.checked)}
+              />{" "}
+              Tự tách chương
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={draft.imageEnabled !== false}
+                onChange={(e) => field("imageEnabled", e.target.checked)}
+              />{" "}
+              Tạo ảnh minh họa
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={draft.burnSubtitles}
+                onChange={(e) => field("burnSubtitles", e.target.checked)}
+              />{" "}
+              Thêm phụ đề
+            </label>
+          </div>
           {formError && (
             <div className="form-error" role="alert">
               {formError}
@@ -2046,17 +2503,13 @@ export default function Studio() {
           <button
             className="primary wide"
             disabled={busy}
-            onClick={async () => {
-              const p = await action({ action: "create", name, text });
-              if (p) {
-                setModal(false);
-                setName("");
-                setText("");
-                openProject(p);
-              }
-            }}
+            onClick={createStoryProject}
           >
-            {busy ? "Đang xử lý…" : "Tạo dự án & tách chương"}
+            {busy
+              ? "Đang xử lý…"
+              : splitChapters
+                ? "Tạo dự án & tách chương"
+                : "Tạo dự án một chương"}
             <ArrowRight size={17} />
           </button>
         </Modal>

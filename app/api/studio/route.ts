@@ -57,21 +57,41 @@ export async function POST(req: NextRequest) {
     const b = await req.json();
     if (b.action === "create") {
       const text = storySchema.parse(b.text);
+      const baseSettings = {
+        ...defaults,
+        ttsProvider: defaultTTSProvider(),
+        voice: localVoiceId(
+          process.env.DEFAULT_VIETNAMESE_VOICE || "Ngọc Huyền",
+        ),
+        imageEnabled: true,
+        imageProvider: "flux2-local",
+        motionMode: "off",
+      };
+      const settings = settingsSchema.parse({
+        ...baseSettings,
+        ...(b.settings && typeof b.settings === "object" ? b.settings : {}),
+      });
+      const parsedChapters =
+        b.splitChapters === false
+          ? [{ id: randomUUID(), title: "Chương 1", text, scenes: [] }]
+          : parseChapters(text);
+      const chapters = parsedChapters.map((chapter) => ({
+        ...chapter,
+        scenes: plan(chapter.text, settings.style).map((scene) => ({
+          ...scene,
+          prompt: styledPrompt(
+            scene.text,
+            settings.style,
+            settings.customPrompt,
+          ),
+        })),
+      }));
       const project: Project = {
         id: randomUUID(),
         name: projectNameSchema.parse(b.name),
         createdAt: new Date().toISOString(),
-        chapters: parseChapters(text),
-        settings: {
-          ...defaults,
-          ttsProvider: defaultTTSProvider(),
-          voice: localVoiceId(
-            process.env.DEFAULT_VIETNAMESE_VOICE || "Ngọc Huyền",
-          ),
-          imageEnabled: true,
-          imageProvider: "flux2-local",
-          motionMode: "off",
-        },
+        chapters,
+        settings,
       };
       put("project", project);
       return NextResponse.json(project);

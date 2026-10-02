@@ -1,0 +1,31 @@
+{
+  "name": "storyflow-studio",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "worker": "tsx scripts/worker.ts",
+    "test": "tsx --test tests/core.test.ts"
+  },
+  "dependencies": {
+    "dotenv": "^17.0.0",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.11.0",
+    "next": "^16.2.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "sharp": "^0.35.5",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "prettier": "^3.9.9",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

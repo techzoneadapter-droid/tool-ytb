@@ -1,0 +1,11 @@
+node_modules/
+.next/
+data/
+.env*
+!.env.example
+*.tsbuildinfo
+test-results/
+.tts-venv/
+public/generated/
+.ai-venv/
+workers/__pycache__/

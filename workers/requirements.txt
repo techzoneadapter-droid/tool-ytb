@@ -1,0 +1,9 @@
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+pillow>=11,<13
+accelerate>=1,<2
+transformers>=4.57,<5
+sentencepiece>=0.2
+protobuf>=5
+safetensors>=0.4
+# Install PyTorch for your CUDA version and Diffusers per LOCAL_AI_WORKERS.md.

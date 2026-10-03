@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@/modules/project/types";
 import type { StudioData } from "../studio-api";
 import { request } from "../studio-api";
+import type { FlowProfile } from "@/modules/providers/flow-browser";
 
 export function ProviderStatus({
   providers: p,
@@ -15,6 +16,9 @@ export function ProviderStatus({
   const [busy, setBusy] = useState("");
   const [detail, setDetail] = useState("");
   const [setup, setSetup] = useState(false);
+  const [flowSetup, setFlowSetup] = useState(false);
+  const [flowProfiles, setFlowProfiles] = useState<FlowProfile[]>([]);
+  const [flowSelection, setFlowSelection] = useState("storyflow");
   const [install, setInstall] = useState<{
     state: string;
     log?: string;
@@ -66,11 +70,42 @@ export function ProviderStatus({
     }
   }
 
+  async function chooseFlowProfile() {
+    setBusy("flow");
+    setDetail("");
+    try {
+      const data = await request<{
+        profiles: FlowProfile[];
+        selection: {
+          mode: "storyflow" | "chrome";
+          profileDirectory: string;
+        };
+      }>({ action: "flowProfiles" });
+      setFlowProfiles(data.profiles || []);
+      const selected =
+        data.selection?.mode === "chrome"
+          ? "chrome:" + data.selection.profileDirectory
+          : "storyflow";
+      setFlowSelection(selected);
+      setFlowSetup(true);
+    } catch (error) {
+      setDetail((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function openFlow() {
     setBusy("flow");
     setDetail("");
     try {
-      await request({ action: "openFlow" });
+      const selected = flowProfiles.find((item) => item.id === flowSelection);
+      await request({
+        action: "openFlow",
+        profileMode: selected?.mode || "storyflow",
+        profileDirectory: selected?.directory || "",
+      });
+      setFlowSetup(false);
       await refresh();
     } catch (error) {
       setDetail((error as Error).message);
@@ -264,7 +299,7 @@ export function ProviderStatus({
                 disabled={!!busy || !p}
                 onClick={() =>
                   row.service === "flow"
-                    ? void openFlow()
+                    ? void chooseFlowProfile()
                     : ["flux", "fast"].includes(row.service)
                       ? setSetup(true)
                       : void start(row.service)
@@ -302,10 +337,19 @@ export function ProviderStatus({
       )}
       {settings.imageProvider === "flow-browser" && !p?.flow?.connected && (
         <p className="notice">
-          Flow dùng một profile Chrome riêng của StoryFlow. Bấm Kết nối Flow,
-          đăng nhập Google thủ công một lần và mở đúng project. Sau đó worker tái
-          sử dụng phiên này; không dùng profile Chrome chính và không lưu mật khẩu.
+          Bạn có thể dùng profile StoryFlow riêng hoặc chọn một profile Chrome
+          có sẵn trên máy. Nếu chọn profile Chrome đang mở, hãy đóng cửa sổ Chrome
+          đó trước khi kết nối vì Selenium không thể dùng đồng thời cùng profile.
         </p>
+      )}
+      {settings.imageProvider === "flow-browser" && (
+        <button
+          className="text-button"
+          disabled={!!busy}
+          onClick={() => void chooseFlowProfile()}
+        >
+          {p?.flow?.connected ? "Đổi profile Flow" : "Chọn profile Flow"}
+        </button>
       )}
 
       <details className="local-services">
@@ -342,6 +386,68 @@ export function ProviderStatus({
             <summary>Chi tiết</summary>
             <pre>{detail}</pre>
           </details>
+        </div>
+      )}
+
+      {flowSetup && (
+        <div className="modal-backdrop" onClick={() => setFlowSetup(false)}>
+          <section
+            className="card setup-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Chọn profile Google Flow"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>Chọn profile Google Flow</h2>
+            <p className="muted">
+              Chọn tài khoản Chrome đã có Flow Plus, hoặc dùng profile riêng của
+              StoryFlow. StoryFlow chỉ mở profile đã chọn; không đọc mật khẩu.
+            </p>
+            <div className="service-list">
+              {flowProfiles.map((profile) => (
+                <label className="service-row" key={profile.id}>
+                  <span className="service-name">
+                    <strong>
+                      {profile.name}
+                      {profile.recommended ? " · Khuyên dùng" : ""}
+                    </strong>
+                    <small>
+                      {profile.email ||
+                        (profile.mode === "storyflow"
+                          ? "Profile riêng, đăng nhập một lần"
+                          : profile.directory)}
+                    </small>
+                  </span>
+                  <input
+                    type="radio"
+                    name="flow-profile"
+                    checked={flowSelection === profile.id}
+                    onChange={() => setFlowSelection(profile.id)}
+                  />
+                </label>
+              ))}
+            </div>
+            {flowSelection.startsWith("chrome:") && (
+              <p className="notice">
+                Profile Chrome thật chỉ mở được khi Chrome không đang giữ profile
+                đó. Hãy đóng các cửa sổ Chrome của profile này trước khi bấm mở.
+                Chrome hiện đại không cho Selenium gắn trực tiếp vào một phiên
+                Chrome bình thường đang chạy.
+              </p>
+            )}
+            <div className="row">
+              <button
+                className="primary"
+                disabled={!!busy || !flowProfiles.length}
+                onClick={() => void openFlow()}
+              >
+                {busy === "flow" ? "Đang mở…" : "Mở Flow bằng profile này"}
+              </button>
+              <button disabled={!!busy} onClick={() => setFlowSetup(false)}>
+                Đóng
+              </button>
+            </div>
+          </section>
         </div>
       )}
 

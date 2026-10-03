@@ -211,6 +211,10 @@ export async function POST(req: NextRequest) {
           error: undefined,
           message: "Đã xếp lại hàng đợi",
           progress: 0,
+          verified: false,
+          output: undefined,
+          outputs: undefined,
+          finishedAt: undefined,
           snapshot: {
             settings: structuredClone(
               get<Project>(j.projectId, "project").settings,

@@ -26,6 +26,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 HOST = "127.0.0.1"
+FLOW_PROTOCOL = 2
 BRIDGE_URL = os.getenv("FLOW_BRIDGE_URL", "http://127.0.0.1:7865")
 PORT = int(urlparse(BRIDGE_URL).port or 7865)
 PROJECT_URL = os.getenv("FLOW_PROJECT_URL", "https://flow.google.com/")
@@ -465,6 +466,7 @@ def connected_health():
         "status": "ok",
         "engine": "flow",
         "bridgeReady": True,
+        "protocol": FLOW_PROTOCOL,
         "browserOpen": browser_open,
         "connected": connected,
         "projectConfigured": bool(os.getenv("FLOW_PROJECT_URL", "")),

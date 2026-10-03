@@ -1,39 +1,51 @@
 "use client";
 import { useEffect, useState } from "react";
-import { BookOpen, Clapperboard, Radio, Layers } from "lucide-react";
+import { BookOpen, Clapperboard, FolderVideo, Radio, Layers } from "lucide-react";
 import { useStudioData } from "./useStudioData";
 import { StoryImportPage } from "./story/StoryImportPage";
 import { VideoCreatePage } from "./video/VideoCreatePage";
+import { VideoManagerPage } from "./videoLibrary/VideoManagerPage";
 import { ChannelManagerPage } from "./channel/ChannelManagerPage";
+
 const tabs = [
   { name: "Nhập truyện", icon: BookOpen },
   { name: "Tạo video", icon: Clapperboard },
+  { name: "Quản lý video", icon: FolderVideo },
   { name: "Quản lý kênh", icon: Radio },
 ];
+
 export default function AppShell() {
   const [tab, setTab] = useState(0),
     [projectId, setProjectId] = useState("");
   const { data, error, refresh } = useStudioData();
+
   useEffect(() => {
     try {
       setProjectId(localStorage.getItem("storyflow-project") || "");
     } catch {}
   }, []);
+
   function selectProject(id: string) {
     setProjectId(id);
     try {
       localStorage.setItem("storyflow-project", id);
     } catch {}
   }
-  function open(id: string) {
+
+  function openCreate(id: string) {
     selectProject(id);
     setTab(1);
   }
+
+  const ttsReady =
+    !!data.providers?.modal?.tts?.ready ||
+    !!data.providers?.local?.vieneu?.ready ||
+    !!data.providers?.local?.korva?.ready;
   const ready =
-    data.providers?.runtime.worker &&
-    data.providers.runtime.ffmpeg &&
-    data.providers.local.vieneu.ready &&
-    data.providers.runtime.flux;
+    !!data.providers?.runtime?.worker &&
+    !!data.providers?.runtime?.ffmpeg &&
+    ttsReady;
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -45,15 +57,15 @@ export default function AppShell() {
         </a>
         <span className="sidebar-caption">KHÔNG GIAN SÁNG TẠO</span>
         <nav aria-label="Điều hướng chính">
-          {tabs.map((t, i) => (
+          {tabs.map((item, index) => (
             <button
-              key={t.name}
-              aria-current={tab === i ? "page" : undefined}
-              className={tab === i ? "nav-item active" : "nav-item"}
-              onClick={() => setTab(i)}
+              key={item.name}
+              aria-current={tab === index ? "page" : undefined}
+              className={tab === index ? "nav-item active" : "nav-item"}
+              onClick={() => setTab(index)}
             >
-              <t.icon size={20} />
-              <span>{t.name}</span>
+              <item.icon size={20} />
+              <span>{item.name}</span>
             </button>
           ))}
         </nav>
@@ -70,7 +82,7 @@ export default function AppShell() {
       <main>
         <div className="topbar">
           <span>STORYFLOW STUDIO</span>
-          <span className="local-badge">Sáng tạo trên máy của bạn</span>
+          <span className="local-badge">AI cloud + dựng video trên máy</span>
         </div>
         <div className="workspace">
           {error && (
@@ -82,7 +94,7 @@ export default function AppShell() {
             <StoryImportPage
               projects={data.projects}
               refresh={refresh}
-              onOpen={open}
+              onOpen={openCreate}
             />
           </div>
           {tab === 1 && (
@@ -92,9 +104,18 @@ export default function AppShell() {
               onProject={selectProject}
               refresh={refresh}
               onImport={() => setTab(0)}
+              onLibrary={() => setTab(2)}
             />
-          )}{" "}
-          {tab === 2 && <ChannelManagerPage />}
+          )}
+          {tab === 2 && (
+            <VideoManagerPage
+              projects={data.projects}
+              projectId={projectId}
+              onProject={selectProject}
+              onCreate={openCreate}
+            />
+          )}
+          {tab === 3 && <ChannelManagerPage />}
         </div>
       </main>
     </div>

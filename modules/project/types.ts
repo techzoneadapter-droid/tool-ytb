@@ -95,6 +95,7 @@ export type Job = {
     | "images"
     | "rendering"
     | "paused"
+    | "cancelled"
     | "ready"
     | "done"
     | "error";

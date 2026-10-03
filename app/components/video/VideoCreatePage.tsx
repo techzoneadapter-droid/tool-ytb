@@ -172,7 +172,14 @@ export function VideoCreatePage({
         <h1>Tạo video</h1>
         <p>Chọn dự án và cấu hình video. StoryFlow lo phần còn lại.</p>
       </header>
-      {project && <PipelineProgress project={project} jobs={jobs} />}
+      {project && (
+        <PipelineProgress
+          project={project}
+          jobs={jobs}
+          busy={busy}
+          act={(action, id) => void act(action, id)}
+        />
+      )}
       <div className="video-grid">
         <div className="video-form">
           <section className="card">

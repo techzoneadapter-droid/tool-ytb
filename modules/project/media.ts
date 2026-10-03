@@ -79,7 +79,22 @@ export async function requireSceneMedia(scene: Scene, settings?: Settings) {
     throw Error("Cảnh chưa có tệp ảnh thật. Hãy tạo hoặc tải ảnh lên.");
 }
 export function verifiedJob(job: Job): Job {
-  if (job.status === "done" && (!job.verified || !assetExists(job.output)))
+  if (job.status !== "done") return job;
+  if (job.outputs?.length) {
+    const valid =
+      job.verified &&
+      job.outputs.every((item) => item.verified && assetExists(item.output));
+    if (valid) return job;
+    return {
+      ...job,
+      status: "error",
+      progress: 0,
+      verified: false,
+      error: "Một hoặc nhiều MP4 trong lô không còn hợp lệ. Cần xuất lại video.",
+      message: "Lô video chưa hợp lệ",
+    };
+  }
+  if (!job.verified || !assetExists(job.output))
     return {
       ...job,
       status: "error",

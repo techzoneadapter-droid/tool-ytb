@@ -4,6 +4,7 @@ import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu";
+export const WORKER_PROTOCOL = 2;
 export async function alive(file: string) {
   try {
     const pid = Number(
@@ -67,7 +68,23 @@ export function serviceURL(service: Exclude<Service, "worker">) {
   return url;
 }
 async function ready(service: Service) {
-  if (service === "worker") return alive(path.resolve("data/worker.lock"));
+  if (service === "worker") {
+    const lock = path.resolve("data/worker.lock");
+    if (!(await alive(lock))) return false;
+    try {
+      const pid = Number(await readFile(lock, "utf8"));
+      const health = JSON.parse(
+        await readFile(path.resolve("data/worker.health.json"), "utf8"),
+      );
+      return (
+        health.pid === pid &&
+        health.protocol === WORKER_PROTOCOL &&
+        Date.now() - health.time < 15000
+      );
+    } catch {
+      return false;
+    }
+  }
   try {
     const response = await fetch(new URL("/health", serviceURL(service)), {
       signal: AbortSignal.timeout(1000),
@@ -93,6 +110,41 @@ export function startService(service: Service): Promise<void> {
 }
 async function start(service: Service) {
   if (await ready(service)) return;
+
+  if (service === "worker") {
+    const workerLock = path.resolve("data/worker.lock");
+    if (await alive(workerLock)) {
+      const pid = Number(
+        await readFile(workerLock, "utf8").catch(() => "0"),
+      );
+      if (Number.isInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {}
+        for (let i = 0; i < 20 && (await alive(workerLock)); i++)
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        if (await alive(workerLock)) {
+          if (process.platform === "win32") {
+            await new Promise<void>((resolve) => {
+              const killer = spawn(
+                "taskkill",
+                ["/PID", String(pid), "/T", "/F"],
+                { shell: false, windowsHide: true },
+              );
+              killer.on("close", () => resolve());
+              killer.on("error", () => resolve());
+            });
+          } else {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {}
+          }
+        }
+      }
+      await unlink(workerLock).catch(() => {});
+      await unlink(path.resolve("data/worker.health.json")).catch(() => {});
+    }
+  }
   const lock = path.resolve(`data/${service}.start.lock`);
   let owned = false;
   try {

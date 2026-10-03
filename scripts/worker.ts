@@ -3,7 +3,7 @@ dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { acquireLock } from "../modules/providers/services";
+import { acquireLock, startService, WORKER_PROTOCOL } from "../modules/providers/services";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -12,9 +12,10 @@ import {
   get,
   list,
   put,
+  remove,
   updateJob,
 } from "../modules/project/store";
-import type { Job, Project } from "../modules/project/types";
+import type { Job, Project, Settings } from "../modules/project/types";
 import { speak, speakBatch } from "../modules/tts";
 import { makeImage, makeStoryImageBatch } from "../modules/imagePrompt";
 import {
@@ -22,23 +23,95 @@ import {
   ensureVisualProfile,
 } from "../modules/imagePrompt/profile";
 import { imageConfig } from "../modules/providers/config";
+import { runtimeStatus } from "../modules/providers/runtime-status";
+import { modalHealth } from "../modules/providers/modal/client";
 import { ttsSource } from "../modules/tts";
 import {
   assetExists,
   requireSceneMedia,
   resolveSceneImage,
+  validImage,
 } from "../modules/project/media";
 import { duration, verifyVideo } from "../modules/videoRender/process";
 import { assets, render } from "../modules/videoRender";
 import { makeMotion, usesMotion } from "../modules/providers/local-workers";
 import { createVideoRecord, mergeVideoRecords } from "../modules/videoLibrary";
 const lockPath = path.join(root, "worker.lock");
+
+async function imageEngineReady(settings: Settings) {
+  if (settings.imageEnabled === false) return true;
+  if (
+    settings.imageProvider === "modal-story" ||
+    settings.imageProvider === "modal-reference"
+  )
+    return (await modalHealth("image")).ready;
+  if (
+    settings.imageProvider === "flux2-local" ||
+    settings.imageProvider === "local-fast" ||
+    settings.imageProvider === "auto-local"
+  ) {
+    const runtime = await runtimeStatus();
+    return settings.imageProvider === "flux2-local"
+      ? runtime.flux
+      : runtime.fast;
+  }
+  if (settings.imageProvider === "openai") return !!imageConfig().key;
+  return false;
+}
+
+function sameSnapshot(a: Job, b: Job) {
+  return JSON.stringify(a.snapshot.settings) === JSON.stringify(b.snapshot.settings);
+}
+
+async function coalesceLegacyPipelineJobs() {
+  const queued = list<Job>("job").filter(
+    (job) =>
+      job.kind === "pipeline" &&
+      job.status === "queued" &&
+      !job.outputMode &&
+      !job.sceneIds?.length,
+  );
+  const groups = new Map<string, Job[]>();
+  for (const job of queued) {
+    const key = job.projectId;
+    const group = groups.get(key) || [];
+    group.push(job);
+    groups.set(key, group);
+  }
+  for (const jobs of groups.values()) {
+    if (jobs.length < 2) continue;
+    jobs.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    const compatible = jobs.filter((job) => sameSnapshot(job, jobs[0]));
+    if (compatible.length < 2) continue;
+    const project = get<Project>(jobs[0].projectId, "project");
+    const wanted = new Set(compatible.flatMap((job) => job.chapterIds));
+    const chapterIds = project.chapters
+      .filter((chapter) => wanted.has(chapter.id))
+      .map((chapter) => chapter.id);
+    const completedItems = [
+      ...new Set(compatible.flatMap((job) => job.completedItems || [])),
+    ];
+    updateJob(compatible[0].id, {
+      chapterIds,
+      outputMode: "separate",
+      completedItems,
+      progress: 0,
+      error: undefined,
+      message: `Đã gộp ${chapterIds.length} chương vào một lô xử lý`,
+    });
+    for (const extra of compatible.slice(1)) remove("job", extra.id);
+  }
+}
 async function main() {
   await acquireLock(lockPath);
   const heartbeat = () =>
     writeFile(
       path.join(root, "worker.health.json"),
-      JSON.stringify({ pid: process.pid, time: Date.now() }),
+      JSON.stringify({
+        pid: process.pid,
+        time: Date.now(),
+        protocol: WORKER_PROTOCOL,
+      }),
     ).catch(() => {});
   await heartbeat();
   setInterval(heartbeat, 3000);
@@ -50,6 +123,7 @@ async function main() {
   for (const j of list<Job>("job"))
     if (["audio", "images", "rendering"].includes(j.status))
       updateJob(j.id, { status: "queued", message: "Khôi phục xử lý" });
+  await coalesceLegacyPipelineJobs();
   console.log("StoryFlow: chỉ xử lý API và tài nguyên thật.");
   while (true) {
     const job = claim();
@@ -141,16 +215,19 @@ async function main() {
           scene: (typeof scenes)[number],
           type: "audio" | "image" | "motion",
         ) => {
-          if (!assetExists(scene[type])) return false;
           try {
+            if (type === "image") {
+              const effective = await resolveSceneImage(scene, s);
+              if (!effective) return false;
+              await sharp(path.join(assets, effective)).stats();
+              return true;
+            }
+            if (!assetExists(scene[type])) return false;
             if (type === "audio") {
               if (!scene.audioSource) return false;
               const seconds = await duration(path.join(assets, scene.audio!));
               if (!(seconds > 0)) return false;
               scene.duration = seconds;
-            } else if (type === "image") {
-              if (!scene.imageSource) return false;
-              await sharp(path.join(assets, scene.image!)).stats();
             } else await verifyVideo(path.join(assets, scene.motion!), false);
             return true;
           } catch {
@@ -167,21 +244,56 @@ async function main() {
                   .length,
           motion: scenes.filter((x) => completedItems.has(x.id + ":motion"))
             .length,
+          rendered: get<Job>(job.id, "job").counts?.rendered || 0,
           total: scenes.length,
           failed,
         });
+        const sharedFallbackReady =
+          s.imageEnabled !== false &&
+          s.fallbackOnImageError === true &&
+          (await validImage(s.fallbackImage));
+        const bypassUnavailableImageAI =
+          sharedFallbackReady && !(await imageEngineReady(s));
+
+        if (tasks.includes("audio") && s.ttsProvider === "vieneu-local") {
+          checkpoint("audio", 1, "Đang khởi động VieNeu Local và nạp giọng đọc");
+          await startService("vieneu");
+        }
+
         for (const type of tasks as ("audio" | "image" | "motion")[]) {
           for (const scene of scenes) {
             if (
+              type === "image" &&
+              bypassUnavailableImageAI &&
+              !(await valid(scene, "image"))
+            ) {
+              const key = scene.id + ":image";
+              scene.image = undefined;
+              scene.imageSource = "shared";
+              scene.imageStatus = "done";
+              scene.imageError = undefined;
+              scene.approved = !s.humanCheck;
+              completedItems.add(key);
+              completed++;
+              put("project", p);
+              updateJob(job.id, {
+                completedItems: [...completedItems],
+                counts: counts(),
+                message: "AI ảnh chưa sẵn sàng — đang dùng ảnh chung để tiếp tục dựng video",
+              });
+              continue;
+            }
+
+            if (
               type === "audio" &&
-              s.ttsProvider === "modal-vieneu" &&
+              ["modal-vieneu", "vieneu-local"].includes(s.ttsProvider || "") &&
               !completedItems.has(scene.id + ":audio") &&
               !(await valid(scene, "audio"))
             ) {
               const start = scenes.findIndex((item) => item.id === scene.id);
               const group: typeof scenes = [];
               for (const candidate of scenes.slice(Math.max(0, start))) {
-                if (group.length >= 16) break;
+                if (group.length >= 32) break;
                 if (
                   !completedItems.has(candidate.id + ":audio") &&
                   !(await valid(candidate, "audio"))
@@ -195,7 +307,7 @@ async function main() {
                     (completed / Math.max(1, total)) *
                       (kind === "pipeline" ? 75 : 99),
                   ),
-                  `VieNeu Cloud đang tạo ${group.length} lời đọc trong một batch`,
+                  `${s.ttsProvider === "modal-vieneu" ? "VieNeu Cloud" : "VieNeu Local"} đang tạo ${group.length} lời đọc song song`,
                 );
                 const files = group.map(() =>
                   path.join(assets, randomUUID() + ".mp3"),
@@ -226,7 +338,7 @@ async function main() {
                     item.approved = !s.humanCheck;
                     completedItems.add(item.id + ":audio");
                   }
-                  completed++;
+                  completed += group.length;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],
@@ -321,7 +433,7 @@ async function main() {
                     item.approved = !s.humanCheck;
                     completedItems.add(item.id + ":image");
                   }
-                  completed++;
+                  completed += group.length;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],
@@ -348,7 +460,7 @@ async function main() {
                       failed++;
                     }
                   }
-                  if (usedFallback === group.length) completed++;
+                  if (usedFallback === group.length) completed += group.length;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],
@@ -511,6 +623,89 @@ async function main() {
         });
         continue;
       }
+      if (kind === "pipeline" && job.outputMode === "separate") {
+        const chapters = p.chapters.filter((chapter) =>
+          job.chapterIds.includes(chapter.id),
+        );
+        const outputs: NonNullable<Job["outputs"]> = [];
+        let subtitlesReady = false;
+
+        for (let index = 0; index < chapters.length; index++) {
+          const chapter = chapters[index];
+          const chapterScenes = chapter.scenes.filter(
+            (scene) => !job.sceneIds || job.sceneIds.includes(scene.id),
+          );
+          if (!chapterScenes.length) continue;
+
+          const base = 75 + (index / Math.max(1, chapters.length)) * 24;
+          const span = 24 / Math.max(1, chapters.length);
+          checkpoint(
+            "rendering",
+            Math.floor(base),
+            `Đang dựng video ${index + 1}/${chapters.length} — ${chapter.title}`,
+          );
+          const result = await render(chapterScenes, s, (n) => {
+            if (n >= 0.65 && s.burnSubtitles && !subtitlesReady) {
+              updateJob(job.id, { subtitlesReady: true });
+              subtitlesReady = true;
+            }
+            checkpoint(
+              "rendering",
+              Math.floor(base + n * span),
+              `Đang dựng video ${index + 1}/${chapters.length} — ${chapter.title}`,
+            );
+          });
+          if (!assetExists(result.output))
+            throw Error(`Không tìm thấy MP4 của ${chapter.title} sau khi xuất.`);
+          await verifyVideo(path.join(assets, result.output));
+
+          const child: Job = {
+            ...job,
+            id: `${job.id}:${chapter.id}`,
+            chapterIds: [chapter.id],
+            outputTitle: chapter.title,
+            outputMode: undefined,
+            outputs: undefined,
+            ...result,
+            status: "done",
+            progress: 100,
+            verified: true,
+            finishedAt: new Date().toISOString(),
+            message: "MP4 đã xuất và kiểm tra thành công",
+          };
+          await createVideoRecord(child, p);
+          outputs.push({
+            chapterIds: [chapter.id],
+            output: result.output,
+            srt: result.srt,
+            vtt: result.vtt,
+            verified: true,
+          });
+          updateJob(job.id, {
+            outputs,
+            counts: {
+              ...(get<Job>(job.id, "job").counts || {
+                audio: scenes.length,
+                image: scenes.length,
+                total: scenes.length,
+                failed: 0,
+              }),
+              rendered: outputs.length,
+            },
+          });
+        }
+
+        updateJob(job.id, {
+          outputs,
+          status: "done",
+          progress: 100,
+          verified: outputs.length === chapters.length && outputs.length > 0,
+          finishedAt: new Date().toISOString(),
+          message: `Đã tạo xong ${outputs.length}/${chapters.length} video`,
+        });
+        continue;
+      }
+
       checkpoint(
         "rendering",
         kind === "pipeline" ? 75 : 0,

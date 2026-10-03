@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, copyFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { speak as speakCloud } from "./cloud";
-import { speakLocal, vieneuURL } from "./local";
+import { speakLocal, vieneuHealth, vieneuURL } from "./local";
 import { speakModal, speakModalBatch } from "./modal";
 import {
   localProviderIds,
@@ -158,6 +158,36 @@ export async function speakBatch(
 ) {
   const s = resolveTTS(settings);
   assertTTS(s);
+  if (s.ttsProvider === "vieneu-local") {
+    const output = new Map<string, number>();
+    const health = await vieneuHealth().catch(() => ({
+      backend: "unknown",
+      maxStreams: 1,
+      active: 0,
+      waiting: 0,
+    }));
+    // VieNeu's server already implements continuous batching on GPU and a
+    // bounded queue on CPU. Keep a conservative ceiling for older 4 GB GPUs.
+    const limit = Math.max(
+      1,
+      Math.min(4, health.maxStreams, Math.max(1, health.maxStreams - health.active)),
+    );
+    let cursor = 0;
+    const workers = Array.from(
+      { length: Math.min(limit, items.length) },
+      async () => {
+        while (true) {
+          const index = cursor++;
+          if (index >= items.length) return;
+          const item = items[index];
+          output.set(item.id, await speak(item.text, item.file, s));
+        }
+      },
+    );
+    await Promise.all(workers);
+    return output;
+  }
+
   if (s.ttsProvider !== "modal-vieneu") {
     const output = new Map<string, number>();
     for (const item of items)

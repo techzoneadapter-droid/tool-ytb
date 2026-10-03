@@ -64,6 +64,7 @@ export async function migrateCompletedJobs() {
     if (
       job.status !== "done" ||
       !job.verified ||
+      job.outputs?.length ||
       !job.output ||
       existingJobs.has(job.id) ||
       !assetExists(job.output)

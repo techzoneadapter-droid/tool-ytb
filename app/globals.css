@@ -1458,3 +1458,134 @@ progress::-webkit-progress-value {
     max-height: 240px;
   }
 }
+
+
+/* Compact batch progress: one horizontal bar no matter how many chapters run. */
+.batch-progress {
+  margin: -4px 0 20px;
+  padding: 15px 18px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+.batch-progress.has-error {
+  border-color: #f0cbd1;
+}
+.batch-progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.batch-progress-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.batch-progress-copy strong {
+  flex: 0 0 auto;
+  font-size: 13px;
+}
+.batch-progress-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+.batch-progress-percent {
+  color: var(--primary);
+  font-size: 15px;
+}
+.batch-progress-track {
+  height: 8px;
+  margin-top: 11px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eceaf5;
+}
+.batch-progress-track > span {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width .35s ease;
+}
+.batch-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.batch-progress.has-error .batch-progress-percent,
+.batch-progress.has-error .batch-progress-meta {
+  color: var(--red);
+}
+
+/* Current workflow status is primary; unused engines stay collapsed. */
+.system-card .badge.ready {
+  color: #397656;
+  background: #edf7f0;
+}
+.current-route {
+  margin-top: 16px;
+  gap: 10px;
+}
+.current-route .service-row {
+  grid-template-columns: minmax(95px, 1fr) auto;
+  min-height: 38px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid #f0eff5;
+}
+.current-route .service-row:last-child {
+  border-bottom: 0;
+}
+.current-route .service-name {
+  display: grid;
+  gap: 2px;
+  color: inherit;
+  text-align: left;
+}
+.current-route .service-name small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+.current-route .service-row > span:not(.service-name) {
+  white-space: nowrap;
+}
+.current-route .service-row button {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+.local-services {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.local-services > summary {
+  color: var(--muted);
+  font-size: 11px;
+}
+.local-services .service-list {
+  margin-top: 12px;
+}
+.service-row.compact {
+  grid-template-columns: minmax(90px, 1fr) auto;
+}
+
+@media (max-width: 700px) {
+  .batch-progress-copy {
+    display: grid;
+    gap: 3px;
+  }
+  .batch-progress-meta {
+    gap: 5px 12px;
+  }
+}

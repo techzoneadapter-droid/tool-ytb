@@ -105,6 +105,7 @@ export type Job = {
     motion?: number;
     audio: number;
     image: number;
+    rendered?: number;
     total: number;
     failed: number;
   };
@@ -118,6 +119,14 @@ export type Job = {
     | "merge-video";
   sourceVideoIds?: string[];
   outputTitle?: string;
+  outputMode?: "separate" | "merged";
+  outputs?: {
+    chapterIds: string[];
+    output: string;
+    srt?: string;
+    vtt?: string;
+    verified: boolean;
+  }[];
   sceneIds?: string[];
   verified?: boolean;
   prepare?: boolean;

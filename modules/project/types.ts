@@ -43,7 +43,14 @@ export type Settings = {
   fallbackImage?: string;
   fallbackOnImageError?: boolean;
   imageEnabled?: boolean;
-  imageProvider?: "flux2-local" | "local-fast" | "auto-local" | "openai";
+  imageProvider?:
+    | "modal-story"
+    | "modal-reference"
+    | "flux2-local"
+    | "local-fast"
+    | "auto-local"
+    | "openai";
+  referenceImages?: string[];
   motionMode?: "off" | "selected" | "all";
   ttsProvider?: import("../tts/local-voices").TTSProvider;
   provider: "openai";
@@ -101,7 +108,16 @@ export type Job = {
     total: number;
     failed: number;
   };
-  kind?: "pipeline" | "audio" | "image" | "motion" | "prepare" | "render";
+  kind?:
+    | "pipeline"
+    | "audio"
+    | "image"
+    | "motion"
+    | "prepare"
+    | "render"
+    | "merge-video";
+  sourceVideoIds?: string[];
+  outputTitle?: string;
   sceneIds?: string[];
   verified?: boolean;
   prepare?: boolean;
@@ -114,6 +130,28 @@ export type Job = {
   createdAt: string;
   snapshot: Pick<Project, "settings">;
 };
+export type VideoRecord = {
+  id: string;
+  projectId: string;
+  chapterIds: string[];
+  chapterTitles: string[];
+  title: string;
+  kind: "chapter" | "merged";
+  output: string;
+  srt?: string;
+  vtt?: string;
+  createdAt: string;
+  updatedAt: string;
+  duration: number;
+  width: number;
+  height: number;
+  fileSize: number;
+  verified: boolean;
+  version: number;
+  sourceJobId?: string;
+  sourceVideoIds?: string[];
+};
+
 export const defaults: Settings = {
   provider: "openai",
   mode: "original",

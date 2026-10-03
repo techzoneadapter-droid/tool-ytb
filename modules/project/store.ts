@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { Project, Job } from "./types";
+import type { Project, Job, VideoRecord } from "./types";
 export const root = path.resolve("data");
 mkdirSync(root, { recursive: true });
 const db = new DatabaseSync(path.join(root, "storyflow.sqlite"));
@@ -74,6 +74,10 @@ export function removeProject(id: string) {
   try {
     for (const job of list<Job>("job").filter((j) => j.projectId === id))
       db.prepare("DELETE FROM records WHERE id=? AND kind='job'").run(job.id);
+    for (const video of list<VideoRecord>("video").filter(
+      (item) => item.projectId === id,
+    ))
+      db.prepare("DELETE FROM records WHERE id=? AND kind='video'").run(video.id);
     db.prepare("DELETE FROM records WHERE id=? AND kind='project'").run(id);
     db.exec("COMMIT");
   } catch (error) {

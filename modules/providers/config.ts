@@ -4,6 +4,7 @@ import { localVoiceNames, type TTSProvider } from "../tts/local-voices";
 import { modalVoices } from "../tts/modal";
 import { modalConfigured, modalHealth } from "./modal/client";
 import { runtimeStatus } from "./runtime-status";
+import { pollinationsAudioCatalog, pollinationsConfigured } from "./free-cloud";
 
 export function ttsConfig() {
   const provider = process.env.TTS_PROVIDER || "openai";
@@ -66,11 +67,12 @@ export function requireImage() {
 }
 
 export async function providerStatus() {
-  const [local, runtime, modalTTS, modalImage] = await Promise.all([
+  const [local, runtime, modalTTS, modalImage, pollinations] = await Promise.all([
     localStatus(),
     runtimeStatus(),
     modalHealth("tts"),
     modalHealth("image"),
+    pollinationsAudioCatalog(),
   ]);
   let t;
   try {
@@ -105,7 +107,38 @@ export async function providerStatus() {
       provider: imageConfig().provider,
       configured: imageConfig().provider === "openai" && !!imageConfig().key,
     },
+    freeCloud: {
+      aiHorde: {
+        configured: true,
+        ready: true,
+        message: process.env.AI_HORDE_API_KEY
+          ? "Đã cấu hình API key riêng"
+          : "Anonymous miễn phí · ưu tiên thấp",
+      },
+      pollinations: {
+        configured: pollinationsConfigured(),
+        ready: pollinations.ready,
+        model: pollinations.model,
+        message: pollinationsConfigured()
+          ? pollinations.ready
+            ? "Sẵn sàng"
+            : "Đã có key nhưng chưa tìm thấy model TTS"
+          : "Cần POLLINATIONS_API_KEY",
+      },
+    },
     voices: [
+      ...pollinations.voices.map((voice) => ({
+        id: voice,
+        name: "Pollinations · " + voice,
+        description: "Giọng cloud qua Pollinations API.",
+        gender: "Không phân loại",
+        categories: ["Cloud"],
+        provider: "pollinations" as TTSProvider,
+        key: "pollinations:" + voice,
+        configured: pollinations.ready,
+        voiceId: voice,
+        status: pollinations.ready ? "Sẵn sàng" : "Chưa cấu hình",
+      })),
       ...modalVoiceList.map((v) => ({
         ...v,
         name: v.name || v.id,
@@ -166,11 +199,13 @@ export async function providerStatus() {
       const order = (provider: string) =>
         provider === "modal-vieneu"
           ? 0
-          : provider === "vieneu-local"
+          : provider === "pollinations"
             ? 1
-            : provider === "korva-local"
+            : provider === "vieneu-local"
               ? 2
-              : 3;
+              : provider === "korva-local"
+                ? 3
+                : 4;
       return order(a.provider) - order(b.provider);
     }),
   };

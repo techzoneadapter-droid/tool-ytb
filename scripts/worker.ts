@@ -45,6 +45,9 @@ async function imageEngineReady(settings: Settings) {
     settings.imageProvider === "modal-reference"
   )
     return (await modalHealth("image")).ready;
+  if (settings.imageProvider === "aihorde") return true;
+  if (settings.imageProvider === "pollinations")
+    return !!process.env.POLLINATIONS_API_KEY;
   if (
     settings.imageProvider === "flux2-local" ||
     settings.imageProvider === "local-fast" ||
@@ -169,7 +172,9 @@ async function main() {
         progress: number,
         message: string,
       ) => {
-        if (get<Job>(job.id, "job").status === "paused") throw Error("PAUSED");
+        const currentStatus = get<Job>(job.id, "job").status;
+        if (currentStatus === "paused") throw Error("PAUSED");
+        if (currentStatus === "cancelled") throw Error("CANCELLED");
         updateJob(job.id, {
           status,
           progress: Math.min(99, progress),
@@ -741,7 +746,7 @@ async function main() {
       await createVideoRecord(finished, p);
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
-      if (error !== "PAUSED")
+      if (error !== "PAUSED" && error !== "CANCELLED")
         updateJob(job.id, {
           status: "error",
           finishedAt: new Date().toISOString(),

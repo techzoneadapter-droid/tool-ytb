@@ -6,6 +6,7 @@ import { request } from "../studio-api";
 
 const providerNames: Record<string, string> = {
   "modal-vieneu": "VieNeu Cloud · GPU",
+  pollinations: "Pollinations TTS · Cloud",
   "vieneu-local": "VieNeu-TTS v3 Turbo · Local",
   "korva-local": "KorvaTTS · Local",
 };
@@ -34,6 +35,9 @@ export function VoiceSelector({
   const providerOptions = [
     ...(providers?.modal?.tts?.configured
       ? [{ id: "modal-vieneu", label: providerNames["modal-vieneu"] }]
+      : []),
+    ...(providers?.freeCloud?.pollinations?.configured
+      ? [{ id: "pollinations", label: providerNames.pollinations }]
       : []),
     { id: "vieneu-local", label: providerNames["vieneu-local"] },
     { id: "korva-local", label: providerNames["korva-local"] },
@@ -80,7 +84,11 @@ export function VoiceSelector({
       <div className="row between">
         <h2>Giọng đọc</h2>
         <span className="badge">
-          {s.ttsProvider === "modal-vieneu" ? "Cloud GPU" : "Local miễn phí"}
+          {s.ttsProvider === "modal-vieneu"
+            ? "Cloud GPU"
+            : s.ttsProvider === "pollinations"
+              ? "Cloud API"
+              : "Local miễn phí"}
         </span>
       </div>
       <div className="fields">
@@ -157,9 +165,12 @@ export function VoiceSelector({
           onClick={preview}
           disabled={
             busy ||
-            !["modal-vieneu", "vieneu-local", "korva-local"].includes(
-              s.ttsProvider || "",
-            ) ||
+            ![
+              "modal-vieneu",
+              "pollinations",
+              "vieneu-local",
+              "korva-local",
+            ].includes(s.ttsProvider || "") ||
             voices.length === 0
           }
         >
@@ -172,7 +183,9 @@ export function VoiceSelector({
           ? `● Sẵn sàng · ${voices.length} giọng`
           : s.ttsProvider === "modal-vieneu"
             ? "VieNeu Cloud chưa kết nối hoặc chưa deploy."
-            : "Chưa kết nối engine để lấy danh sách giọng"}
+            : s.ttsProvider === "pollinations"
+              ? "Pollinations chưa có key hoặc chưa trả danh sách giọng."
+              : "Chưa kết nối engine để lấy danh sách giọng"}
       </p>
 
       {audio && (

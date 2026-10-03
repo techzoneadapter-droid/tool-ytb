@@ -10,7 +10,7 @@ export const initialSettings: Settings = {
   ...defaults,
   ttsProvider: "vieneu-local",
   voice: "ngoc_huyen",
-  imageProvider: "flux2-local",
+  imageProvider: "aihorde",
   imageEnabled: true,
   audioEnabled: true,
   motionMode: "off",

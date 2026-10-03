@@ -1589,3 +1589,43 @@ progress::-webkit-progress-value {
     gap: 5px 12px;
   }
 }
+
+
+.batch-progress-footer {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.batch-progress-footer .batch-progress-meta {
+  margin-top: 0;
+}
+.batch-progress-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+.batch-progress-actions button {
+  padding: 7px 10px;
+  font-size: 11px;
+  gap: 6px;
+}
+.danger-outline {
+  color: var(--red);
+  border-color: #efc7cd;
+  background: #fff;
+}
+.danger-outline:hover {
+  background: #fff3f5;
+}
+@media (max-width: 780px) {
+  .batch-progress-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .batch-progress-actions {
+    width: 100%;
+  }
+}

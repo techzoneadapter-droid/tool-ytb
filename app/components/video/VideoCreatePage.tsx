@@ -65,7 +65,7 @@ export function VideoCreatePage({
     setError("");
     try {
       if (
-        !["modal-vieneu", "vieneu-local", "korva-local"].includes(
+        !["modal-vieneu", "pollinations", "vieneu-local", "korva-local"].includes(
           settings.ttsProvider || "",
         )
       )
@@ -105,9 +105,9 @@ export function VideoCreatePage({
     setBusy(true);
     setError("");
     try {
-      if (action === "retry" && project && !active) {
+      if (["retry", "restart"].includes(action) && project && !active) {
         if (
-          !["modal-vieneu", "vieneu-local", "korva-local"].includes(
+          !["modal-vieneu", "pollinations", "vieneu-local", "korva-local"].includes(
             settings.ttsProvider || "",
           )
         )
@@ -172,7 +172,14 @@ export function VideoCreatePage({
         <h1>Tạo video</h1>
         <p>Chọn dự án và cấu hình video. StoryFlow lo phần còn lại.</p>
       </header>
-      {project && <PipelineProgress project={project} jobs={jobs} />}
+      {project && (
+        <PipelineProgress
+          project={project}
+          jobs={jobs}
+          busy={busy}
+          act={(action, id) => void act(action, id)}
+        />
+      )}
       <div className="video-grid">
         <div className="video-form">
           <section className="card">
@@ -353,6 +360,12 @@ export function VideoCreatePage({
                           </option>
                           <option value="modal-reference">
                             Reference AI Cloud · Ảnh tham chiếu
+                          </option>
+                          <option value="aihorde">
+                            AI Horde · Miễn phí cộng đồng
+                          </option>
+                          <option value="pollinations">
+                            Pollinations · Cloud API
                           </option>
                           <option value="flux2-local">
                             FLUX.2 Local · Chất lượng

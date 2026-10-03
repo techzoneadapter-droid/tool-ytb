@@ -17,6 +17,8 @@ export const settingsSchema = z.object({
       "flux2-local",
       "local-fast",
       "auto-local",
+      "aihorde",
+      "pollinations",
       "openai",
     ])
     .optional(),
@@ -28,6 +30,7 @@ export const settingsSchema = z.object({
       "vieneu-local",
       "korva-local",
       "tts-studio-local",
+      "pollinations",
       "cloud",
     ])
     .optional(),

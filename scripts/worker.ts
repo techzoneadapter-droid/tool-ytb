@@ -45,6 +45,9 @@ async function imageEngineReady(settings: Settings) {
     settings.imageProvider === "modal-reference"
   )
     return (await modalHealth("image")).ready;
+  if (settings.imageProvider === "aihorde") return true;
+  if (settings.imageProvider === "pollinations")
+    return !!process.env.POLLINATIONS_API_KEY;
   if (
     settings.imageProvider === "flux2-local" ||
     settings.imageProvider === "local-fast" ||

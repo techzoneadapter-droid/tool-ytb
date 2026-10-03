@@ -682,6 +682,7 @@ async function main() {
                         item.image = file;
                         item.imageSource = generated.engine;
                         item.imageStatus = "done";
+                        item.imageError = undefined;
                         item.motion = undefined;
                         item.motionStatus = undefined;
                         item.motionError = undefined;

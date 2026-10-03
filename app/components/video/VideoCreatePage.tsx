@@ -359,11 +359,13 @@ export function VideoCreatePage({
                         <span className="badge">
                           {settings.imageProvider?.startsWith("modal-")
                             ? "Cloud GPU"
-                            : ["aihorde", "pollinations"].includes(
-                                  settings.imageProvider || "",
-                                )
-                              ? "Cloud miễn phí"
-                              : "Local"}
+                            : settings.imageProvider === "flow-browser"
+                              ? "Flow Plus"
+                              : ["aihorde", "pollinations"].includes(
+                                    settings.imageProvider || "",
+                                  )
+                                ? "Cloud miễn phí"
+                                : "Local"}
                         </span>
                       </div>
                       <label>
@@ -382,6 +384,9 @@ export function VideoCreatePage({
                           </option>
                           <option value="modal-reference">
                             Reference AI Cloud · Ảnh tham chiếu
+                          </option>
+                          <option value="flow-browser">
+                            Google Flow · Nano Banana Pro
                           </option>
                           <option value="aihorde">
                             AI Horde · Miễn phí cộng đồng

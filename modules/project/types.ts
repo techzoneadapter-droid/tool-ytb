@@ -112,6 +112,17 @@ export type Job = {
     total: number;
     failed: number;
   };
+  stageProgress?: {
+    label: string;
+    current: number;
+    total: number;
+    detail: string;
+    concurrency?: number;
+    elapsedSeconds?: number;
+    etaSeconds?: number;
+    ratePerMinute?: number;
+    updatedAt: string;
+  };
   kind?:
     | "pipeline"
     | "audio"

@@ -352,8 +352,8 @@ export function ProviderStatus({
       {settings.imageProvider === "flow-browser" && !p?.flow?.connected && (
         <p className="notice">
           Bạn có thể dùng profile StoryFlow riêng hoặc chọn một profile Chrome
-          có sẵn trên máy. Nếu chọn profile Chrome đang mở, hãy đóng cửa sổ Chrome
-          đó trước khi kết nối vì Selenium không thể dùng đồng thời cùng profile.
+          có sẵn trên máy. StoryFlow sẽ tạo bản sao cục bộ riêng của profile được
+          chọn nên Chrome bình thường vẫn có thể mở song song.
         </p>
       )}
       {settings.imageProvider === "flow-browser" && (
@@ -523,8 +523,9 @@ export function ProviderStatus({
 
             {flowSelection.startsWith("chrome:") && (
               <p className="flow-profile-note">
-                Nếu profile này đang mở trong Chrome, hãy đóng các cửa sổ Chrome
-                của đúng profile đó trước khi kết nối để tránh profile bị khóa.
+                StoryFlow sẽ tạo và dùng một bản sao riêng của profile này. Bạn
+                không cần đóng Chrome bình thường; lần đầu có thể cần đăng nhập
+                lại một lần nếu Chrome đang khóa dữ liệu phiên.
               </p>
             )}
           </section>

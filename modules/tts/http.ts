@@ -23,7 +23,7 @@ export async function ttsRequest(req: NextRequest, preview: boolean) {
     const b = z
       .object({
         provider: z
-          .enum(["modal-vieneu", "pollinations", "vieneu-local", "korva-local", "tts-studio-local", "cloud"])
+          .enum(["modal-vieneu", "edge-online", "pollinations", "vieneu-local", "korva-local", "tts-studio-local", "cloud"])
           .optional(),
         voiceId: z.string().min(1).max(100).optional(),
         voice: z.string().min(1).max(100).optional(),

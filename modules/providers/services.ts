@@ -302,6 +302,8 @@ async function start(service: Service) {
       env: {
         ...process.env,
         HOST: "127.0.0.1",
+        PYTHONUTF8: "1",
+        PYTHONIOENCODING: "utf-8",
         ...(service === "vieneu" ? { PORT: "8000" } : {}),
       },
       shell: false,

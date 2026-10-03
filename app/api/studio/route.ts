@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
             ? configuredVoice
             : localVoiceId(configuredVoice),
         imageEnabled: true,
-        imageProvider: modalConfigured("image") ? "modal-story" : "flux2-local",
+        imageProvider: modalConfigured("image") ? "modal-story" : "aihorde",
         motionMode: "off",
       };
       const settings = settingsSchema.parse({

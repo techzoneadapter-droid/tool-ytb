@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { root } from "../project/store";
 import { workerURL } from "./local-workers";
+import { WORKER_PROTOCOL } from "./services";
 
 function executable(command: string) {
   return new Promise<boolean>((resolve) => {
@@ -36,7 +37,11 @@ async function workerReady() {
     const heartbeat = JSON.parse(
       await readFile(path.join(root, "worker.health.json"), "utf8"),
     );
-    return heartbeat.pid === pid && Date.now() - heartbeat.time < 15000;
+    return (
+      heartbeat.pid === pid &&
+      heartbeat.protocol === WORKER_PROTOCOL &&
+      Date.now() - heartbeat.time < 15000
+    );
   } catch {
     return false;
   }

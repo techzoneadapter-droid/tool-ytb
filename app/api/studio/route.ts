@@ -564,9 +564,12 @@ export async function POST(req: NextRequest) {
         throw Error(
           "Hãy tạo tài nguyên và duyệt tất cả cảnh trước khi render.",
         );
-      const groups = b.merge
-        ? [selected.map((c) => c.id)]
-        : selected.map((c) => [c.id]);
+      const groups =
+        kind === "pipeline"
+          ? [selected.map((c) => c.id)]
+          : b.merge
+            ? [selected.map((c) => c.id)]
+            : selected.map((c) => [c.id]);
       const jobs = groups.map((chapterIds) => {
         const j: Job & { prepare: boolean } = {
           id: randomUUID(),
@@ -574,11 +577,23 @@ export async function POST(req: NextRequest) {
           chapterIds,
           status: "queued",
           kind,
+          outputMode:
+            kind === "pipeline"
+              ? b.merge
+                ? "merged"
+                : "separate"
+              : b.merge
+                ? "merged"
+                : undefined,
           regenerate: b.regenerate === true,
           sceneIds,
           progress: 0,
           message:
-            kind === "render" ? "Chờ xuất video" : "Chờ tạo tài nguyên thật",
+            kind === "render"
+              ? "Chờ xuất video"
+              : kind === "pipeline" && chapterIds.length > 1
+                ? `Chờ xử lý ${chapterIds.length} chương trong một lô`
+                : "Chờ tạo tài nguyên thật",
           createdAt: new Date().toISOString(),
           snapshot: { settings: structuredClone(p.settings) },
           prepare,

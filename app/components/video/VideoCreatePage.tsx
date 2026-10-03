@@ -65,7 +65,7 @@ export function VideoCreatePage({
     setError("");
     try {
       if (
-        !["modal-vieneu", "vieneu-local", "korva-local"].includes(
+        !["modal-vieneu", "pollinations", "vieneu-local", "korva-local"].includes(
           settings.ttsProvider || "",
         )
       )
@@ -107,7 +107,7 @@ export function VideoCreatePage({
     try {
       if (action === "retry" && project && !active) {
         if (
-          !["modal-vieneu", "vieneu-local", "korva-local"].includes(
+          !["modal-vieneu", "pollinations", "vieneu-local", "korva-local"].includes(
             settings.ttsProvider || "",
           )
         )
@@ -360,6 +360,12 @@ export function VideoCreatePage({
                           </option>
                           <option value="modal-reference">
                             Reference AI Cloud · Ảnh tham chiếu
+                          </option>
+                          <option value="aihorde">
+                            AI Horde · Miễn phí cộng đồng
+                          </option>
+                          <option value="pollinations">
+                            Pollinations · Cloud API
                           </option>
                           <option value="flux2-local">
                             FLUX.2 Local · Chất lượng

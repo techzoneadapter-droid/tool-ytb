@@ -240,11 +240,46 @@ async function main() {
                   .length,
           motion: scenes.filter((x) => completedItems.has(x.id + ":motion"))
             .length,
+          rendered: get<Job>(job.id, "job").counts?.rendered || 0,
           total: scenes.length,
           failed,
         });
+        const sharedFallbackReady =
+          s.imageEnabled !== false &&
+          s.fallbackOnImageError === true &&
+          (await validImage(s.fallbackImage));
+        const bypassUnavailableImageAI =
+          sharedFallbackReady && !(await imageEngineReady(s));
+
+        if (tasks.includes("audio") && s.ttsProvider === "vieneu-local") {
+          checkpoint("audio", 1, "Đang khởi động VieNeu Local và nạp giọng đọc");
+          await startService("vieneu");
+        }
+
         for (const type of tasks as ("audio" | "image" | "motion")[]) {
           for (const scene of scenes) {
+            if (
+              type === "image" &&
+              bypassUnavailableImageAI &&
+              !(await valid(scene, "image"))
+            ) {
+              const key = scene.id + ":image";
+              scene.image = undefined;
+              scene.imageSource = "shared";
+              scene.imageStatus = "done";
+              scene.imageError = undefined;
+              scene.approved = !s.humanCheck;
+              completedItems.add(key);
+              completed++;
+              put("project", p);
+              updateJob(job.id, {
+                completedItems: [...completedItems],
+                counts: counts(),
+                message: "AI ảnh chưa sẵn sàng — đang dùng ảnh chung để tiếp tục dựng video",
+              });
+              continue;
+            }
+
             if (
               type === "audio" &&
               ["modal-vieneu", "vieneu-local"].includes(s.ttsProvider || "") &&

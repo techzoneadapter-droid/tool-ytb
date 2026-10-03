@@ -67,7 +67,7 @@ async function splitLegacyPipelineJobs() {
     (job) =>
       job.kind === "pipeline" &&
       job.status === "queued" &&
-      job.outputMode === "separate" &&
+      job.outputMode !== "merged" &&
       job.chapterIds.length > 1,
   );
   for (const job of candidates) {

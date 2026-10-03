@@ -5,6 +5,7 @@ import type { Settings } from "../project/types";
 import { requireImage } from "../providers/config";
 import { localGenerate, publishGenerated } from "../providers/local-workers";
 import { makeModalImage, makeModalStoryBatch } from "./modal";
+import { aiHordeImage, pollinationsImage } from "../providers/free-cloud";
 
 export async function makeImage(
   prompt: string,
@@ -36,6 +37,46 @@ export async function makeImage(
     } catch {
       await unlink(file).catch(() => {});
       throw Error("Story AI Cloud không trả về ảnh hợp lệ.");
+    }
+  }
+
+  if (provider === "aihorde") {
+    const generated = await aiHordeImage(prompt, s.aspect, seed);
+    bytes = generated.bytes;
+    try {
+      await sharp(bytes, { limitInputPixels: 40000000 })
+        .resize(
+          s.aspect === "9:16" ? 720 : 1280,
+          s.aspect === "9:16" ? 1280 : 720,
+          { fit: "cover" },
+        )
+        .png()
+        .toFile(file);
+      await publishGenerated(file, "images");
+      return { engine: "aihorde", model: generated.model };
+    } catch {
+      await unlink(file).catch(() => {});
+      throw Error("AI Horde không trả ảnh hợp lệ.");
+    }
+  }
+
+  if (provider === "pollinations") {
+    const generated = await pollinationsImage(prompt, s.aspect, seed);
+    bytes = generated.bytes;
+    try {
+      await sharp(bytes, { limitInputPixels: 40000000 })
+        .resize(
+          s.aspect === "9:16" ? 720 : 1280,
+          s.aspect === "9:16" ? 1280 : 720,
+          { fit: "cover" },
+        )
+        .png()
+        .toFile(file);
+      await publishGenerated(file, "images");
+      return { engine: "pollinations", model: generated.model };
+    } catch {
+      await unlink(file).catch(() => {});
+      throw Error("Pollinations không trả ảnh hợp lệ.");
     }
   }
 

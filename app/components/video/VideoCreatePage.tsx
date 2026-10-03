@@ -131,6 +131,26 @@ export function VideoCreatePage({
       setBusy(false);
     }
   }
+  async function addReferences(files?: FileList | null) {
+    if (!files?.length) return;
+    setBusy(true);
+    setError("");
+    try {
+      const current = settings.referenceImages || [];
+      const next = [...current];
+      for (const file of Array.from(files).slice(0, Math.max(0, 10 - current.length))) {
+        const result = await upload(file);
+        if (!result.asset) throw Error("Ảnh tham chiếu không hợp lệ.");
+        next.push(result.asset);
+      }
+      change({ referenceImages: next });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function fallback(file?: File) {
     if (!file) return;
     setBusy(true);
@@ -355,6 +375,55 @@ export function VideoCreatePage({
                           ))}
                         </select>
                       </label>
+                      {settings.imageProvider === "modal-reference" && (
+                        <div className="reference-box">
+                          <div className="row between">
+                            <div>
+                              <strong>Ảnh tham chiếu nhân vật</strong>
+                              <small>Tối đa 10 ảnh. Nên dùng nhiều góc của cùng nhân vật.</small>
+                            </div>
+                            <label className="button">
+                              <ImagePlus size={16} />
+                              Thêm ảnh
+                              <input
+                                type="file"
+                                accept=".png,.jpg,.jpeg,.webp"
+                                multiple
+                                hidden
+                                onChange={(e) => {
+                                  void addReferences(e.target.files);
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                          </div>
+                          <div className="reference-list">
+                            {(settings.referenceImages || []).map((image, index) => (
+                              <div className="reference-thumb" key={image}>
+                                <img src={fileURL(image)} alt={"Tham chiếu " + (index + 1)} />
+                                <button
+                                  type="button"
+                                  aria-label={"Xóa ảnh tham chiếu " + (index + 1)}
+                                  onClick={() =>
+                                    change({
+                                      referenceImages: (settings.referenceImages || []).filter(
+                                        (item) => item !== image,
+                                      ),
+                                    })
+                                  }
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          {!settings.referenceImages?.length && (
+                            <p className="muted">
+                              Reference AI chỉ chạy khi đã có ít nhất một ảnh tham chiếu thật.
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : null}
                   <div className="inset">

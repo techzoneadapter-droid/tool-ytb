@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { stat, unlink } from "node:fs/promises";
+import { mkdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Job, Project, VideoRecord } from "../project/types";
 import { get, list, put, remove, root } from "../project/store";
 import { assetExists } from "../project/media";
-import { verifyVideo } from "../videoRender/process";
+import { run, verifyVideo } from "../videoRender/process";
 
 const assets = path.join(root, "assets");
 
@@ -93,4 +93,48 @@ export function listVideos() {
     ...video,
     verified: video.verified && assetExists(video.output),
   }));
+}
+
+
+export async function mergeVideoRecords(job: Job, project: Project) {
+  const ids = job.sourceVideoIds || [];
+  if (ids.length < 2) throw Error("Chọn ít nhất 2 video để ghép.");
+  const all = list<VideoRecord>("video");
+  const selected = ids.map((id) => all.find((v) => v.id === id));
+  if (selected.some((v) => !v || v.projectId !== project.id || !assetExists(v.output)))
+    throw Error("Một video nguồn không còn hợp lệ.");
+
+  const ordered = (selected as VideoRecord[]).sort((a, b) => {
+    const ai = Math.min(...a.chapterIds.map((id) => project.chapters.findIndex((x) => x.id === id)).filter((x) => x >= 0));
+    const bi = Math.min(...b.chapterIds.map((id) => project.chapters.findIndex((x) => x.id === id)).filter((x) => x >= 0));
+    return ai - bi;
+  });
+  const work = path.join(root, "work", "merge-" + job.id);
+  await mkdir(work, { recursive: true });
+  const listFile = path.join(work, "concat.txt");
+  await writeFile(
+    listFile,
+    ordered
+      .map((video) => "file '" + path.join(assets, video.output).replaceAll("\\", "/").replaceAll("'", "'\\''") + "'")
+      .join("\n"),
+  );
+  const output = randomUUID() + ".mp4";
+  const destination = path.join(assets, output);
+  try {
+    await run(["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-movflags", "+faststart", destination]);
+    await verifyVideo(destination);
+  } catch {
+    await unlink(destination).catch(() => {});
+    await run([
+      "-y", "-f", "concat", "-safe", "0", "-i", listFile,
+      "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+      "-c:a", "aac", "-ar", "24000", "-ac", "1",
+      "-pix_fmt", "yuv420p", "-movflags", "+faststart", destination,
+    ]);
+    await verifyVideo(destination);
+  }
+  return {
+    output,
+    chapterIds: [...new Set(ordered.flatMap((video) => video.chapterIds))],
+  };
 }

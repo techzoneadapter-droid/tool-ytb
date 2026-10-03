@@ -429,7 +429,7 @@ async function main() {
                     item.approved = !s.humanCheck;
                     completedItems.add(item.id + ":image");
                   }
-                  completed++;
+                  completed += group.length;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],
@@ -456,7 +456,7 @@ async function main() {
                       failed++;
                     }
                   }
-                  if (usedFallback === group.length) completed++;
+                  if (usedFallback === group.length) completed += group.length;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],

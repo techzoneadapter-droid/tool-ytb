@@ -1,7 +1,10 @@
 import { vietnameseVoices, legacyOpenAIVoices } from "../tts/voices";
 import { localStatus } from "../tts/local";
 import { localVoiceNames, type TTSProvider } from "../tts/local-voices";
+import { modalVoices } from "../tts/modal";
+import { modalConfigured, modalHealth } from "./modal/client";
 import { runtimeStatus } from "./runtime-status";
+
 export function ttsConfig() {
   const provider = process.env.TTS_PROVIDER || "openai";
   const key =
@@ -31,6 +34,7 @@ export function ttsConfig() {
       !!key && (provider === "openai" || (provider === "azure" && !!region)),
   };
 }
+
 export function requireTTS(voice: string) {
   const c = ttsConfig();
   if (!c.configured) throw Error("Chưa cấu hình API TTS");
@@ -45,6 +49,7 @@ export function requireTTS(voice: string) {
     );
   return { ...c, voiceId: id };
 }
+
 export function imageConfig() {
   return {
     provider: process.env.IMAGE_PROVIDER || "openai",
@@ -52,14 +57,21 @@ export function imageConfig() {
     model: process.env.IMAGE_MODEL || "gpt-image-1",
   };
 }
+
 export function requireImage() {
   const c = imageConfig();
   if (c.provider !== "openai" || !c.key)
     throw Error("Chưa cấu hình API tạo ảnh");
   return c;
 }
+
 export async function providerStatus() {
-  const [local, runtime] = await Promise.all([localStatus(), runtimeStatus()]);
+  const [local, runtime, modalTTS, modalImage] = await Promise.all([
+    localStatus(),
+    runtimeStatus(),
+    modalHealth("tts"),
+    modalHealth("image"),
+  ]);
   let t;
   try {
     t = ttsConfig();
@@ -70,15 +82,39 @@ export async function providerStatus() {
       mapping: {} as Record<string, string>,
     };
   }
+
+  const modalVoiceList = modalTTS.ready
+    ? await modalVoices().catch(() => [])
+    : [];
+
   return {
     local,
     runtime,
+    modal: {
+      tts: {
+        ...modalTTS,
+        configured: modalConfigured("tts"),
+      },
+      image: {
+        ...modalImage,
+        configured: modalConfigured("image"),
+      },
+    },
     tts: { provider: t.provider, configured: t.configured },
     image: {
       provider: imageConfig().provider,
       configured: imageConfig().provider === "openai" && !!imageConfig().key,
     },
     voices: [
+      ...modalVoiceList.map((v) => ({
+        ...v,
+        name: v.name || v.id,
+        provider: "modal-vieneu" as TTSProvider,
+        key: "modal-vieneu:" + v.id,
+        configured: modalTTS.ready,
+        voiceId: v.id,
+        status: modalTTS.message,
+      })),
       ...local.korva.voices.map((v) => ({
         ...v,
         name: localVoiceNames[v.id] || v.name || v.id,
@@ -126,10 +162,16 @@ export async function providerStatus() {
             ? v.id
             : null),
       })),
-    ].sort(
-      (a, b) =>
-        Number(b.provider === "vieneu-local") -
-        Number(a.provider === "vieneu-local"),
-    ),
+    ].sort((a, b) => {
+      const order = (provider: string) =>
+        provider === "modal-vieneu"
+          ? 0
+          : provider === "vieneu-local"
+            ? 1
+            : provider === "korva-local"
+              ? 2
+              : 3;
+      return order(a.provider) - order(b.provider);
+    }),
   };
 }

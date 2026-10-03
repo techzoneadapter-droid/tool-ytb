@@ -6,6 +6,7 @@ import { modalConfigured, modalHealth } from "./modal/client";
 import { runtimeStatus } from "./runtime-status";
 import { pollinationsAudioCatalog, pollinationsConfigured } from "./free-cloud";
 import { edgeVoices } from "../tts/edge";
+import { flowHealth } from "./flow-browser";
 
 export function ttsConfig() {
   const provider = process.env.TTS_PROVIDER || "openai";
@@ -68,12 +69,13 @@ export function requireImage() {
 }
 
 export async function providerStatus() {
-  const [local, runtime, modalTTS, modalImage, pollinations] = await Promise.all([
+  const [local, runtime, modalTTS, modalImage, pollinations, flow] = await Promise.all([
     localStatus(),
     runtimeStatus(),
     modalHealth("tts"),
     modalHealth("image"),
     pollinationsAudioCatalog(),
+    flowHealth(),
   ]);
   let t;
   try {
@@ -107,6 +109,10 @@ export async function providerStatus() {
     image: {
       provider: imageConfig().provider,
       configured: imageConfig().provider === "openai" && !!imageConfig().key,
+    },
+    flow: {
+      ...flow,
+      configured: !!process.env.FLOW_PROJECT_URL,
     },
     freeCloud: {
       aiHorde: {

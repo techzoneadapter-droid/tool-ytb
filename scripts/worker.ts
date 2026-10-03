@@ -16,7 +16,7 @@ import {
 } from "../modules/project/store";
 import type { Job, Project } from "../modules/project/types";
 import { speak } from "../modules/tts";
-import { makeImage } from "../modules/imagePrompt";
+import { makeImage, makeStoryImageBatch } from "../modules/imagePrompt";
 import {
   sceneVisual,
   ensureVisualProfile,
@@ -172,6 +172,114 @@ async function main() {
         });
         for (const type of tasks as ("audio" | "image" | "motion")[]) {
           for (const scene of scenes) {
+            if (
+              type === "image" &&
+              s.imageProvider === "modal-story" &&
+              !completedItems.has(scene.id + ":image") &&
+              !(await valid(scene, "image"))
+            ) {
+              const chapter = p.chapters.find((candidate) =>
+                candidate.scenes.some((item) => item.id === scene.id),
+              )!;
+              const chapterScenes = chapter.scenes.filter(
+                (item) =>
+                  scenes.some((selected) => selected.id === item.id) &&
+                  !completedItems.has(item.id + ":image"),
+              );
+              const start = Math.max(
+                0,
+                chapterScenes.findIndex((item) => item.id === scene.id),
+              );
+              const group: typeof chapterScenes = [];
+              for (const candidate of chapterScenes.slice(start)) {
+                if (group.length >= 10) break;
+                if (!(await valid(candidate, "image"))) group.push(candidate);
+              }
+              if (group.length) {
+                checkpoint(
+                  "images",
+                  Math.floor(
+                    (completed / Math.max(1, total)) *
+                      (kind === "pipeline" ? 75 : 99),
+                  ),
+                  `Story AI đang tạo ${group.length} cảnh đồng nhất — ${chapter.title}`,
+                );
+                const files: string[] = [];
+                const prompts: string[] = [];
+                for (const item of group) {
+                  const visual = sceneVisual(chapter, item, s);
+                  item.finalImagePrompt = visual.prompt;
+                  item.imageSeed = visual.seed;
+                  item.imageStatus = "working";
+                  item.imageError = undefined;
+                  files.push(path.join(assets, randomUUID() + ".png"));
+                  prompts.push(visual.prompt);
+                }
+                put("project", p);
+                try {
+                  const characterDescription =
+                    chapter.visualProfile?.characters?.[0]?.descriptor ||
+                    chapter.visualProfile?.visualNotes ||
+                    "a consistent main character";
+                  const generated = await makeStoryImageBatch(
+                    prompts,
+                    files,
+                    s,
+                    chapter.visualProfile?.seed || 0,
+                    characterDescription,
+                  );
+                  for (let index = 0; index < group.length; index++) {
+                    const item = group[index];
+                    item.image = path.basename(files[index]);
+                    item.imageSource = generated.engine;
+                    item.imageEngine = generated.engine;
+                    item.imageModel = generated.model;
+                    item.imageStatus = "done";
+                    item.imageError = undefined;
+                    item.motion = undefined;
+                    item.motionStatus = undefined;
+                    item.motionError = undefined;
+                    item.approved = !s.humanCheck;
+                    completedItems.add(item.id + ":image");
+                    completed++;
+                  }
+                  put("project", p);
+                  updateJob(job.id, {
+                    completedItems: [...completedItems],
+                    counts: counts(),
+                  });
+                  continue;
+                } catch (error) {
+                  const message =
+                    error instanceof Error ? error.message : String(error);
+                  let usedFallback = 0;
+                  for (const item of group) {
+                    item.imageStatus = "error";
+                    item.imageError = message;
+                    if (
+                      s.fallbackOnImageError &&
+                      (await resolveSceneImage(
+                        { ...item, image: undefined },
+                        s,
+                      ))
+                    ) {
+                      completedItems.add(item.id + ":image");
+                      completed++;
+                      usedFallback++;
+                    } else {
+                      failed++;
+                    }
+                  }
+                  put("project", p);
+                  updateJob(job.id, {
+                    completedItems: [...completedItems],
+                    counts: counts(),
+                  });
+                  if (!usedFallback) continue;
+                  continue;
+                }
+              }
+            }
             if (type === "motion" && !usesMotion(scene, s)) continue;
             const key = scene.id + ":" + type;
             if(type==='image' && !job.regenerate && completedItems.has(key) && scene.imageError && s.fallbackOnImageError && await resolveSceneImage(scene,s)) {

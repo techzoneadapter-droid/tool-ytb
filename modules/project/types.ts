@@ -49,6 +49,8 @@ export type Settings = {
     | "flux2-local"
     | "local-fast"
     | "auto-local"
+    | "aihorde"
+    | "pollinations"
     | "openai";
   referenceImages?: string[];
   motionMode?: "off" | "selected" | "all";

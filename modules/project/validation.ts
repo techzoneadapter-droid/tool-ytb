@@ -1,6 +1,4 @@
 import { z } from "zod";
-import { getVietnameseVoice, legacyOpenAIVoices } from "../tts/voices";
-import { localVoiceNames } from "../tts/local-voices";
 const asset = z
   .string()
   .regex(/^[a-f0-9-]+\.(png|jpg|jpeg|webp|wav|mp3|mp4)$/)
@@ -13,11 +11,25 @@ export const settingsSchema = z.object({
   provider: z.literal("openai"),
   imageEnabled: z.boolean().optional(),
   imageProvider: z
-    .enum(["flux2-local", "local-fast", "auto-local", "openai"])
+    .enum([
+      "modal-story",
+      "modal-reference",
+      "flux2-local",
+      "local-fast",
+      "auto-local",
+      "openai",
+    ])
     .optional(),
+  referenceImages: z.array(asset.unwrap()).max(10).optional(),
   motionMode: z.enum(["off", "selected", "all"]).optional(),
   ttsProvider: z
-    .enum(["vieneu-local", "korva-local", "tts-studio-local", "cloud"])
+    .enum([
+      "modal-vieneu",
+      "vieneu-local",
+      "korva-local",
+      "tts-studio-local",
+      "cloud",
+    ])
     .optional(),
   mode: z.enum(["original", "review", "summary"]),
   style: z.string().max(100),

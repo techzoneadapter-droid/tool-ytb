@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseChapters, chunks } from "../modules/project/parser";
+import { parseChapters, chunks, cleanNarrationText } from "../modules/project/parser";
 import { defaults } from "../modules/project/types";
 import { settingsSchema } from "../modules/project/validation";
 import { isSameOrigin } from "../modules/project/request";
@@ -173,6 +173,30 @@ test("local HTTP URL cannot redirect selection to a cloud endpoint", () => {
     else process.env.VIENEU_LOCAL_URL = saved;
   }
 });
+
+test("narration cleanup removes markup and decorative symbols but keeps Vietnamese punctuation", () => {
+  const dirty =
+    "**Lâm Phong** bước ra!!! 😄 #bí_mật\n- [Xem thêm](https://example.com)\n> Trời mưa... ***rất lớn*** @@@";
+  const clean = cleanNarrationText(dirty);
+  assert.equal(
+    clean,
+    "Lâm Phong bước ra! bí mật\nXem thêm\nTrời mưa... rất lớn",
+  );
+  assert.ok(!/[#*@\[\]{}]/u.test(clean));
+});
+
+test("chapter parsing stores only cleaned narration text", () => {
+  const chapter = parseChapters(
+    "**Chương 1: Mở đầu**\n***Lâm Phong*** nhìn trời ✨.\n- Hắn nói: \"Bắt đầu!\"",
+  )[0];
+  assert.equal(chapter.title, "Chương 1: Mở đầu");
+  assert.equal(
+    chapter.text,
+    'Lâm Phong nhìn trời.\nHắn nói: "Bắt đầu!"',
+  );
+  assert.ok(chapter.scenes.every((scene) => !/[✨*]/u.test(scene.text)));
+});
+
 test("recognizes chapter headings without splitting inline mentions", () => {
   assert.equal(
     parseChapters(

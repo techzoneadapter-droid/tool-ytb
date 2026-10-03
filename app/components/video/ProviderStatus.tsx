@@ -121,7 +121,7 @@ export function ProviderStatus({
     const imageRaw =
       provider === "flow-browser"
         ? {
-            label: "Google Flow · Nano Banana Pro",
+            label: "Google Flow · Nano Banana Pro · tài khoản của bạn",
             ready: !!p?.flow?.connected,
             configured: true,
             service: "flow",
@@ -273,7 +273,7 @@ export function ProviderStatus({
                 {busy === row.service
                   ? "Đang mở…"
                   : row.service === "flow"
-                    ? "Mở Flow"
+                    ? "Kết nối Flow"
                     : "Khởi động"}
               </button>
             )}
@@ -302,8 +302,9 @@ export function ProviderStatus({
       )}
       {settings.imageProvider === "flow-browser" && !p?.flow?.connected && (
         <p className="notice">
-          Flow dùng một hồ sơ Chrome riêng trên máy. Bấm Mở Flow, đăng nhập Google
-          thủ công một lần và mở đúng project; StoryFlow không đọc mật khẩu hay cookie.
+          Flow dùng một profile Chrome riêng của StoryFlow. Bấm Kết nối Flow,
+          đăng nhập Google thủ công một lần và mở đúng project. Sau đó worker tái
+          sử dụng phiên này; không dùng profile Chrome chính và không lưu mật khẩu.
         </p>
       )}
 

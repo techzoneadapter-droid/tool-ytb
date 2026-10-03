@@ -386,7 +386,7 @@ export function VideoCreatePage({
                             Reference AI Cloud · Ảnh tham chiếu
                           </option>
                           <option value="flow-browser">
-                            Google Flow · Nano Banana Pro
+                            Google Flow · Nano Banana Pro · tài khoản của bạn
                           </option>
                           <option value="aihorde">
                             AI Horde · Miễn phí cộng đồng

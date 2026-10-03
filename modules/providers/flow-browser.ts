@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 function bridgeURL() {
   const raw = process.env.FLOW_BRIDGE_URL || "http://127.0.0.1:7865";
   const url = new URL(raw);
@@ -11,7 +9,7 @@ function bridgeURL() {
     url.search ||
     url.hash
   )
-    throw Error("Flow Bridge phải chạy bằng HTTP trên máy cục bộ.");
+    throw Error("Flow Worker phải chạy bằng HTTP trên máy cục bộ.");
   return url;
 }
 
@@ -35,7 +33,7 @@ async function call<T>(
     const message = type.includes("application/json")
       ? (await response.json().catch(() => null))?.error
       : await response.text().catch(() => "");
-    throw Error(message || `Flow Bridge lỗi HTTP ${response.status}.`);
+    throw Error(message || `Flow Worker lỗi HTTP ${response.status}.`);
   }
   if (type.includes("application/json")) return response.json() as Promise<T>;
   return (await response.arrayBuffer()) as T;
@@ -67,7 +65,7 @@ export async function flowHealth(): Promise<FlowHealth> {
       projectConfigured: !!process.env.FLOW_PROJECT_URL,
       model: process.env.FLOW_MODEL_LABEL || "Nano Banana Pro",
       message:
-        "Flow Bridge chưa chạy. Mở hệ thống Flow từ StoryFlow để kết nối.",
+        "Flow Worker chưa chạy. Bấm Kết nối Flow để StoryFlow tự khởi động.",
     };
   }
 }

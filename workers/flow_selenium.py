@@ -2,6 +2,9 @@ import base64
 import json
 import os
 import pathlib
+import shutil
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -26,7 +29,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 HOST = "127.0.0.1"
-FLOW_PROTOCOL = 2
+FLOW_PROTOCOL = 3
 BRIDGE_URL = os.getenv("FLOW_BRIDGE_URL", "http://127.0.0.1:7865")
 PORT = int(urlparse(BRIDGE_URL).port or 7865)
 PROJECT_URL = os.getenv("FLOW_PROJECT_URL", "https://flow.google.com/")
@@ -51,6 +54,10 @@ CHROME_USER_DATA_DIR = pathlib.Path(
     os.getenv("FLOW_CHROME_USER_DATA_DIR", str(default_chrome_user_data()))
 ).resolve()
 SELECTION_FILE = pathlib.Path("data/flow-profile-selection.json").resolve()
+CLONE_BASE_DIR = pathlib.Path(
+    os.getenv("FLOW_PROFILE_CLONE_DIR", "data/flow-chrome-clones")
+).resolve()
+CLONE_BASE_DIR.mkdir(parents=True, exist_ok=True)
 
 def load_profile_selection():
     try:
@@ -107,6 +114,8 @@ PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
 _driver = None
+_browser_process = None
+_browser_debug_port = None
 _driver_lock = threading.RLock()
 _generate_lock = threading.Lock()
 _state_lock = threading.Lock()
@@ -130,36 +139,211 @@ def flow_host(url):
         return False
 
 
-def chrome_options(visible=False):
-    options = webdriver.ChromeOptions()
+def _safe_name(value):
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in value)
+    return cleaned.strip("_") or "Default"
+
+
+def _profile_clone_root(profile_directory):
+    return CLONE_BASE_DIR / _safe_name(profile_directory) / "User Data"
+
+
+def _copy_profile_once(profile_directory):
+    clone_root = _profile_clone_root(profile_directory)
+    marker = clone_root.parent / ".storyflow-clone.json"
+    if marker.exists() and (clone_root / profile_directory).exists():
+        return clone_root
+
+    source_profile = CHROME_USER_DATA_DIR / profile_directory
+    if not source_profile.exists():
+        raise RuntimeError(
+            f"Không tìm thấy thư mục Chrome profile: {profile_directory}"
+        )
+
+    clone_root.mkdir(parents=True, exist_ok=True)
+
+    # Local State contains Chrome's local encryption metadata; copy it so an
+    # existing signed-in session can be reused when Windows permits reading it.
+    try:
+        shutil.copy2(CHROME_USER_DATA_DIR / "Local State", clone_root / "Local State")
+    except Exception:
+        pass
+
+    skip_dirs = {
+        "Cache",
+        "Code Cache",
+        "GPUCache",
+        "GrShaderCache",
+        "DawnCache",
+        "ShaderCache",
+        "Crashpad",
+        "BrowserMetrics",
+        "OptimizationGuidePredictionModels",
+        "GraphiteDawnCache",
+        "Safe Browsing",
+        "component_crx_cache",
+    }
+    skip_files = {
+        "LOCK",
+        "SingletonLock",
+        "SingletonCookie",
+        "SingletonSocket",
+    }
+    target_profile = clone_root / profile_directory
+    target_profile.mkdir(parents=True, exist_ok=True)
+
+    for root, dirs, files in os.walk(source_profile):
+        dirs[:] = [name for name in dirs if name not in skip_dirs]
+        src_root = pathlib.Path(root)
+        relative = src_root.relative_to(source_profile)
+        dst_root = target_profile / relative
+        dst_root.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            if name in skip_files or name.startswith("Singleton"):
+                continue
+            src = src_root / name
+            dst = dst_root / name
+            try:
+                shutil.copy2(src, dst)
+            except OSError:
+                # Active Chrome may temporarily lock a few databases. The clone
+                # remains usable; if the Google session is missing, the user
+                # signs in once inside this isolated StoryFlow clone.
+                continue
+
+    marker.write_text(
+        json.dumps(
+            {
+                "sourceUserData": str(CHROME_USER_DATA_DIR),
+                "sourceProfile": profile_directory,
+                "createdAt": now_iso(),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return clone_root
+
+
+def _find_chrome_binary():
+    configured = os.getenv("FLOW_CHROME_PATH", "").strip()
+    candidates = []
+    if configured:
+        candidates.append(pathlib.Path(configured))
+    if os.name == "nt":
+        for base in (
+            os.getenv("PROGRAMFILES", ""),
+            os.getenv("PROGRAMFILES(X86)", ""),
+            os.getenv("LOCALAPPDATA", ""),
+        ):
+            if base:
+                candidates.append(
+                    pathlib.Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe"
+                )
+    elif sys.platform == "darwin":
+        candidates.append(
+            pathlib.Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        )
+    else:
+        for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+            found = shutil.which(name)
+            if found:
+                candidates.append(pathlib.Path(found))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    raise RuntimeError(
+        "Không tìm thấy Google Chrome. Có thể đặt FLOW_CHROME_PATH trong .env.local."
+    )
+
+
+def _free_debug_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _launch_browser_for_selection(visible, target_url):
+    global _browser_process, _browser_debug_port
+
     mode = _profile_selection.get("mode", "storyflow")
     profile_directory = _profile_selection.get("profileDirectory", "Default")
-
     if mode == "chrome":
-        options.add_argument(f"--user-data-dir={CHROME_USER_DATA_DIR}")
-        options.add_argument(f"--profile-directory={profile_directory}")
+        user_data_root = _copy_profile_once(profile_directory)
     else:
-        options.add_argument(f"--user-data-dir={PROFILE_DIR}")
+        user_data_root = PROFILE_DIR
+        profile_directory = "Default"
 
-    options.add_argument("--window-size=1600,1000")
-    options.add_argument("--disable-notifications")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--disable-background-networking")
-    options.add_argument("--disable-renderer-backgrounding")
-    options.add_argument("--disable-background-timer-throttling")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
+    debug_port = _free_debug_port()
+    chrome = _find_chrome_binary()
+    wanted = target_url if flow_host(target_url) else PROJECT_URL
 
-    # Login is always visible. Normal generation can be minimized or headless
-    # after the selected profile has already been authenticated.
+    args = [
+        chrome,
+        f"--remote-debugging-port={debug_port}",
+        f"--user-data-dir={user_data_root}",
+        f"--profile-directory={profile_directory}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-notifications",
+        "--disable-popup-blocking",
+        "--window-size=1600,1000",
+    ]
     if not visible and BROWSER_MODE == "headless":
-        options.add_argument("--headless=new")
+        args.append("--headless=new")
     elif not visible and BROWSER_MODE == "minimized":
-        options.add_argument("--start-minimized")
-    return options
+        args.append("--start-minimized")
+    args.append(wanted)
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+    _browser_process = subprocess.Popen(
+        args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+    _browser_debug_port = debug_port
+
+    deadline = time.time() + 20
+    version_url = f"http://127.0.0.1:{debug_port}/json/version"
+    while time.time() < deadline:
+        if _browser_process.poll() is not None:
+            raise RuntimeError(
+                "Chrome Flow vừa mở đã tự đóng. Hãy thử lại hoặc kiểm tra FLOW_CHROME_PATH."
+            )
+        try:
+            response = requests.get(version_url, timeout=1)
+            if response.ok:
+                break
+        except Exception:
+            pass
+        time.sleep(0.25)
+    else:
+        raise RuntimeError("Không kết nối được cổng điều khiển Chrome Flow cục bộ.")
+
+    options = webdriver.ChromeOptions()
+    options.add_experimental_option("debuggerAddress", f"127.0.0.1:{debug_port}")
+    try:
+        return webdriver.Chrome(options=options)
+    except WebDriverException as exc:
+        try:
+            _browser_process.terminate()
+        except Exception:
+            pass
+        _browser_process = None
+        _browser_debug_port = None
+        raise RuntimeError(
+            "Chrome đã mở nhưng Selenium không thể gắn vào phiên Flow cục bộ."
+        ) from exc
+
 
 def close_driver():
-    global _driver
+    global _driver, _browser_process, _browser_debug_port
     with _driver_lock:
         if _driver is not None:
             try:
@@ -167,6 +351,18 @@ def close_driver():
             except Exception:
                 pass
             _driver = None
+        if _browser_process is not None:
+            try:
+                if _browser_process.poll() is None:
+                    _browser_process.terminate()
+                    _browser_process.wait(timeout=3)
+            except Exception:
+                try:
+                    _browser_process.kill()
+                except Exception:
+                    pass
+            _browser_process = None
+        _browser_debug_port = None
 
 
 def ensure_driver(visible=False, target_url=None):
@@ -179,22 +375,10 @@ def ensure_driver(visible=False, target_url=None):
                 close_driver()
 
         if _driver is None:
-            try:
-                # Selenium Manager resolves the installed Chrome/driver.
-                _driver = webdriver.Chrome(options=chrome_options(visible=visible))
-            except WebDriverException as exc:
-                mode = _profile_selection.get("mode", "storyflow")
-                if mode == "chrome":
-                    raise RuntimeError(
-                        "Không mở được profile Chrome đã chọn. Nếu profile này đang mở "
-                        "trong Chrome bình thường, hãy đóng toàn bộ cửa sổ Chrome của profile đó "
-                        "rồi bấm Kết nối Flow lại; Selenium không thể gắn trực tiếp vào một "
-                        "profile Chrome đang chạy bình thường."
-                    ) from exc
-                raise RuntimeError(
-                    "Không mở được Chrome cho Google Flow. Hãy chắc chắn Chrome đã cài "
-                    "và không có tiến trình khác đang giữ profile StoryFlow Flow."
-                ) from exc
+            _driver = _launch_browser_for_selection(
+                visible=visible,
+                target_url=target_url or PROJECT_URL,
+            )
 
         driver = _driver
         wanted = target_url or PROJECT_URL
@@ -204,7 +388,6 @@ def ensure_driver(visible=False, target_url=None):
         if not flow_host(current) and "accounts.google.com" not in current:
             driver.get(wanted)
         elif flow_host(wanted) and PROJECT_URL != "https://flow.google.com/":
-            # Keep the selected project stable, but avoid reloading on every scene.
             if not current.startswith(PROJECT_URL):
                 driver.get(PROJECT_URL)
 
@@ -481,7 +664,7 @@ def connected_health():
         "lastCompletedAt": state["lastCompletedAt"],
         "message": (
             (
-                "Đã kết nối Google Flow bằng profile Chrome bạn đã chọn."
+                "Đã kết nối Google Flow bằng bản sao riêng của profile Chrome bạn đã chọn."
                 if _profile_selection.get("mode") == "chrome"
                 else "Đã kết nối Google Flow bằng profile riêng của StoryFlow."
             )
@@ -637,8 +820,8 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     print(f"StoryFlow Selenium Flow Worker: http://{HOST}:{PORT}", flush=True)
     print(
-        "Dùng profile Chrome riêng. Đăng nhập Flow thủ công một lần; "
-        "worker không đọc mật khẩu hay trích token.",
+        "StoryFlow dùng profile Chrome riêng hoặc bản sao cục bộ của profile đã chọn; "
+        "không khóa Chrome đang mở và không đọc mật khẩu/token.",
         flush=True,
     )
     server = ThreadingHTTPServer((HOST, PORT), Handler)

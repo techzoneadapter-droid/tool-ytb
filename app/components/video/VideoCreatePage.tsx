@@ -359,7 +359,11 @@ export function VideoCreatePage({
                         <span className="badge">
                           {settings.imageProvider?.startsWith("modal-")
                             ? "Cloud GPU"
-                            : "Local"}
+                            : ["aihorde", "pollinations"].includes(
+                                  settings.imageProvider || "",
+                                )
+                              ? "Cloud miễn phí"
+                              : "Local"}
                         </span>
                       </div>
                       <label>
@@ -622,7 +626,13 @@ export function VideoCreatePage({
                         checked={!merge}
                         onChange={() => setMerge(false)}
                       />
-                      Tạo video riêng theo từng chương
+                      <span>
+                        Tạo video riêng theo từng chương
+                        <small>
+                          Mỗi video chạy độc lập; video nào xong sẽ lưu ngay vào
+                          Quản lý video.
+                        </small>
+                      </span>
                     </label>
                     <label className="check">
                       <input

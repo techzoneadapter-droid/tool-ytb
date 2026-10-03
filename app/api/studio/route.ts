@@ -85,12 +85,16 @@ export async function POST(req: NextRequest) {
     }
     if (b.action === "create" || b.action === "createVideo") {
       const text = storySchema.parse(b.text);
+      const defaultProvider = defaultTTSProvider();
+      const configuredVoice =
+        process.env.DEFAULT_VIETNAMESE_VOICE || "Ngọc Huyền";
       const baseSettings = {
         ...defaults,
-        ttsProvider: defaultTTSProvider(),
-        voice: localVoiceId(
-          process.env.DEFAULT_VIETNAMESE_VOICE || "Ngọc Huyền",
-        ),
+        ttsProvider: defaultProvider,
+        voice:
+          defaultProvider === "modal-vieneu"
+            ? configuredVoice
+            : localVoiceId(configuredVoice),
         imageEnabled: true,
         imageProvider: modalConfigured("image") ? "modal-story" : "flux2-local",
         motionMode: "off",

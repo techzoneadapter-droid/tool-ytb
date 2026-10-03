@@ -66,6 +66,19 @@ export function ProviderStatus({
     }
   }
 
+  async function openFlow() {
+    setBusy("flow");
+    setDetail("");
+    try {
+      await request({ action: "openFlow" });
+      await refresh();
+    } catch (error) {
+      setDetail((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+
   const current = useMemo(() => {
     const ttsProvider = settings.ttsProvider || "vieneu-local";
     const tts =
@@ -106,7 +119,14 @@ export function ProviderStatus({
 
     const provider = settings.imageProvider || "flux2-local";
     const imageRaw =
-      provider === "aihorde"
+      provider === "flow-browser"
+        ? {
+            label: "Google Flow · Nano Banana Pro",
+            ready: !!p?.flow?.connected,
+            configured: true,
+            service: "flow",
+          }
+        : provider === "aihorde"
         ? {
             label: "AI Horde · miễn phí cộng đồng",
             ready: !!p?.freeCloud?.aiHorde?.ready,
@@ -243,12 +263,18 @@ export function ProviderStatus({
                 className="text-button"
                 disabled={!!busy || !p}
                 onClick={() =>
-                  ["flux", "fast"].includes(row.service)
-                    ? setSetup(true)
-                    : void start(row.service)
+                  row.service === "flow"
+                    ? void openFlow()
+                    : ["flux", "fast"].includes(row.service)
+                      ? setSetup(true)
+                      : void start(row.service)
                 }
               >
-                {busy === row.service ? "Đang mở…" : "Khởi động"}
+                {busy === row.service
+                  ? "Đang mở…"
+                  : row.service === "flow"
+                    ? "Mở Flow"
+                    : "Khởi động"}
               </button>
             )}
           </div>
@@ -274,6 +300,12 @@ export function ProviderStatus({
           local hoặc bật ảnh dùng chung dự phòng để vẫn dựng được video.
         </p>
       )}
+      {settings.imageProvider === "flow-browser" && !p?.flow?.connected && (
+        <p className="notice">
+          Flow dùng một hồ sơ Chrome riêng trên máy. Bấm Mở Flow, đăng nhập Google
+          thủ công một lần và mở đúng project; StoryFlow không đọc mật khẩu hay cookie.
+        </p>
+      )}
 
       <details className="local-services">
         <summary>Engine khác / dự phòng</summary>
@@ -282,6 +314,7 @@ export function ProviderStatus({
             ["VieNeu Cloud", !!p?.modal?.tts?.ready],
             ["Edge TTS Online", true],
             ["Story AI Cloud", !!p?.modal?.image?.ready],
+            ["Google Flow", !!p?.flow?.connected],
             ["AI Horde", !!p?.freeCloud?.aiHorde?.ready],
             ["Pollinations Image", !!p?.freeCloud?.pollinations?.imageReady],
             ["VieNeu Local", !!p?.local.vieneu.ready],

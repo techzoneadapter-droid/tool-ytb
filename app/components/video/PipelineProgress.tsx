@@ -3,6 +3,16 @@ import { useMemo } from "react";
 import { Pause, Play, RotateCcw, XCircle } from "lucide-react";
 import { isActive } from "../studio-api";
 
+function formatTime(seconds?: number) {
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return "";
+  if (seconds < 60) return `${Math.ceil(seconds)} giây`;
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `${minutes} phút`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} giờ ${rest} phút` : `${hours} giờ`;
+}
+
 const labels: Record<string, string> = {
   queued: "Đang chuẩn bị",
   audio: "Đang tạo lời đọc",
@@ -104,6 +114,44 @@ export function PipelineProgress({
       >
         <span style={{ width: data.progress + "%" }} />
       </div>
+
+      {data.current.stageProgress && (
+        <div className="batch-progress-live">
+          <div>
+            <span className="live-dot" />
+            <strong>Công đoạn</strong>
+            <span>
+              {data.current.stageProgress.label} ·{" "}
+              {Math.min(
+                data.current.stageProgress.current,
+                data.current.stageProgress.total,
+              )}
+              /{data.current.stageProgress.total}
+            </span>
+          </div>
+          <div>
+            <strong>Đang xử lý</strong>
+            <span>{data.current.stageProgress.detail}</span>
+          </div>
+          <div>
+            <strong>Hiệu suất</strong>
+            <span>
+              {data.current.stageProgress.concurrency
+                ? `${data.current.stageProgress.concurrency} luồng`
+                : "1 luồng"}
+              {data.current.stageProgress.ratePerMinute
+                ? ` · ${data.current.stageProgress.ratePerMinute.toFixed(1)} mục/phút`
+                : ""}
+              {data.current.stageProgress.elapsedSeconds
+                ? ` · đã chạy ${formatTime(data.current.stageProgress.elapsedSeconds)}`
+                : ""}
+              {data.current.stageProgress.etaSeconds
+                ? ` · còn khoảng ${formatTime(data.current.stageProgress.etaSeconds)}`
+                : ""}
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="batch-progress-footer">
         <div className="batch-progress-meta">

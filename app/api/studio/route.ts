@@ -12,7 +12,7 @@ import {
   removeProject,
 } from "@/modules/project/store";
 import { defaults, type Project, type Job } from "@/modules/project/types";
-import { parseChapters, plan, chunks } from "@/modules/project/parser";
+import { parseChapters, plan, chunks, cleanNarrationText } from "@/modules/project/parser";
 import { sceneSchema, settingsSchema } from "@/modules/project/validation";
 import { rewrite } from "@/modules/project/ai";
 import { providerStatus, requireImage } from "@/modules/providers/config";
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
       );
     const b = await req.json();
     if (b.action === "previewChapters") {
-      const text = storySchema.parse(b.text);
+      const text = cleanNarrationText(storySchema.parse(b.text));
       return NextResponse.json(
         b.splitChapters === false
           ? [{ title: "Chương 1" }]
@@ -84,7 +84,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
     if (b.action === "create" || b.action === "createVideo") {
-      const text = storySchema.parse(b.text);
+      const rawText = storySchema.parse(b.text);
+      const text = cleanNarrationText(rawText);
+      if (!text) throw Error("Nội dung truyện không còn văn bản hợp lệ sau khi làm sạch.");
       const defaultProvider = defaultTTSProvider();
       const configuredVoice =
         process.env.DEFAULT_VIETNAMESE_VOICE || "Ngọc Huyền";
@@ -287,7 +289,8 @@ export async function POST(req: NextRequest) {
         .min(1, "Vui lòng nhập tên chương.")
         .max(200, "Tên chương không được dài quá 200 ký tự.")
         .parse(b.title);
-      const text = storySchema.parse(b.text);
+      const text = cleanNarrationText(storySchema.parse(b.text));
+      if (!text) throw Error("Nội dung chương không còn văn bản hợp lệ sau khi làm sạch.");
       if (
         p.chapters.reduce((n, c) => n + c.text.length, 0) + text.length >
         2000000
@@ -430,7 +433,10 @@ export async function POST(req: NextRequest) {
     if (b.action === "scene") {
       const c = p.chapters.find((c) => c.id === b.chapterId);
       if (!c) throw Error("Không tìm thấy chương");
-      const scene = sceneSchema.parse(b.scene);
+      const scene = sceneSchema.parse({
+        ...b.scene,
+        text: cleanNarrationText(String(b.scene?.text || "")),
+      });
       const i = c.scenes.findIndex((s) => s.id === scene.id);
       if (i < 0) throw Error("Không tìm thấy cảnh");
       const previous = c.scenes[i];

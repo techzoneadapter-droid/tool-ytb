@@ -268,6 +268,20 @@ async function main() {
             tasks.filter((t) => t !== "motion" || usesMotion(scene, s)).length,
           0,
         );
+        const handledThisRun = new Set<string>();
+        const relevantKeys = scenes.flatMap((scene) =>
+          tasks
+            .filter((type) => type !== "motion" || usesMotion(scene, s))
+            .map((type) => scene.id + ":" + type),
+        );
+        completed = relevantKeys.filter((key) => completedItems.has(key)).length;
+        const finishKey = (key: string) => {
+          if (!completedItems.has(key)) {
+            completedItems.add(key);
+            completed++;
+          }
+          handledThisRun.add(key);
+        };
         const valid = async (
           scene: (typeof scenes)[number],
           type: "audio" | "image" | "motion",
@@ -343,7 +357,9 @@ async function main() {
 
             if (
               type === "audio" &&
-              ["modal-vieneu", "vieneu-local", "edge-online"].includes(s.ttsProvider || "") &&
+              ["modal-vieneu", "vieneu-local", "edge-online"].includes(
+                s.ttsProvider || "",
+              ) &&
               !completedItems.has(scene.id + ":audio") &&
               !(await valid(scene, "audio"))
             ) {
@@ -353,21 +369,34 @@ async function main() {
                 if (group.length >= 32) break;
                 if (
                   !completedItems.has(candidate.id + ":audio") &&
+                  !handledThisRun.has(candidate.id + ":audio") &&
                   !(await valid(candidate, "audio"))
                 )
                   group.push(candidate);
               }
               if (group.length) {
+                const engineName =
+                  s.ttsProvider === "modal-vieneu"
+                    ? "VieNeu Cloud"
+                    : s.ttsProvider === "edge-online"
+                      ? "Edge TTS Online"
+                      : "VieNeu Local";
                 checkpoint(
                   "audio",
                   Math.floor(
                     (completed / Math.max(1, total)) *
                       (kind === "pipeline" ? 75 : 99),
                   ),
-                  `${s.ttsProvider === "modal-vieneu" ? "VieNeu Cloud" : s.ttsProvider === "edge-online" ? "Edge TTS Online" : "VieNeu Local"} đang tạo ${group.length} lời đọc song song`,
+                  `${engineName}: bắt đầu nhóm ${group.length} cảnh`,
                 );
                 const files = group.map(() =>
                   path.join(assets, randomUUID() + ".mp3"),
+                );
+                const byId = new Map(
+                  group.map((item, index) => [
+                    item.id,
+                    { item, index },
+                  ]),
                 );
                 for (const item of group) {
                   item.audioStatus = "working";
@@ -382,32 +411,67 @@ async function main() {
                       file: files[index],
                     })),
                     s,
+                    {
+                      shouldStop: () => {
+                        const status = get<Job>(job.id, "job").status;
+                        return status === "paused" || status === "cancelled";
+                      },
+                      onProgress: (event) => {
+                        const found = byId.get(event.id);
+                        if (!found) return;
+                        const { item, index } = found;
+                        item.audio = path.basename(files[index]);
+                        item.audioSource = ttsSource(s);
+                        item.duration = event.seconds;
+                        item.audioStatus = "done";
+                        item.audioError = undefined;
+                        item.approved = !s.humanCheck;
+                        finishKey(item.id + ":audio");
+                        put("project", p);
+                        const chapter = p.chapters.find((candidate) =>
+                          candidate.scenes.some((x) => x.id === item.id),
+                        );
+                        const currentCounts = counts();
+                        const globalProgress = Math.floor(
+                          (completed / Math.max(1, total)) *
+                            (kind === "pipeline" ? 75 : 99),
+                        );
+                        reportStage(
+                          "audio",
+                          "Lời đọc",
+                          currentCounts.audio,
+                          scenes.length,
+                          `${engineName}: ${currentCounts.audio}/${scenes.length} cảnh · ${chapter?.title || "Chương"} · ${event.concurrency} luồng`,
+                          event.concurrency,
+                          globalProgress,
+                        );
+                        updateJob(job.id, {
+                          completedItems: [...completedItems],
+                          counts: currentCounts,
+                        });
+                      },
+                    },
                   );
-                  for (let index = 0; index < group.length; index++) {
-                    const item = group[index];
-                    const seconds = durations.get(item.id);
-                    if (!seconds) throw Error("Engine giọng đọc thiếu audio trong batch.");
-                    item.audio = path.basename(files[index]);
-                    item.audioSource = ttsSource(s);
-                    item.duration = seconds;
-                    item.audioStatus = "done";
-                    item.audioError = undefined;
-                    item.approved = !s.humanCheck;
-                    completedItems.add(item.id + ":audio");
+
+                  const status = get<Job>(job.id, "job").status;
+                  if (status === "paused") throw Error("PAUSED");
+                  if (status === "cancelled") throw Error("CANCELLED");
+
+                  for (const item of group) {
+                    if (!durations.has(item.id) && !completedItems.has(item.id + ":audio"))
+                      throw Error("Engine giọng đọc thiếu audio trong batch.");
                   }
-                  completed += group.length;
-                  put("project", p);
-                  updateJob(job.id, {
-                    completedItems: [...completedItems],
-                    counts: counts(),
-                  });
                   continue;
                 } catch (error) {
                   const message =
                     error instanceof Error ? error.message : String(error);
+                  if (message === "PAUSED" || message === "CANCELLED")
+                    throw error;
                   for (const item of group) {
+                    if (completedItems.has(item.id + ":audio")) continue;
                     item.audioStatus = "error";
                     item.audioError = message;
+                    handledThisRun.add(item.id + ":audio");
                     failed++;
                   }
                   put("project", p);

@@ -76,6 +76,13 @@ export function ProviderStatus({
             configured: !!p?.modal?.tts?.configured,
             service: "",
           }
+        : ttsProvider === "pollinations"
+          ? {
+              label: "Pollinations TTS",
+              ready: !!p?.freeCloud?.pollinations?.ready,
+              configured: !!p?.freeCloud?.pollinations?.configured,
+              service: "",
+            }
         : ttsProvider === "korva-local"
           ? {
               label: "Korva Local",
@@ -92,7 +99,21 @@ export function ProviderStatus({
 
     const provider = settings.imageProvider || "flux2-local";
     const imageRaw =
-      provider === "modal-story" || provider === "modal-reference"
+      provider === "aihorde"
+        ? {
+            label: "AI Horde · miễn phí cộng đồng",
+            ready: !!p?.freeCloud?.aiHorde?.ready,
+            configured: true,
+            service: "",
+          }
+        : provider === "pollinations"
+          ? {
+              label: "Pollinations Image",
+              ready: !!p?.freeCloud?.pollinations?.configured,
+              configured: !!p?.freeCloud?.pollinations?.configured,
+              service: "",
+            }
+        : provider === "modal-story" || provider === "modal-reference"
         ? {
             label:
               provider === "modal-reference"
@@ -236,8 +257,8 @@ export function ProviderStatus({
 
       {!current.tts.configured && (
         <p className="notice">
-          VieNeu Cloud đang được chọn nhưng chưa có endpoint. Chọn VieNeu Local
-          hoặc cấu hình MODAL_TTS_URL.
+          Engine giọng cloud đang được chọn nhưng chưa cấu hình. Có thể chọn
+          VieNeu Local ngay, hoặc thêm endpoint/key tương ứng trong .env.local.
         </p>
       )}
       {!current.image.configured && !current.image.fallback && (
@@ -253,6 +274,8 @@ export function ProviderStatus({
           {[
             ["VieNeu Cloud", !!p?.modal?.tts?.ready],
             ["Story AI Cloud", !!p?.modal?.image?.ready],
+            ["AI Horde", !!p?.freeCloud?.aiHorde?.ready],
+            ["Pollinations", !!p?.freeCloud?.pollinations?.configured],
             ["VieNeu Local", !!p?.local.vieneu.ready],
             ["Korva Local", !!p?.local.korva.ready],
             ["FLUX.2 Local", !!p?.runtime.flux],

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { BookOpen, Clapperboard, FolderVideo, Radio, Layers } from "lucide-react";
+import { BookOpen, Clapperboard, Film, Radio, Layers } from "lucide-react";
 import { useStudioData } from "./useStudioData";
 import { StoryImportPage } from "./story/StoryImportPage";
 import { VideoCreatePage } from "./video/VideoCreatePage";
@@ -10,7 +10,7 @@ import { ChannelManagerPage } from "./channel/ChannelManagerPage";
 const tabs = [
   { name: "Nhập truyện", icon: BookOpen },
   { name: "Tạo video", icon: Clapperboard },
-  { name: "Quản lý video", icon: FolderVideo },
+  { name: "Quản lý video", icon: Film },
   { name: "Quản lý kênh", icon: Radio },
 ];
 

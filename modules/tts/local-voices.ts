@@ -4,7 +4,7 @@ export const localProviderIds = [
   "tts-studio-local",
 ] as const;
 export type LocalProvider = (typeof localProviderIds)[number];
-export type TTSProvider = LocalProvider | "cloud";
+export type TTSProvider = LocalProvider | "modal-vieneu" | "cloud";
 export const localVoiceNames: Record<string, string> = {
   ngoc_huyen: "Ngọc Huyền",
   bao_kim: "Bảo Kim",

@@ -359,9 +359,13 @@ async function main() {
 
             if (
               type === "audio" &&
-              ["modal-vieneu", "vieneu-local", "edge-online"].includes(
-                s.ttsProvider || "",
-              ) &&
+              [
+                "modal-vieneu",
+                "vieneu-local",
+                "edge-online",
+                "pollinations",
+                "cloud",
+              ].includes(s.ttsProvider || "") &&
               !completedItems.has(scene.id + ":audio") &&
               !(await valid(scene, "audio"))
             ) {
@@ -383,6 +387,16 @@ async function main() {
                     : s.ttsProvider === "edge-online"
                       ? "Edge TTS Online"
                       : "VieNeu Local";
+                const expectedConcurrency =
+                  s.ttsProvider === "modal-vieneu"
+                    ? Math.min(16, group.length)
+                    : s.ttsProvider === "edge-online"
+                      ? Math.min(6, group.length)
+                      : s.ttsProvider === "vieneu-local"
+                        ? Math.min(6, group.length)
+                        : s.ttsProvider === "pollinations"
+                          ? Math.min(3, group.length)
+                          : Math.min(2, group.length);
                 checkpoint(
                   "audio",
                   Math.floor(
@@ -390,6 +404,19 @@ async function main() {
                       (kind === "pipeline" ? 75 : 99),
                   ),
                   `${engineName}: bắt đầu nhóm ${group.length} cảnh`,
+                );
+                const beforeCounts = counts();
+                reportStage(
+                  "audio",
+                  "Lời đọc",
+                  beforeCounts.audio,
+                  scenes.length,
+                  `${engineName}: đang xử lý nhóm ${group.length} cảnh · tối đa ${expectedConcurrency} luồng`,
+                  expectedConcurrency,
+                  Math.floor(
+                    (completed / Math.max(1, total)) *
+                      (kind === "pipeline" ? 75 : 99),
+                  ),
                 );
                 const files = group.map(() =>
                   path.join(assets, randomUUID() + ".mp3"),
@@ -518,6 +545,19 @@ async function main() {
                       (kind === "pipeline" ? 75 : 99),
                   ),
                   `${engineName}: bắt đầu nhóm ${group.length} ảnh · ${concurrency} luồng`,
+                );
+                const beforeCounts = counts();
+                reportStage(
+                  "images",
+                  "Hình ảnh",
+                  beforeCounts.image,
+                  scenes.length,
+                  `${engineName}: đang xử lý nhóm ${group.length} ảnh · ${concurrency} luồng`,
+                  concurrency,
+                  Math.floor(
+                    (completed / Math.max(1, total)) *
+                      (kind === "pipeline" ? 75 : 99),
+                  ),
                 );
 
                 let cursor = 0;

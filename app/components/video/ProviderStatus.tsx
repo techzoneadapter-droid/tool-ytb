@@ -1,18 +1,20 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { Settings } from "@/modules/project/types";
 import type { StudioData } from "../studio-api";
 import { request } from "../studio-api";
 
 export function ProviderStatus({
   providers: p,
+  settings,
   refresh,
 }: {
   providers: StudioData["providers"];
+  settings: Settings;
   refresh: () => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(""),
-    [detail, setDetail] = useState(""),
-    [setup, setSetup] = useState(false);
-
+  const [busy, setBusy] = useState("");
+  const [detail, setDetail] = useState("");
+  const [setup, setSetup] = useState(false);
   const [install, setInstall] = useState<{
     state: string;
     log?: string;
@@ -25,9 +27,9 @@ export function ProviderStatus({
     let active = true;
     const poll = () =>
       fetch("/api/ai/setup")
-        .then((r) => r.json())
-        .then((d) => {
-          if (active) setInstall(d);
+        .then((response) => response.json())
+        .then((data) => {
+          if (active) setInstall(data);
         })
         .catch(() => {});
     void poll();
@@ -40,11 +42,12 @@ export function ProviderStatus({
 
   async function setupAI(action: string) {
     setBusy("setup");
+    setDetail("");
     try {
       await request({ action, confirmed: consent }, "/api/ai/setup");
       setInstall({ state: "running" });
-    } catch (e) {
-      setDetail((e as Error).message);
+    } catch (error) {
+      setDetail((error as Error).message);
     } finally {
       setBusy("");
     }
@@ -56,105 +59,220 @@ export function ProviderStatus({
     try {
       await request({ action: "startService", service });
       await refresh();
-    } catch (e) {
-      setDetail((e as Error).message);
+    } catch (error) {
+      setDetail((error as Error).message);
     } finally {
       setBusy("");
     }
   }
 
-  const primary = [
-    ["VieNeu Cloud", p?.modal?.tts?.ready, p?.modal?.tts?.configured, ""],
-    ["Story AI Cloud", p?.modal?.image?.ready, p?.modal?.image?.configured, ""],
-    ["FFmpeg", p?.runtime.ffmpeg, true, ""],
-    ["Worker", p?.runtime.worker, true, "worker"],
-  ] as const;
+  const current = useMemo(() => {
+    const ttsProvider = settings.ttsProvider || "vieneu-local";
+    const tts =
+      ttsProvider === "modal-vieneu"
+        ? {
+            label: "VieNeu Cloud",
+            ready: !!p?.modal?.tts?.ready,
+            configured: !!p?.modal?.tts?.configured,
+            service: "",
+          }
+        : ttsProvider === "korva-local"
+          ? {
+              label: "Korva Local",
+              ready: !!p?.local.korva.ready,
+              configured: true,
+              service: "korva",
+            }
+          : {
+              label: "VieNeu Local",
+              ready: !!p?.local.vieneu.ready,
+              configured: true,
+              service: "vieneu",
+            };
 
-  const local = [
-    ["VieNeu Local", p?.local.vieneu.ready, "vieneu"],
-    ["Korva Local", p?.local.korva.ready, "korva"],
-    ["FLUX.2 Local", p?.runtime.flux, "flux"],
-    ["Local Fast", p?.runtime.fast, "fast"],
-    ["Wan2.2", p?.runtime.wan, "wan"],
-  ] as const;
+    const provider = settings.imageProvider || "flux2-local";
+    const imageRaw =
+      provider === "modal-story" || provider === "modal-reference"
+        ? {
+            label:
+              provider === "modal-reference"
+                ? "Reference AI Cloud"
+                : "Story AI Cloud",
+            ready: !!p?.modal?.image?.ready,
+            configured: !!p?.modal?.image?.configured,
+            service: "",
+          }
+        : provider === "local-fast" || provider === "auto-local"
+          ? {
+              label: "Local Fast",
+              ready: !!p?.runtime.fast,
+              configured: true,
+              service: "fast",
+            }
+          : {
+              label: "FLUX.2 Local",
+              ready: !!p?.runtime.flux,
+              configured: true,
+              service: "flux",
+            };
+
+    const fallback =
+      settings.imageEnabled !== false &&
+      !!settings.fallbackImage &&
+      settings.fallbackOnImageError === true;
+
+    const image =
+      settings.imageEnabled === false
+        ? {
+            label: settings.fallbackImage ? "Ảnh dùng chung" : "Ảnh có sẵn",
+            ready: !!settings.fallbackImage,
+            configured: true,
+            service: "",
+            fallback: true,
+          }
+        : !imageRaw.ready && fallback
+          ? {
+              label: "Ảnh dùng chung dự phòng",
+              ready: true,
+              configured: true,
+              service: "",
+              fallback: true,
+            }
+          : { ...imageRaw, fallback: false };
+
+    const motionReady =
+      settings.motionMode === "off" || !settings.motionMode || !!p?.runtime.wan;
+    const ready =
+      !!p &&
+      tts.ready &&
+      image.ready &&
+      !!p.runtime.ffmpeg &&
+      !!p.runtime.worker &&
+      motionReady;
+
+    return { tts, image, ready, motionReady };
+  }, [p, settings]);
+
+  const rows = [
+    {
+      name: "Lời đọc",
+      value: current.tts.label,
+      ready: current.tts.ready,
+      configured: current.tts.configured,
+      service: current.tts.service,
+    },
+    {
+      name: "Hình ảnh",
+      value: current.image.label,
+      ready: current.image.ready,
+      configured: current.image.configured,
+      service: current.image.service,
+    },
+    {
+      name: "FFmpeg",
+      value: "Dựng video",
+      ready: !!p?.runtime.ffmpeg,
+      configured: true,
+      service: "",
+    },
+    {
+      name: "Worker",
+      value: "Hàng đợi xử lý",
+      ready: !!p?.runtime.worker,
+      configured: true,
+      service: "worker",
+    },
+  ];
 
   return (
     <section className="card system-card">
       <div className="row between">
         <h2>Hệ thống</h2>
-        <span className="badge">Cloud ưu tiên</span>
+        <span className={"badge " + (current.ready ? "ready" : "")}>
+          {current.ready ? "Sẵn sàng tạo video" : "Cần hoàn tất thiết lập"}
+        </span>
       </div>
 
-      <div className="service-list">
-        {primary.map(([name, ready, configured, service]) => (
-          <div className="service-row" key={name}>
-            <strong>{name}</strong>
+      <div className="service-list current-route">
+        {rows.map((row) => (
+          <div className="service-row" key={row.name}>
+            <span className="service-name">
+              <strong>{row.name}</strong>
+              <small>{row.value}</small>
+            </span>
             <span>
-              <i className={"dot " + (ready ? "green" : "amber")} />
+              <i className={"dot " + (row.ready ? "green" : "amber")} />
               {!p
                 ? "Đang kiểm tra"
-                : ready
+                : row.ready
                   ? "Sẵn sàng"
-                  : configured
-                    ? "Chưa kết nối"
+                  : row.configured
+                    ? "Chưa chạy"
                     : "Chưa cấu hình"}
             </span>
-            {!ready && service === "worker" && (
+            {!row.ready && row.service && (
               <button
                 className="text-button"
                 disabled={!!busy || !p}
-                onClick={() => void start(service)}
+                onClick={() =>
+                  ["flux", "fast"].includes(row.service)
+                    ? setSetup(true)
+                    : void start(row.service)
+                }
               >
-                {busy === service ? "Đang mở…" : "Khởi động"}
+                {busy === row.service ? "Đang mở…" : "Khởi động"}
               </button>
             )}
           </div>
         ))}
       </div>
 
+      {!current.motionReady && (
+        <p className="notice">
+          Ảnh động đang bật nhưng Wan2.2 chưa sẵn sàng. Tắt ảnh động hoặc thiết
+          lập Wan2.2 trước khi chạy.
+        </p>
+      )}
+
+      {!current.tts.configured && (
+        <p className="notice">
+          VieNeu Cloud đang được chọn nhưng chưa có endpoint. Chọn VieNeu Local
+          hoặc cấu hình MODAL_TTS_URL.
+        </p>
+      )}
+      {!current.image.configured && !current.image.fallback && (
+        <p className="notice">
+          AI ảnh cloud đang được chọn nhưng chưa có endpoint. Có thể chọn engine
+          local hoặc bật ảnh dùng chung dự phòng để vẫn dựng được video.
+        </p>
+      )}
+
       <details className="local-services">
-        <summary>Engine local dự phòng</summary>
+        <summary>Engine khác / dự phòng</summary>
         <div className="service-list">
-          {local.map(([name, ready, service]) => (
-            <div className="service-row" key={name}>
+          {[
+            ["VieNeu Cloud", !!p?.modal?.tts?.ready],
+            ["Story AI Cloud", !!p?.modal?.image?.ready],
+            ["VieNeu Local", !!p?.local.vieneu.ready],
+            ["Korva Local", !!p?.local.korva.ready],
+            ["FLUX.2 Local", !!p?.runtime.flux],
+            ["Local Fast", !!p?.runtime.fast],
+            ["Wan2.2", !!p?.runtime.wan],
+          ].map(([name, ready]) => (
+            <div className="service-row compact" key={String(name)}>
               <strong>{name}</strong>
               <span>
                 <i className={"dot " + (ready ? "green" : "amber")} />
-                {!p ? "Đang kiểm tra" : ready ? "Sẵn sàng" : "Chưa sẵn sàng"}
+                {ready ? "Sẵn sàng" : "Chưa dùng"}
               </span>
-              {!ready && (
-                <button
-                  className="text-button"
-                  disabled={!!busy || !p}
-                  onClick={() =>
-                    ["vieneu", "korva"].includes(service)
-                      ? void start(service)
-                      : setSetup(true)
-                  }
-                >
-                  {busy === service
-                    ? "Đang mở…"
-                    : ["vieneu", "korva"].includes(service)
-                      ? "Khởi động"
-                      : "Thiết lập"}
-                </button>
-              )}
             </div>
           ))}
         </div>
       </details>
 
-      {(!p?.modal?.tts?.configured || !p?.modal?.image?.configured) && (
-        <p className="muted cloud-hint">
-          Cloud chưa cấu hình đầy đủ. Deploy trong <code>cloud/modal</code> rồi
-          đặt <code>MODAL_TTS_URL</code> và <code>MODAL_IMAGE_URL</code> trong
-          <code>.env.local</code>.
-        </p>
-      )}
-
       {detail && (
         <div className="notice error" role="alert">
-          Dịch vụ chưa khởi động được.
+          Chưa khởi động được engine.
           <details>
             <summary>Chi tiết</summary>
             <pre>{detail}</pre>
@@ -169,9 +287,9 @@ export function ProviderStatus({
             role="dialog"
             aria-modal="true"
             aria-label="Thiết lập AI local"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
           >
-            <h2>Thiết lập AI local dự phòng</h2>
+            <h2>Thiết lập AI ảnh local</h2>
             <p>
               {install?.hardware
                 ? `${install.hardware.gpu || "CPU"} · ${install.hardware.vram_gb} GB VRAM`
@@ -180,8 +298,8 @@ export function ProviderStatus({
             {install?.hardware &&
               (!install.hardware.bf16 || install.hardware.vram_gb < 8) && (
                 <p className="notice">
-                  GPU hiện tại không phù hợp để coi FLUX.2 local là engine chính.
-                  Nên dùng Story AI Cloud và chỉ giữ local làm dự phòng.
+                  GPU này không phù hợp để chạy FLUX.2 nặng. Hãy dùng ảnh chung
+                  dự phòng hoặc Story AI Cloud để quá trình ổn định hơn.
                 </p>
               )}
             <button
@@ -194,9 +312,9 @@ export function ProviderStatus({
               <input
                 type="checkbox"
                 checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
+                onChange={(event) => setConsent(event.target.checked)}
               />
-              Tôi đồng ý tải model Local Fast khi cần.
+              Tôi đồng ý tải model Local Fast
             </label>
             <button
               disabled={!consent || !!busy || install?.state === "running"}

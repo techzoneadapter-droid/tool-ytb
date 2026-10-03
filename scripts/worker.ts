@@ -759,13 +759,13 @@ async function main() {
                         s,
                       ))
                     ) {
-                      completedItems.add(item.id + ":image");
+                      finishKey(item.id + ":image");
                       usedFallback++;
                     } else {
+                      handledThisRun.add(item.id + ":image");
                       failed++;
                     }
                   }
-                  if (usedFallback === group.length) completed += group.length;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],
@@ -778,17 +778,14 @@ async function main() {
             }
             if (type === "motion" && !usesMotion(scene, s)) continue;
             const key = scene.id + ":" + type;
-            if(type==='image' && !job.regenerate && completedItems.has(key) && scene.imageError && s.fallbackOnImageError && await resolveSceneImage(scene,s)) {
-              completed++;updateJob(job.id,{counts:counts()});continue;
+            if (!job.regenerate && completedItems.has(key)) {
+              handledThisRun.add(key);
+              continue;
             }
-            if (
-              (!job.regenerate || completedItems.has(key)) &&
-              (await valid(scene, type))
-            ) {
-              completedItems.add(key);
+            if (await valid(scene, type)) {
+              finishKey(key);
               scene[(type + "Status") as "audioStatus"] = "done";
               scene[(type + "Error") as "audioError"] = undefined;
-              completed++;
               put("project", p);
               updateJob(job.id, {
                 completedItems: [...completedItems],
@@ -858,8 +855,7 @@ async function main() {
               scene[(type + "Status") as "audioStatus"] = "done";
               scene.approved = !s.humanCheck;
               put("project", p);
-              completed++;
-              completedItems.add(key);
+              finishKey(key);
             } catch (e) {
               if (
                 type === "image" &&
@@ -869,8 +865,7 @@ async function main() {
                 scene.imageError = e instanceof Error ? e.message : String(e);
                 scene.imageStatus = "error";
                 scene.approved = !s.humanCheck;
-                completed++;
-                completedItems.add(key);
+                finishKey(key);
                 put("project", p);
                 updateJob(job.id, {
                   completedItems: [...completedItems],

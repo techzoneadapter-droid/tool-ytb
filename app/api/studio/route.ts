@@ -31,6 +31,7 @@ import {
 import { isSameOrigin } from "@/modules/project/request";
 import { runtimeStatus } from "@/modules/providers/runtime-status";
 import { startService } from "@/modules/providers/services";
+import { openFlowBrowser } from "@/modules/providers/flow-browser";
 import { modalConfigured } from "@/modules/providers/modal/client";
 const projectNameSchema = z
   .string({ error: "Vui lòng nhập tên dự án." })
@@ -79,9 +80,14 @@ export async function POST(req: NextRequest) {
     }
     if (b.action === "startService") {
       await startService(
-        z.enum(["worker", "vieneu", "korva", "flux", "wan"]).parse(b.service),
+        z.enum(["worker", "vieneu", "korva", "flux", "wan", "flow"]).parse(b.service),
       );
       return NextResponse.json({ ok: true });
+    }
+    if (b.action === "openFlow") {
+      await startService("flow");
+      const status = await openFlowBrowser();
+      return NextResponse.json({ ok: true, status });
     }
     if (b.action === "create" || b.action === "createVideo") {
       const rawText = storySchema.parse(b.text);

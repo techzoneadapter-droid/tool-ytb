@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu";
+export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu" | "flow";
 export const WORKER_PROTOCOL = 6;
 export async function alive(file: string) {
   try {
@@ -54,6 +54,7 @@ export function serviceURL(service: Exclude<Service, "worker">) {
     fast: process.env.LOCAL_FAST_WORKER_URL || "http://127.0.0.1:7864",
     wan: process.env.WAN22_WORKER_URL || "http://127.0.0.1:7862",
     vieneu: process.env.VIENEU_LOCAL_URL || "http://127.0.0.1:8000",
+    flow: process.env.FLOW_BRIDGE_URL || "http://127.0.0.1:7865",
   };
   const url = new URL(values[service]);
   if (
@@ -168,6 +169,9 @@ async function start(service: Service) {
     if (service === "worker") {
       command = process.execPath;
       args = ["--import", "tsx", path.resolve("scripts/worker.ts")];
+    } else if (service === "flow") {
+      command = process.execPath;
+      args = ["--import", "tsx", path.resolve("scripts/flow-bridge.ts")];
     } else if (service === "vieneu") {
       cwd =
         process.env.VIENEU_REPO_DIR ||

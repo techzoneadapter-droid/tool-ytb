@@ -6,6 +6,7 @@ import { requireImage } from "../providers/config";
 import { localGenerate, publishGenerated } from "../providers/local-workers";
 import { makeModalImage, makeModalStoryBatch } from "./modal";
 import { aiHordeImage, pollinationsImage } from "../providers/free-cloud";
+import { generateWithFlow } from "../providers/flow-browser";
 
 export async function makeImage(
   prompt: string,
@@ -37,6 +38,26 @@ export async function makeImage(
     } catch {
       await unlink(file).catch(() => {});
       throw Error("Story AI Cloud không trả về ảnh hợp lệ.");
+    }
+  }
+
+  if (provider === "flow-browser") {
+    const generated = await generateWithFlow(prompt, s.aspect);
+    bytes = generated.bytes;
+    try {
+      await sharp(bytes, { limitInputPixels: 40000000 })
+        .resize(
+          s.aspect === "9:16" ? 720 : 1280,
+          s.aspect === "9:16" ? 1280 : 720,
+          { fit: "cover" },
+        )
+        .png()
+        .toFile(file);
+      await publishGenerated(file, "images");
+      return { engine: "flow-browser", model: generated.model };
+    } catch {
+      await unlink(file).catch(() => {});
+      throw Error("Google Flow không trả về ảnh hợp lệ.");
     }
   }
 

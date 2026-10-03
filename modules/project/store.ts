@@ -47,6 +47,31 @@ export function updateJob(id: string, patch: Partial<Job>) {
     throw e;
   }
 }
+
+export function mergeProjectChapters(
+  source: Project,
+  chapterIds: string[],
+) {
+  const wanted = new Set(chapterIds);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const current = get<Project>(source.id, "project");
+    const replacements = new Map(
+      source.chapters
+        .filter((chapter) => wanted.has(chapter.id))
+        .map((chapter) => [chapter.id, chapter]),
+    );
+    current.chapters = current.chapters.map(
+      (chapter) => replacements.get(chapter.id) || chapter,
+    );
+    put("project", current);
+    db.exec("COMMIT");
+    return current;
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
 export function claim(): Job | undefined {
   db.exec("BEGIN IMMEDIATE");
   try {

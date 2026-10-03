@@ -76,15 +76,27 @@ export function korva(args: string[], timeout = 600000): Promise<string> {
     });
   });
 }
+export async function vieneuHealth() {
+  const response = await fetch(vieneuURL() + "/health", {
+    signal: AbortSignal.timeout(3000),
+    redirect: "error",
+    cache: "no-store",
+  });
+  if (!response.ok) throw Error(vieneuMissing);
+  const health = await response.json();
+  if (health.status !== "ok") throw Error(vieneuMissing);
+  return {
+    backend: typeof health.backend === "string" ? health.backend : "unknown",
+    maxStreams: Math.max(1, Math.min(16, Number(health.max_streams) || 1)),
+    active: Math.max(0, Number(health.active) || 0),
+    waiting: Math.max(0, Number(health.waiting) || 0),
+  };
+}
 export async function vieneuVoices() {
   const base = vieneuURL();
   try {
     const [health, voices] = await Promise.all([
-      fetch(base + "/health", {
-        signal: AbortSignal.timeout(3000),
-        redirect: "error",
-        cache: "no-store",
-      }),
+      vieneuHealth(),
       fetch(base + "/v1/voices", {
         signal: AbortSignal.timeout(3000),
         redirect: "error",
@@ -92,9 +104,9 @@ export async function vieneuVoices() {
       }),
     ]);
     if (!health.ok || !voices.ok) throw Error(vieneuMissing);
-    const h = await health.json();
+    const h = health;
     const v = await voices.json();
-    if (h.status !== "ok" || !Array.isArray(v.data)) throw Error(vieneuMissing);
+    if (!h || !Array.isArray(v.data)) throw Error(vieneuMissing);
     return v.data.filter(
       (x: EngineVoice) => typeof x.id === "string" && x.id.length > 0,
     ) as EngineVoice[];
@@ -180,7 +192,9 @@ export async function speakLocal(
   const temporary: string[] = [];
   try {
     const normalized: string[] = [];
-    for (const part of chunks(text, 1500)) {
+    const parts =
+      s.ttsProvider === "vieneu-local" ? chunks(text, 18000) : chunks(text, 1500);
+    for (const part of parts) {
       const raw = path.join(directory, randomUUID() + ".wav");
       const clean = path.join(directory, randomUUID() + ".wav");
       temporary.push(raw, clean);
@@ -196,6 +210,8 @@ export async function speakLocal(
               input: part,
               voice,
               response_format: "wav",
+              sample_rate: 24000,
+              max_chars: 512,
             }),
             signal: AbortSignal.timeout(600000),
           });

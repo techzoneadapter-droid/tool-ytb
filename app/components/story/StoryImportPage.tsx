@@ -8,7 +8,7 @@ import {
   FileText,
 } from "lucide-react";
 import type { Project } from "@/modules/project/types";
-import { request, upload, initialSettings } from "../studio-api";
+import { request, upload } from "../studio-api";
 export function StoryImportPage({
   projects,
   refresh,
@@ -76,7 +76,6 @@ export function StoryImportPage({
         name,
         text,
         splitChapters: split,
-        settings: initialSettings,
       });
       setCreated(p);
       await refresh();

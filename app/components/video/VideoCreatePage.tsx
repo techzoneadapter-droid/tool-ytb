@@ -15,19 +15,21 @@ import { VoiceSelector } from "./VoiceSelector";
 import { AdvancedOptions } from "./AdvancedOptions";
 import { VisualProfiles } from "./VisualProfiles";
 import { ProviderStatus } from "./ProviderStatus";
-import { PipelineProgress, VideoResults } from "./PipelineProgress";
+import { PipelineProgress } from "./PipelineProgress";
 export function VideoCreatePage({
   data,
   projectId,
   onProject,
   refresh,
   onImport,
+  onLibrary,
 }: {
   data: StudioData;
   projectId: string;
   onProject: (id: string) => void;
   refresh: () => Promise<void>;
   onImport: () => void;
+  onLibrary: () => void;
 }) {
   const project =
     data.projects.find((p) => p.id === projectId) || data.projects[0];
@@ -62,8 +64,12 @@ export function VideoCreatePage({
     setBusy(true);
     setError("");
     try {
-      if (!["vieneu-local", "korva-local"].includes(settings.ttsProvider || ""))
-        throw Error("Chọn giọng VieNeu hoặc Korva để dùng workflow local.");
+      if (
+        !["modal-vieneu", "vieneu-local", "korva-local"].includes(
+          settings.ttsProvider || "",
+        )
+      )
+        throw Error("Chọn VieNeu Cloud, VieNeu Local hoặc Korva để tạo video.");
       if (
         settings.motionMode === "selected" &&
         !project.chapters
@@ -101,15 +107,15 @@ export function VideoCreatePage({
     try {
       if (action === "retry" && project && !active) {
         if (
-          !["vieneu-local", "korva-local"].includes(settings.ttsProvider || "")
+          !["modal-vieneu", "vieneu-local", "korva-local"].includes(
+            settings.ttsProvider || "",
+          )
         )
-          throw Error(
-            "Chọn giọng VieNeu hoặc Korva để tiếp tục bằng giọng local.",
-          );
+          throw Error("Chọn engine giọng hợp lệ trước khi thử lại.");
         await request({
           action: "settings",
           projectId: project.id,
-          settings: { ...settings, imageProvider: "flux2-local" },
+          settings,
         });
         await request({
           action: "motionSelection",
@@ -125,6 +131,26 @@ export function VideoCreatePage({
       setBusy(false);
     }
   }
+  async function addReferences(files?: FileList | null) {
+    if (!files?.length) return;
+    setBusy(true);
+    setError("");
+    try {
+      const current = settings.referenceImages || [];
+      const next = [...current];
+      for (const file of Array.from(files).slice(0, Math.max(0, 10 - current.length))) {
+        const result = await upload(file);
+        if (!result.asset) throw Error("Ảnh tham chiếu không hợp lệ.");
+        next.push(result.asset);
+      }
+      change({ referenceImages: next });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function fallback(file?: File) {
     if (!file) return;
     setBusy(true);
@@ -304,7 +330,11 @@ export function VideoCreatePage({
                     <div className="inset">
                       <div className="row between">
                         <h3>Ảnh minh họa</h3>
-                        <span className="badge">Local</span>
+                        <span className="badge">
+                          {settings.imageProvider?.startsWith("modal-")
+                            ? "Cloud GPU"
+                            : "Local"}
+                        </span>
                       </div>
                       <label>
                         Engine ảnh
@@ -317,8 +347,14 @@ export function VideoCreatePage({
                             })
                           }
                         >
+                          <option value="modal-story">
+                            Story AI Cloud · Đồng nhất theo chương
+                          </option>
+                          <option value="modal-reference">
+                            Reference AI Cloud · Ảnh tham chiếu
+                          </option>
                           <option value="flux2-local">
-                            FLUX.2 · Chất lượng
+                            FLUX.2 Local · Chất lượng
                           </option>
                           <option value="local-fast">
                             Local Fast · GPU thấp (cần test)
@@ -339,6 +375,55 @@ export function VideoCreatePage({
                           ))}
                         </select>
                       </label>
+                      {settings.imageProvider === "modal-reference" && (
+                        <div className="reference-box">
+                          <div className="row between">
+                            <div>
+                              <strong>Ảnh tham chiếu nhân vật</strong>
+                              <small>Tối đa 10 ảnh. Nên dùng nhiều góc của cùng nhân vật.</small>
+                            </div>
+                            <label className="button">
+                              <ImagePlus size={16} />
+                              Thêm ảnh
+                              <input
+                                type="file"
+                                accept=".png,.jpg,.jpeg,.webp"
+                                multiple
+                                hidden
+                                onChange={(e) => {
+                                  void addReferences(e.target.files);
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                          </div>
+                          <div className="reference-list">
+                            {(settings.referenceImages || []).map((image, index) => (
+                              <div className="reference-thumb" key={image}>
+                                <img src={fileURL(image)} alt={"Tham chiếu " + (index + 1)} />
+                                <button
+                                  type="button"
+                                  aria-label={"Xóa ảnh tham chiếu " + (index + 1)}
+                                  onClick={() =>
+                                    change({
+                                      referenceImages: (settings.referenceImages || []).filter(
+                                        (item) => item !== image,
+                                      ),
+                                    })
+                                  }
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          {!settings.referenceImages?.length && (
+                            <p className="muted">
+                              Reference AI chỉ chạy khi đã có ít nhất một ảnh tham chiếu thật.
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : null}
                   <div className="inset">
@@ -558,6 +643,14 @@ export function VideoCreatePage({
                       : "Bắt đầu tạo video"}
                 </button>
               </div>
+              {jobs.some((job) => job.status === "done" && job.verified) && (
+                <div className="completed-summary">
+                  <span>✓ Video hoàn thành đã được lưu vào thư viện.</span>
+                  <button className="text-button" onClick={onLibrary}>
+                    Mở Quản lý video →
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -580,7 +673,6 @@ export function VideoCreatePage({
           </div>
         </aside>
       </div>
-      {project && <VideoResults project={project} jobs={jobs} />}
     </>
   );
 }

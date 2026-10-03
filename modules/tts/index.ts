@@ -3,6 +3,7 @@ import { mkdir, copyFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { speak as speakCloud } from "./cloud";
 import { speakLocal, vieneuURL } from "./local";
+import { speakModal, speakModalBatch } from "./modal";
 import {
   localProviderIds,
   localVoiceId,
@@ -10,22 +11,35 @@ import {
   type TTSProvider,
 } from "./local-voices";
 import { requireTTS, ttsConfig } from "../providers/config";
+import { modalConfigured } from "../providers/modal/client";
 import { duration } from "../videoRender/process";
 import type { Settings } from "../project/types";
 import { publishGenerated } from "../providers/local-workers";
 
 export function defaultTTSProvider(): TTSProvider {
-  const p = process.env.DEFAULT_TTS_PROVIDER || "vieneu-local";
-  if (p !== "cloud" && !localProviderIds.includes(p as never))
+  const fallback = modalConfigured("tts") ? "modal-vieneu" : "vieneu-local";
+  const p = process.env.DEFAULT_TTS_PROVIDER || fallback;
+  if (
+    p !== "modal-vieneu" &&
+    p !== "cloud" &&
+    !localProviderIds.includes(p as never)
+  )
     throw Error("DEFAULT_TTS_PROVIDER không hợp lệ.");
   return p as TTSProvider;
 }
+
 export function resolveTTS(s: Settings): Settings {
-  // Existing projects retain their cloud voice until the user chooses a local engine.
   return { ...s, ttsProvider: s.ttsProvider || "cloud" };
 }
+
 export function assertTTS(s: Settings) {
   const p = resolveTTS(s).ttsProvider!;
+  if (p === "modal-vieneu") {
+    if (!modalConfigured("tts"))
+      throw Error("Chưa cấu hình VieNeu Cloud. Thiết lập MODAL_TTS_URL trước.");
+    if (!s.voice.trim()) throw Error("Chưa chọn giọng VieNeu Cloud.");
+    return;
+  }
   if (p === "cloud") {
     requireTTS(s.voice);
     return;
@@ -40,34 +54,33 @@ export function assertTTS(s: Settings) {
   )
     throw Error("Giọng không thuộc engine local đã chọn.");
 }
+
 export function ttsSource(s: Settings) {
-  return resolveTTS(s).ttsProvider === "cloud"
-    ? ttsConfig().provider
-    : s.ttsProvider!;
+  const provider = resolveTTS(s).ttsProvider;
+  return provider === "cloud" ? ttsConfig().provider : provider!;
 }
-const pending = new Map<string, Promise<number>>();
-export async function speak(
+
+function identity(s: Settings) {
+  if (s.ttsProvider === "modal-vieneu") return process.env.MODAL_TTS_URL;
+  if (s.ttsProvider === "vieneu-local") return vieneuURL();
+  if (s.ttsProvider === "korva-local")
+    return process.env.KORVATTS_BIN || "korvatts";
+  const c = requireTTS(s.voice);
+  return [c.provider, c.voiceId, c.region, process.env.TTS_MODEL];
+}
+
+function cacheFile(
   text: string,
   file: string,
-  settings: Settings,
+  s: Settings,
   options: { preview?: boolean } = {},
-): Promise<number> {
-  const s = resolveTTS(settings);
-  assertTTS(s);
-  if (!text.trim()) throw Error("Nội dung lời đọc đang trống.");
-  const c = s.ttsProvider === "cloud" ? requireTTS(s.voice) : undefined;
-  const identity =
-    s.ttsProvider === "vieneu-local"
-      ? vieneuURL()
-      : s.ttsProvider === "korva-local"
-        ? process.env.KORVATTS_BIN || "korvatts"
-        : [c?.provider, c?.voiceId, c?.region, process.env.TTS_MODEL];
+) {
   const hash = createHash("sha256")
     .update(
       JSON.stringify([
-        "tts-cache-v2",
-        ...(options.preview ? ["preview-12-steps"] : []),
-        identity,
+        "tts-cache-v4",
+        ...(options.preview ? ["preview-short"] : []),
+        identity(s),
         s.ttsProvider,
         s.voice,
         text,
@@ -79,26 +92,48 @@ export async function speak(
       ]),
     )
     .digest("hex");
-  const cache = path.join(path.dirname(file), hash + path.extname(file));
+  return path.join(path.dirname(file), hash + path.extname(file));
+}
+
+async function validDuration(file: string) {
+  try {
+    const seconds = await duration(file);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const pending = new Map<string, Promise<number>>();
+
+export async function speak(
+  text: string,
+  file: string,
+  settings: Settings,
+  options: { preview?: boolean } = {},
+): Promise<number> {
+  const s = resolveTTS(settings);
+  assertTTS(s);
+  if (!text.trim()) throw Error("Nội dung lời đọc đang trống.");
+
+  const cache = cacheFile(text, file, s, options);
   await mkdir(path.dirname(file), { recursive: true });
   let task = pending.get(cache);
   if (!task) {
     task = (async () => {
-      try {
-        const d = await duration(cache);
-        if (Number.isFinite(d) && d > 0) return d;
-      } catch {
-        /* missing or invalid cache */
-      }
+      const cached = await validDuration(cache);
+      if (cached) return cached;
       const temporary = path.join(
         path.dirname(file),
         randomUUID() + path.extname(file),
       );
       try {
         const seconds =
-          s.ttsProvider === "cloud"
-            ? await speakCloud(text, temporary, s)
-            : await speakLocal(text, temporary, s, options);
+          s.ttsProvider === "modal-vieneu"
+            ? await speakModal(text, temporary, s, options)
+            : s.ttsProvider === "cloud"
+              ? await speakCloud(text, temporary, s)
+              : await speakLocal(text, temporary, s, options);
         await rename(temporary, cache);
         return seconds;
       } finally {
@@ -115,4 +150,69 @@ export async function speak(
   } finally {
     if (pending.get(cache) === task) pending.delete(cache);
   }
+}
+
+export async function speakBatch(
+  items: { id: string; text: string; file: string }[],
+  settings: Settings,
+) {
+  const s = resolveTTS(settings);
+  assertTTS(s);
+  if (s.ttsProvider !== "modal-vieneu") {
+    const output = new Map<string, number>();
+    for (const item of items)
+      output.set(item.id, await speak(item.text, item.file, s));
+    return output;
+  }
+
+  const output = new Map<string, number>();
+  const missing: {
+    id: string;
+    text: string;
+    file: string;
+    cache: string;
+    temporary: string;
+  }[] = [];
+
+  for (const item of items) {
+    const cache = cacheFile(item.text, item.file, s);
+    const cached = await validDuration(cache);
+    if (cached) {
+      if (path.resolve(cache) !== path.resolve(item.file))
+        await copyFile(cache, item.file);
+      await publishGenerated(item.file, "audio");
+      output.set(item.id, cached);
+      continue;
+    }
+    missing.push({
+      ...item,
+      cache,
+      temporary: path.join(
+        path.dirname(item.file),
+        randomUUID() + path.extname(item.file),
+      ),
+    });
+  }
+
+  for (let offset = 0; offset < missing.length; offset += 16) {
+    const batch = missing.slice(offset, offset + 16);
+    const durations = await speakModalBatch(
+      batch.map((item) => ({
+        id: item.id,
+        text: item.text,
+        file: item.temporary,
+      })),
+      s,
+    );
+    for (const item of batch) {
+      const seconds = durations.get(item.id);
+      if (!seconds) throw Error("VieNeu Cloud batch thiếu thời lượng audio.");
+      await rename(item.temporary, item.cache);
+      if (path.resolve(item.cache) !== path.resolve(item.file))
+        await copyFile(item.cache, item.file);
+      await publishGenerated(item.file, "audio");
+      output.set(item.id, seconds);
+    }
+  }
+  return output;
 }

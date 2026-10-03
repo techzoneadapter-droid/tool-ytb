@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { Project, Job } from "./types";
+import type { Project, Job, VideoRecord } from "./types";
 export const root = path.resolve("data");
 mkdirSync(root, { recursive: true });
 const db = new DatabaseSync(path.join(root, "storyflow.sqlite"));
@@ -30,6 +30,9 @@ export function put(
     "INSERT INTO records VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
   ).run(item.id, kind, JSON.stringify(item));
   return item;
+}
+export function remove(kind: string, id: string) {
+  db.prepare("DELETE FROM records WHERE id=? AND kind=?").run(id, kind);
 }
 export function updateJob(id: string, patch: Partial<Job>) {
   db.exec("BEGIN IMMEDIATE");
@@ -65,12 +68,16 @@ export function claim(): Job | undefined {
   }
 }
 
-// Delete records only. Assets may be shared by caches and other projects.
+// Delete project/job records only. Media files can be shared by caches and are not removed here.
 export function removeProject(id: string) {
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const job of list<Job>("job").filter((j) => j.projectId === id))
       db.prepare("DELETE FROM records WHERE id=? AND kind='job'").run(job.id);
+    for (const video of list<VideoRecord>("video").filter(
+      (item) => item.projectId === id,
+    ))
+      db.prepare("DELETE FROM records WHERE id=? AND kind='video'").run(video.id);
     db.prepare("DELETE FROM records WHERE id=? AND kind='project'").run(id);
     db.exec("COMMIT");
   } catch (error) {

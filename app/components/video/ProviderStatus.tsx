@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { StudioData } from "../studio-api";
 import { request } from "../studio-api";
+
 export function ProviderStatus({
   providers: p,
   refresh,
@@ -11,12 +12,14 @@ export function ProviderStatus({
   const [busy, setBusy] = useState(""),
     [detail, setDetail] = useState(""),
     [setup, setSetup] = useState(false);
+
   const [install, setInstall] = useState<{
     state: string;
     log?: string;
     hardware?: { gpu: string; vram_gb: number; bf16: boolean };
   }>();
   const [consent, setConsent] = useState(false);
+
   useEffect(() => {
     if (!setup) return;
     let active = true;
@@ -34,6 +37,7 @@ export function ProviderStatus({
       clearInterval(timer);
     };
   }, [setup]);
+
   async function setupAI(action: string) {
     setBusy("setup");
     try {
@@ -45,15 +49,7 @@ export function ProviderStatus({
       setBusy("");
     }
   }
-  const entries = [
-    ["VieNeu", p?.local.vieneu.ready, "vieneu"],
-    ["Korva", p?.local.korva.ready, "korva"],
-    ["FLUX.2", p?.runtime.flux, "flux"],
-    ["Local Fast", p?.runtime.fast, "fast"],
-    ["Wan2.2", p?.runtime.wan, "wan"],
-    ["FFmpeg", p?.runtime.ffmpeg, ""],
-    ["Worker", p?.runtime.worker, "worker"],
-  ] as const;
+
   async function start(service: string) {
     setBusy(service);
     setDetail("");
@@ -66,40 +62,96 @@ export function ProviderStatus({
       setBusy("");
     }
   }
+
+  const primary = [
+    ["VieNeu Cloud", p?.modal?.tts?.ready, p?.modal?.tts?.configured, ""],
+    ["Story AI Cloud", p?.modal?.image?.ready, p?.modal?.image?.configured, ""],
+    ["FFmpeg", p?.runtime.ffmpeg, true, ""],
+    ["Worker", p?.runtime.worker, true, "worker"],
+  ] as const;
+
+  const local = [
+    ["VieNeu Local", p?.local.vieneu.ready, "vieneu"],
+    ["Korva Local", p?.local.korva.ready, "korva"],
+    ["FLUX.2 Local", p?.runtime.flux, "flux"],
+    ["Local Fast", p?.runtime.fast, "fast"],
+    ["Wan2.2", p?.runtime.wan, "wan"],
+  ] as const;
+
   return (
     <section className="card system-card">
       <div className="row between">
-        <h2>Hệ thống AI</h2>
-        <span className="badge">Local</span>
+        <h2>Hệ thống</h2>
+        <span className="badge">Cloud ưu tiên</span>
       </div>
+
       <div className="service-list">
-        {entries.map(([name, ready, service]) => (
+        {primary.map(([name, ready, configured, service]) => (
           <div className="service-row" key={name}>
             <strong>{name}</strong>
             <span>
               <i className={"dot " + (ready ? "green" : "amber")} />
-              {!p ? "Đang kiểm tra" : ready ? "Sẵn sàng" : "Chưa sẵn sàng"}
+              {!p
+                ? "Đang kiểm tra"
+                : ready
+                  ? "Sẵn sàng"
+                  : configured
+                    ? "Chưa kết nối"
+                    : "Chưa cấu hình"}
             </span>
-            {!ready && (
+            {!ready && service === "worker" && (
               <button
                 className="text-button"
                 disabled={!!busy || !p}
-                onClick={() =>
-                  service && ["worker", "vieneu", "korva"].includes(service)
-                    ? void start(service)
-                    : setSetup(true)
-                }
+                onClick={() => void start(service)}
               >
-                {busy === service
-                  ? "Đang mở…"
-                  : service && ["worker", "vieneu", "korva"].includes(service)
-                    ? "Khởi động"
-                    : "Thiết lập"}
+                {busy === service ? "Đang mở…" : "Khởi động"}
               </button>
             )}
           </div>
         ))}
       </div>
+
+      <details className="local-services">
+        <summary>Engine local dự phòng</summary>
+        <div className="service-list">
+          {local.map(([name, ready, service]) => (
+            <div className="service-row" key={name}>
+              <strong>{name}</strong>
+              <span>
+                <i className={"dot " + (ready ? "green" : "amber")} />
+                {!p ? "Đang kiểm tra" : ready ? "Sẵn sàng" : "Chưa sẵn sàng"}
+              </span>
+              {!ready && (
+                <button
+                  className="text-button"
+                  disabled={!!busy || !p}
+                  onClick={() =>
+                    ["vieneu", "korva"].includes(service)
+                      ? void start(service)
+                      : setSetup(true)
+                  }
+                >
+                  {busy === service
+                    ? "Đang mở…"
+                    : ["vieneu", "korva"].includes(service)
+                      ? "Khởi động"
+                      : "Thiết lập"}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </details>
+
+      {(!p?.modal?.tts?.configured || !p?.modal?.image?.configured) && (
+        <p className="muted cloud-hint">
+          Cloud chưa cấu hình đầy đủ. Deploy trong <code>cloud/modal</code> rồi
+          đặt <code>MODAL_TTS_URL</code> và <code>MODAL_IMAGE_URL</code> trong
+          <code>.env.local</code>.
+        </p>
+      )}
+
       {detail && (
         <div className="notice error" role="alert">
           Dịch vụ chưa khởi động được.
@@ -109,33 +161,34 @@ export function ProviderStatus({
           </details>
         </div>
       )}
+
       {setup && (
         <div className="modal-backdrop" onClick={() => setSetup(false)}>
           <section
             className="card setup-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="Thiết lập AI"
+            aria-label="Thiết lập AI local"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2>Thiết lập AI trên máy</h2>
+            <h2>Thiết lập AI local dự phòng</h2>
             <p>
               {install?.hardware
                 ? `${install.hardware.gpu || "CPU"} · ${install.hardware.vram_gb} GB VRAM`
-                : "Cài môi trường riêng và kiểm tra GPU."}
+                : "Kiểm tra môi trường AI trên máy."}
             </p>
             {install?.hardware &&
               (!install.hardware.bf16 || install.hardware.vram_gb < 8) && (
                 <p className="notice">
-                  FLUX.2 cần nhiều bộ nhớ GPU hơn cấu hình hiện tại. Local Fast
-                  là lựa chọn cần benchmark riêng.
+                  GPU hiện tại không phù hợp để coi FLUX.2 local là engine chính.
+                  Nên dùng Story AI Cloud và chỉ giữ local làm dự phòng.
                 </p>
               )}
             <button
               disabled={!!busy || install?.state === "running"}
               onClick={() => void setupAI("install")}
             >
-              Cài / kiểm tra môi trường AI
+              Cài / kiểm tra môi trường local
             </button>
             <label className="check">
               <input
@@ -143,8 +196,7 @@ export function ProviderStatus({
                 checked={consent}
                 onChange={(e) => setConsent(e.target.checked)}
               />
-              Tôi đồng ý tải SD-Turbo (~2,6 GB). Tải model lần đầu có thể mất
-              nhiều thời gian.
+              Tôi đồng ý tải model Local Fast khi cần.
             </label>
             <button
               disabled={!consent || !!busy || install?.state === "running"}
@@ -152,30 +204,12 @@ export function ProviderStatus({
             >
               Tải model Local Fast
             </button>
-            <p role="status">
-              {install?.state === "running"
-                ? "Đang thiết lập…"
-                : install?.state === "done"
-                  ? "Đã kiểm tra môi trường; model cần kiểm tra riêng."
-                  : install?.state === "error"
-                    ? "Thiết lập lỗi. Xem nhật ký."
-                    : ""}
-            </p>
             <details>
               <summary>Nhật ký thiết lập</summary>
               <pre>{install?.log || "Chưa có nhật ký."}</pre>
             </details>
-            <p>
-              Cài môi trường và tải model phù hợp với GPU trước khi dùng FLUX.2
-              hoặc Wan2.2. Ứng dụng không tự tải model.
-            </p>
-            <p>
-              Hướng dẫn nằm trong <code>docs/LOCAL_AI_WORKERS.md</code>. Giọng
-              đọc: <code>docs/LOCAL_TTS.md</code>. FFmpeg và ffprobe cần được
-              cài trên máy.
-            </p>
             <button className="primary" onClick={() => setSetup(false)}>
-              Đã hiểu
+              Đóng
             </button>
           </section>
         </div>

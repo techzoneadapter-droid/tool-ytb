@@ -121,15 +121,22 @@ export function VideoManagerPage({
     if (player?.id === video.id) setPlayer(undefined);
   }
 
-  async function regenerate(video: VideoRecord) {
-    const all = confirm(
-      "Nhấn OK để tạo lại toàn bộ tài nguyên AI. Nhấn Cancel để chỉ dựng lại video bằng tài nguyên hiện có.",
-    );
+  async function regenerate(
+    video: VideoRecord,
+    regenerateResources = false,
+  ) {
+    if (
+      regenerateResources &&
+      !confirm(
+        "Tạo lại toàn bộ lời đọc/ảnh cần thiết rồi dựng video mới? Bản video hiện tại vẫn được giữ cho đến khi bản mới hoàn tất.",
+      )
+    )
+      return;
     await mutate(
       {
         action: "regenerate",
         videoId: video.id,
-        regenerateResources: all,
+        regenerateResources,
       },
       video.id,
     );
@@ -351,13 +358,22 @@ export function VideoManagerPage({
                             {video.kind === "chapter" && (
                               <button
                                 disabled={busy === video.id}
-                                onClick={() => void regenerate(video)}
+                                onClick={() => void regenerate(video, false)}
+                                title="Dùng lại lời đọc và ảnh hiện có, chỉ dựng lại MP4"
                               >
-                                <RefreshCw size={16} /> Tạo lại
+                                <RefreshCw size={16} /> Dựng lại
                               </button>
                             )}
                             <details className="video-more">
                               <summary aria-label="Thêm thao tác"><MoreHorizontal size={18} /></summary>
+                              {video.kind === "chapter" && (
+                                <button
+                                  disabled={busy === video.id}
+                                  onClick={() => void regenerate(video, true)}
+                                >
+                                  <RefreshCw size={16} /> Tạo lại toàn bộ
+                                </button>
+                              )}
                               <button onClick={() => void removeVideo(video)}>
                                 <Trash2 size={16} /> Xóa video
                               </button>

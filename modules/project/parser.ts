@@ -22,7 +22,8 @@ export function cleanNarrationText(input: string): string {
     .replace(/^\s*>+\s?/gmu, "")
     .replace(/^\s*[-+*•▪◦‣⁃]+\s+/gmu, "")
     .replace(/^\s*\d+[.)]\s+/gmu, "")
-    .replace(/_/gu, " ")\n    .replace(/(\*\*|__|~~|\*|[\x60]{1,3})/gu, "")
+    .replace(/_/gu, " ")
+    .replace(/(\*\*|__|~~|\*|[\x60]{1,3})/gu, "")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, " ");
 
   let out = "";

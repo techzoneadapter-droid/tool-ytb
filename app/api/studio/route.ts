@@ -557,6 +557,8 @@ export async function POST(req: NextRequest) {
         ![
           "modal-story",
           "modal-reference",
+          "aihorde",
+          "pollinations",
           "flux2-local",
           "local-fast",
           "auto-local",

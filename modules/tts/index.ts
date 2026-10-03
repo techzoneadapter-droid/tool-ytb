@@ -4,6 +4,8 @@ import path from "node:path";
 import { speak as speakCloud } from "./cloud";
 import { speakLocal, vieneuHealth, vieneuURL } from "./local";
 import { speakModal, speakModalBatch } from "./modal";
+import { speakPollinations } from "./pollinations";
+import { pollinationsConfigured } from "../providers/free-cloud";
 import {
   localProviderIds,
   localVoiceId,
@@ -21,6 +23,7 @@ export function defaultTTSProvider(): TTSProvider {
   const p = process.env.DEFAULT_TTS_PROVIDER || fallback;
   if (
     p !== "modal-vieneu" &&
+    p !== "pollinations" &&
     p !== "cloud" &&
     !localProviderIds.includes(p as never)
   )
@@ -38,6 +41,14 @@ export function assertTTS(s: Settings) {
     if (!modalConfigured("tts"))
       throw Error("Chưa cấu hình VieNeu Cloud. Thiết lập MODAL_TTS_URL trước.");
     if (!s.voice.trim()) throw Error("Chưa chọn giọng VieNeu Cloud.");
+    return;
+  }
+  if (p === "pollinations") {
+    if (!pollinationsConfigured())
+      throw Error(
+        "Pollinations chưa có API key. Đặt POLLINATIONS_API_KEY trong .env.local.",
+      );
+    if (!s.voice.trim()) throw Error("Chưa chọn giọng Pollinations.");
     return;
   }
   if (p === "cloud") {
@@ -65,6 +76,12 @@ function identity(s: Settings) {
   if (s.ttsProvider === "vieneu-local") return vieneuURL();
   if (s.ttsProvider === "korva-local")
     return process.env.KORVATTS_BIN || "korvatts";
+  if (s.ttsProvider === "pollinations")
+    return [
+      "pollinations",
+      process.env.POLLINATIONS_TTS_MODEL || "catalog",
+      process.env.POLLINATIONS_API_KEY ? "configured" : "missing",
+    ];
   const c = requireTTS(s.voice);
   return [c.provider, c.voiceId, c.region, process.env.TTS_MODEL];
 }
@@ -131,9 +148,11 @@ export async function speak(
         const seconds =
           s.ttsProvider === "modal-vieneu"
             ? await speakModal(text, temporary, s, options)
-            : s.ttsProvider === "cloud"
-              ? await speakCloud(text, temporary, s)
-              : await speakLocal(text, temporary, s, options);
+            : s.ttsProvider === "pollinations"
+              ? await speakPollinations(text, temporary, s)
+              : s.ttsProvider === "cloud"
+                ? await speakCloud(text, temporary, s)
+                : await speakLocal(text, temporary, s, options);
         await rename(temporary, cache);
         return seconds;
       } finally {

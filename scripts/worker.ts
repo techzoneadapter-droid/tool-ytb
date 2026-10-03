@@ -488,6 +488,132 @@ async function main() {
 
             if (
               type === "image" &&
+              ["aihorde", "pollinations"].includes(s.imageProvider || "") &&
+              !completedItems.has(scene.id + ":image") &&
+              !(await valid(scene, "image"))
+            ) {
+              const start = scenes.findIndex((item) => item.id === scene.id);
+              const group: typeof scenes = [];
+              for (const candidate of scenes.slice(Math.max(0, start))) {
+                if (group.length >= 12) break;
+                if (
+                  !completedItems.has(candidate.id + ":image") &&
+                  !handledThisRun.has(candidate.id + ":image") &&
+                  !(await valid(candidate, "image"))
+                )
+                  group.push(candidate);
+              }
+
+              if (group.length) {
+                const engineName =
+                  s.imageProvider === "aihorde"
+                    ? "AI Horde"
+                    : "Pollinations";
+                const concurrency =
+                  s.imageProvider === "aihorde" ? 3 : 4;
+                checkpoint(
+                  "images",
+                  Math.floor(
+                    (completed / Math.max(1, total)) *
+                      (kind === "pipeline" ? 75 : 99),
+                  ),
+                  `${engineName}: bắt đầu nhóm ${group.length} ảnh · ${concurrency} luồng`,
+                );
+
+                let cursor = 0;
+                const workers = Array.from(
+                  { length: Math.min(concurrency, group.length) },
+                  async () => {
+                    while (true) {
+                      const status = get<Job>(job.id, "job").status;
+                      if (status === "paused" || status === "cancelled") return;
+                      const index = cursor++;
+                      if (index >= group.length) return;
+                      const item = group[index];
+                      const key = item.id + ":image";
+                      const chapter = p.chapters.find((candidate) =>
+                        candidate.scenes.some((x) => x.id === item.id),
+                      )!;
+                      const file = randomUUID() + ".png";
+                      const visual = sceneVisual(chapter, item, s);
+                      item.finalImagePrompt = visual.prompt;
+                      item.imageSeed = visual.seed;
+                      item.imageStatus = "working";
+                      item.imageError = undefined;
+                      put("project", p);
+                      try {
+                        const generated = await makeImage(
+                          visual.prompt,
+                          path.join(assets, file),
+                          s,
+                          visual.seed,
+                        );
+                        item.imageEngine = generated.engine;
+                        item.imageModel = generated.model;
+                        item.image = file;
+                        item.imageSource = generated.engine;
+                        item.imageStatus = "done";
+                        item.imageError = undefined;
+                        item.motion = undefined;
+                        item.motionStatus = undefined;
+                        item.motionError = undefined;
+                        item.approved = !s.humanCheck;
+                        finishKey(key);
+                      } catch (error) {
+                        const message =
+                          error instanceof Error
+                            ? error.message
+                            : String(error);
+                        item.imageStatus = "error";
+                        item.imageError = message;
+                        if (
+                          s.fallbackOnImageError &&
+                          (await resolveSceneImage(
+                            { ...item, image: undefined },
+                            s,
+                          ))
+                        ) {
+                          finishKey(key);
+                          item.approved = !s.humanCheck;
+                        } else {
+                          handledThisRun.add(key);
+                          failed++;
+                        }
+                      }
+
+                      put("project", p);
+                      const currentCounts = counts();
+                      const globalProgress = Math.floor(
+                        (completed / Math.max(1, total)) *
+                          (kind === "pipeline" ? 75 : 99),
+                      );
+                      reportStage(
+                        "images",
+                        "Hình ảnh",
+                        currentCounts.image,
+                        scenes.length,
+                        `${engineName}: ${currentCounts.image}/${scenes.length} cảnh · ${chapter.title} · ${concurrency} luồng`,
+                        concurrency,
+                        globalProgress,
+                      );
+                      updateJob(job.id, {
+                        completedItems: [...completedItems],
+                        counts: currentCounts,
+                      });
+                    }
+                  },
+                );
+                await Promise.all(workers);
+
+                const status = get<Job>(job.id, "job").status;
+                if (status === "paused") throw Error("PAUSED");
+                if (status === "cancelled") throw Error("CANCELLED");
+                continue;
+              }
+            }
+
+            if (
+              type === "image" &&
               s.imageProvider === "modal-story" &&
               !completedItems.has(scene.id + ":image") &&
               !(await valid(scene, "image"))

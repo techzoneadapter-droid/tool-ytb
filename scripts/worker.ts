@@ -986,15 +986,34 @@ async function main() {
             Math.floor(base),
             `Đang dựng video ${index + 1}/${chapters.length} — ${chapter.title}`,
           );
+          reportStage(
+            "rendering",
+            "Dựng video",
+            outputs.length,
+            chapters.length,
+            `Chuẩn bị video ${index + 1}/${chapters.length} · ${chapter.title}`,
+            1,
+            Math.floor(base),
+          );
           const result = await render(chapterScenes, s, (n) => {
             if (n >= 0.65 && s.burnSubtitles && !subtitlesReady) {
               updateJob(job.id, { subtitlesReady: true });
               subtitlesReady = true;
             }
+            const renderProgress = Math.floor(base + n * span);
             checkpoint(
               "rendering",
-              Math.floor(base + n * span),
+              renderProgress,
               `Đang dựng video ${index + 1}/${chapters.length} — ${chapter.title}`,
+            );
+            reportStage(
+              "rendering",
+              "Dựng video",
+              outputs.length,
+              chapters.length,
+              `Video ${index + 1}/${chapters.length} · FFmpeg ${Math.round(n * 100)}% · ${chapter.title}`,
+              1,
+              renderProgress,
             );
           });
           if (!assetExists(result.output))
@@ -1023,6 +1042,15 @@ async function main() {
             vtt: result.vtt,
             verified: true,
           });
+          reportStage(
+            "rendering",
+            "Dựng video",
+            outputs.length,
+            chapters.length,
+            `Đã xong ${outputs.length}/${chapters.length} video · ${chapter.title}`,
+            1,
+            Math.floor(base + span),
+          );
           updateJob(job.id, {
             outputs,
             counts: {
@@ -1053,19 +1081,38 @@ async function main() {
         kind === "pipeline" ? 75 : 0,
         "FFmpeg đang dựng video từ tài nguyên thật",
       );
+      reportStage(
+        "rendering",
+        "Dựng video",
+        0,
+        100,
+        "FFmpeg đang chuẩn bị luồng hình, tiếng và phụ đề",
+        1,
+        kind === "pipeline" ? 75 : 0,
+      );
       let subtitlesReady = false;
       const result = await render(scenes, s, (n) => {
         if (n >= 0.65 && s.burnSubtitles && !subtitlesReady) {
           updateJob(job.id, { subtitlesReady: true });
           subtitlesReady = true;
         }
+        const renderProgress = Math.floor(
+          (kind === "pipeline" ? 75 : 0) +
+            n * (kind === "pipeline" ? 24 : 99),
+        );
         checkpoint(
           "rendering",
-          Math.floor(
-            (kind === "pipeline" ? 75 : 0) +
-              n * (kind === "pipeline" ? 24 : 99),
-          ),
+          renderProgress,
           "FFmpeg đang mã hóa video",
+        );
+        reportStage(
+          "rendering",
+          "Dựng video",
+          Math.round(n * 100),
+          100,
+          `FFmpeg đang mã hóa video · ${Math.round(n * 100)}%`,
+          1,
+          renderProgress,
         );
       });
       if (!assetExists(result.output))

@@ -3,6 +3,13 @@ import type { Settings } from "@/modules/project/types";
 import { findEngineVoice } from "@/modules/tts/catalog";
 import type { StudioData } from "../studio-api";
 import { request } from "../studio-api";
+
+const providerNames: Record<string, string> = {
+  "modal-vieneu": "VieNeu Cloud · GPU",
+  "vieneu-local": "VieNeu-TTS v3 Turbo · Local",
+  "korva-local": "KorvaTTS · Local",
+};
+
 export function VoiceSelector({
   settings: s,
   change,
@@ -23,6 +30,15 @@ export function VoiceSelector({
   const [busy, setBusy] = useState(false),
     [audio, setAudio] = useState(""),
     [error, setError] = useState("");
+
+  const providerOptions = [
+    ...(providers?.modal?.tts?.configured
+      ? [{ id: "modal-vieneu", label: providerNames["modal-vieneu"] }]
+      : []),
+    { id: "vieneu-local", label: providerNames["vieneu-local"] },
+    { id: "korva-local", label: providerNames["korva-local"] },
+  ];
+
   async function preview() {
     const cached = cache.current.get(key);
     if (cached) {
@@ -41,7 +57,7 @@ export function VoiceSelector({
         {
           provider: s.ttsProvider,
           voiceId: s.voice,
-          text: "Xin chào. Cùng StoryFlow kể câu chuyện của bạn.",
+          text: "Xin chào, đây là giọng đọc được chọn cho câu chuyện.",
           format: "mp3",
           speed: s.speed,
           pitch: s.pitch,
@@ -58,45 +74,45 @@ export function VoiceSelector({
       setBusy(false);
     }
   }
+
   return (
     <section className="card voice-card">
       <div className="row between">
         <h2>Giọng đọc</h2>
-        <span className="badge">Local miễn phí</span>
+        <span className="badge">
+          {s.ttsProvider === "modal-vieneu" ? "Cloud GPU" : "Local miễn phí"}
+        </span>
       </div>
-      {(!s.ttsProvider ||
-        s.ttsProvider === "cloud" ||
-        s.ttsProvider === "tts-studio-local") && (
-        <p className="notice">
-          Dự án cũ đang dùng giọng khác. Chọn VieNeu hoặc Korva để tạo video
-          bằng giọng local.
-        </p>
-      )}
       <div className="fields">
         <label>
           Engine giọng đọc
           <select
             aria-label="Engine giọng đọc"
-            value={s.ttsProvider || "cloud"}
+            value={s.ttsProvider || "vieneu-local"}
             onChange={(e) => {
+              const provider = e.target.value as Settings["ttsProvider"];
               change({
-                ttsProvider: e.target.value as Settings["ttsProvider"],
+                ttsProvider: provider,
                 voice:
-                  providers?.voices.find((v) => v.provider === e.target.value)
-                    ?.id || "ngoc_huyen",
+                  providers?.voices.find((v) => v.provider === provider)?.id ||
+                  "ngoc_huyen",
               });
               setAudio("");
             }}
           >
-            <option value="vieneu-local">VieNeu-TTS v3 Turbo</option>
-            <option value="korva-local">KorvaTTS</option>
-            {!["vieneu-local", "korva-local"].includes(s.ttsProvider || "") && (
+            {providerOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+            {!providerOptions.some((option) => option.id === s.ttsProvider) && (
               <option value={s.ttsProvider || "cloud"} disabled>
-                Giọng đã lưu của dự án cũ
+                Engine đã lưu của dự án cũ
               </option>
             )}
           </select>
         </label>
+
         <label>
           Giọng
           <select
@@ -118,6 +134,7 @@ export function VoiceSelector({
           </select>
         </label>
       </div>
+
       <div className="row between">
         <label className="speed">
           Tốc độ đọc
@@ -140,17 +157,24 @@ export function VoiceSelector({
           onClick={preview}
           disabled={
             busy ||
-            !["vieneu-local", "korva-local"].includes(s.ttsProvider || "")
+            !["modal-vieneu", "vieneu-local", "korva-local"].includes(
+              s.ttsProvider || "",
+            ) ||
+            voices.length === 0
           }
         >
           {busy ? "Đang tạo bản nghe thử…" : "▶ Nghe thử"}
         </button>
       </div>
+
       <p className="muted">
         {voices.length
           ? `● Sẵn sàng · ${voices.length} giọng`
-          : "Chưa kết nối engine để lấy danh sách giọng"}
+          : s.ttsProvider === "modal-vieneu"
+            ? "VieNeu Cloud chưa kết nối hoặc chưa deploy."
+            : "Chưa kết nối engine để lấy danh sách giọng"}
       </p>
+
       {audio && (
         <audio ref={player} controls autoPlay src={audio} preload="auto" />
       )}

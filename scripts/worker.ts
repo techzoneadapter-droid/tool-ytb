@@ -3,7 +3,7 @@ dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { acquireLock } from "../modules/providers/services";
+import { acquireLock, startService } from "../modules/providers/services";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -12,6 +12,7 @@ import {
   get,
   list,
   put,
+  remove,
   updateJob,
 } from "../modules/project/store";
 import type { Job, Project } from "../modules/project/types";
@@ -22,11 +23,14 @@ import {
   ensureVisualProfile,
 } from "../modules/imagePrompt/profile";
 import { imageConfig } from "../modules/providers/config";
+import { runtimeStatus } from "../modules/providers/runtime-status";
+import { modalHealth } from "../modules/providers/modal/client";
 import { ttsSource } from "../modules/tts";
 import {
   assetExists,
   requireSceneMedia,
   resolveSceneImage,
+  validImage,
 } from "../modules/project/media";
 import { duration, verifyVideo } from "../modules/videoRender/process";
 import { assets, render } from "../modules/videoRender";

@@ -54,3 +54,40 @@ export async function makeModalImage(
         : "storydiffusion-sdxl"),
   };
 }
+
+
+export async function makeModalStoryBatch(
+  prompts: string[],
+  settings: Settings,
+  seed: number,
+  characterDescription: string,
+) {
+  if (!prompts.length || prompts.length > 10)
+    throw Error("StoryDiffusion nhận từ 1 đến 10 cảnh mỗi nhóm.");
+  const response = await modalFetch(
+    "image",
+    "/v1/images/story-batch",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        prompts,
+        character_description: characterDescription,
+        seed,
+        aspect: settings.aspect,
+        style: settings.style,
+      }),
+    },
+    1_800_000,
+  );
+  const body = await response.json();
+  if (!Array.isArray(body?.data) || body.data.length !== prompts.length)
+    throw Error("Story AI Cloud trả số lượng ảnh không khớp nhóm cảnh.");
+  const images = body.data
+    .sort((a: { index: number }, b: { index: number }) => a.index - b.index)
+    .map((item: { image_png_base64?: string }) => {
+      if (!item.image_png_base64)
+        throw Error("Story AI Cloud trả dữ liệu ảnh không hợp lệ.");
+      return Buffer.from(item.image_png_base64, "base64");
+    });
+  return { images, model: body.model || "storydiffusion-sdxl" };
+}

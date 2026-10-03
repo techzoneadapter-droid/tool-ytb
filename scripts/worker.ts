@@ -14,6 +14,7 @@ import {
   put,
   remove,
   updateJob,
+  mergeProjectChapters,
 } from "../modules/project/store";
 import type { Job, Project, Settings } from "../modules/project/types";
 import { speak, speakBatch } from "../modules/tts";
@@ -61,47 +62,51 @@ async function imageEngineReady(settings: Settings) {
   return false;
 }
 
-function sameSnapshot(a: Job, b: Job) {
-  return JSON.stringify(a.snapshot.settings) === JSON.stringify(b.snapshot.settings);
-}
-
-async function coalesceLegacyPipelineJobs() {
-  const queued = list<Job>("job").filter(
+async function splitLegacyPipelineJobs() {
+  const candidates = list<Job>("job").filter(
     (job) =>
       job.kind === "pipeline" &&
       job.status === "queued" &&
-      !job.outputMode &&
-      !job.sceneIds?.length,
+      job.outputMode === "separate" &&
+      job.chapterIds.length > 1,
   );
-  const groups = new Map<string, Job[]>();
-  for (const job of queued) {
-    const key = job.projectId;
-    const group = groups.get(key) || [];
-    group.push(job);
-    groups.set(key, group);
-  }
-  for (const jobs of groups.values()) {
-    if (jobs.length < 2) continue;
-    jobs.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-    const compatible = jobs.filter((job) => sameSnapshot(job, jobs[0]));
-    if (compatible.length < 2) continue;
-    const project = get<Project>(jobs[0].projectId, "project");
-    const wanted = new Set(compatible.flatMap((job) => job.chapterIds));
+  for (const job of candidates) {
+    const project = get<Project>(job.projectId, "project");
     const chapterIds = project.chapters
-      .filter((chapter) => wanted.has(chapter.id))
+      .filter((chapter) => job.chapterIds.includes(chapter.id))
       .map((chapter) => chapter.id);
-    const completedItems = [
-      ...new Set(compatible.flatMap((job) => job.completedItems || [])),
-    ];
-    updateJob(compatible[0].id, {
-      chapterIds,
-      outputMode: "separate",
-      completedItems,
-      progress: 0,
-      error: undefined,
-      message: `Đã gộp ${chapterIds.length} chương vào một lô xử lý`,
+    if (chapterIds.length < 2) continue;
+    const batchId = job.batchId || randomUUID();
+    const sharedCompleted = new Set(job.completedItems || []);
+    chapterIds.forEach((chapterId, index) => {
+      const chapter = project.chapters.find((item) => item.id === chapterId)!;
+      const sceneIds = new Set(chapter.scenes.map((scene) => scene.id));
+      const completedItems = [...sharedCompleted].filter((key) => {
+        const sceneId = key.split(":")[0];
+        return sceneIds.has(sceneId);
+      });
+      const child: Job = {
+        ...job,
+        id: index === 0 ? job.id : randomUUID(),
+        chapterIds: [chapterId],
+        batchId,
+        batchIndex: index,
+        batchTotal: chapterIds.length,
+        completedItems,
+        outputs: undefined,
+        output: undefined,
+        srt: undefined,
+        vtt: undefined,
+        verified: false,
+        progress: 0,
+        status: "queued",
+        error: undefined,
+        stageProgress: undefined,
+        finishedAt: undefined,
+        message: `Khôi phục video ${index + 1}/${chapterIds.length} dưới dạng tác vụ độc lập`,
+      };
+      put("job", child);
     });
-    for (const extra of compatible.slice(1)) remove("job", extra.id);
   }
 }
 async function main() {
@@ -125,7 +130,7 @@ async function main() {
   for (const j of list<Job>("job"))
     if (["audio", "images", "rendering"].includes(j.status))
       updateJob(j.id, { status: "queued", message: "Khôi phục xử lý" });
-  await coalesceLegacyPipelineJobs();
+  await splitLegacyPipelineJobs();
   console.log("StoryFlow: chỉ xử lý API và tài nguyên thật.");
   while (true) {
     const job = claim();

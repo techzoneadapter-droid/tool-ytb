@@ -8,7 +8,11 @@
     "start": "tsx scripts/app.ts --production",
     "worker": "tsx scripts/worker.ts",
     "test": "tsx --test tests/core.test.ts",
-    "app": "tsx scripts/app.ts"
+    "app": "tsx scripts/app.ts",
+    "check:conflicts": "node scripts/check-conflicts.mjs",
+    "preapp": "npm run check:conflicts",
+    "prebuild": "npm run check:conflicts",
+    "pretest": "npm run check:conflicts"
   },
   "dependencies": {
     "dotenv": "^17.0.0",

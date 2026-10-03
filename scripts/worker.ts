@@ -225,8 +225,8 @@ async function main() {
                     item.audioError = undefined;
                     item.approved = !s.humanCheck;
                     completedItems.add(item.id + ":audio");
-                    completed++;
                   }
+                  completed++;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],
@@ -246,7 +246,7 @@ async function main() {
                     completedItems: [...completedItems],
                     counts: counts(),
                   });
-                  continue;
+                  throw Error(message);
                 }
               }
             }
@@ -320,8 +320,8 @@ async function main() {
                     item.motionError = undefined;
                     item.approved = !s.humanCheck;
                     completedItems.add(item.id + ":image");
-                    completed++;
                   }
+                  completed++;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],
@@ -343,19 +343,19 @@ async function main() {
                       ))
                     ) {
                       completedItems.add(item.id + ":image");
-                      completed++;
                       usedFallback++;
                     } else {
                       failed++;
                     }
                   }
+                  if (usedFallback === group.length) completed++;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],
                     counts: counts(),
                   });
-                  if (!usedFallback) continue;
-                  continue;
+                  if (usedFallback === group.length) continue;
+                  throw Error(message);
                 }
               }
             }

@@ -56,7 +56,7 @@ export type FlowHealth = {
 
 export async function flowHealth(): Promise<FlowHealth> {
   try {
-    return await call<FlowHealth>("/health");
+    return await call<FlowHealth>("/health", {}, 400);
   } catch (error) {
     return {
       status: "ok",

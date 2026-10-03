@@ -1,6 +1,75 @@
 const POLLINATIONS = "https://gen.pollinations.ai";
 const HORDE = "https://aihorde.net/api/v2";
 
+const nextRequestAt = new Map<string, number>();
+const providerQueues = new Map<string, Promise<void>>();
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function rateLimit(key: string, minIntervalMs: number) {
+  const previous = providerQueues.get(key) || Promise.resolve();
+  const current = previous
+    .catch(() => {})
+    .then(async () => {
+      const delay = Math.max(0, (nextRequestAt.get(key) || 0) - Date.now());
+      if (delay) await wait(delay);
+      nextRequestAt.set(key, Date.now() + minIntervalMs);
+    });
+  providerQueues.set(key, current);
+  await current;
+}
+
+function retryAfterMs(response: Response, attempt: number) {
+  const header = response.headers.get("retry-after");
+  const seconds = header ? Number(header) : NaN;
+  if (Number.isFinite(seconds) && seconds >= 0)
+    return Math.max(750, Math.round(seconds * 1000));
+  return Math.min(12000, 900 * Math.pow(2, attempt));
+}
+
+async function resilientFetch(
+  url: string,
+  init: RequestInit,
+  options: {
+    key: string;
+    minIntervalMs: number;
+    attempts?: number;
+    timeoutMs?: number;
+  },
+) {
+  const attempts = Math.max(1, options.attempts || 4);
+  let lastError = "";
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    await rateLimit(options.key, options.minIntervalMs);
+    try {
+      const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(options.timeoutMs || 300000),
+      });
+      if (response.ok) return response;
+      const body = (await response.text().catch(() => "")).slice(0, 300);
+      lastError = `HTTP ${response.status}${body ? ": " + body : ""}`;
+      if (
+        response.status !== 408 &&
+        response.status !== 409 &&
+        response.status !== 425 &&
+        response.status !== 429 &&
+        response.status < 500
+      )
+        throw Error(lastError);
+      if (attempt + 1 < attempts)
+        await wait(retryAfterMs(response, attempt));
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (attempt + 1 >= attempts) break;
+      await wait(Math.min(12000, 900 * Math.pow(2, attempt)));
+    }
+  }
+  throw Error(lastError || "Dịch vụ AI tạm thời không phản hồi.");
+}
+
 export function pollinationsConfigured() {
   return !!process.env.POLLINATIONS_API_KEY?.trim();
 }
@@ -57,20 +126,28 @@ export async function pollinationsSpeech(
   const catalog = await pollinationsAudioCatalog();
   if (!catalog.model)
     throw Error("Pollinations không trả model TTS khả dụng.");
-  const response = await fetch(POLLINATIONS + "/v1/audio/speech", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer " + key,
-      "Content-Type": "application/json",
+  const response = await resilientFetch(
+    POLLINATIONS + "/v1/audio/speech",
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + key,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: catalog.model,
+        input: text,
+        voice: voice || catalog.voices[0],
+        response_format: "wav",
+      }),
     },
-    body: JSON.stringify({
-      model: catalog.model,
-      input: text,
-      voice: voice || catalog.voices[0],
-      response_format: "wav",
-    }),
-    signal: AbortSignal.timeout(300000),
-  });
+    {
+      key: "pollinations-tts",
+      minIntervalMs: 350,
+      attempts: 4,
+      timeoutMs: 300000,
+    },
+  );
   if (!response.ok)
     throw Error(
       "Pollinations TTS thất bại (" +
@@ -102,11 +179,19 @@ export async function pollinationsImage(
         nologo: "true",
         private: "true",
       }).toString();
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(300000),
-      redirect: "follow",
-      cache: "no-store",
-    });
+    const response = await resilientFetch(
+      url,
+      {
+        redirect: "follow",
+        cache: "no-store",
+      },
+      {
+        key: "pollinations-image-anonymous",
+        minIntervalMs: 750,
+        attempts: 5,
+        timeoutMs: 300000,
+      },
+    );
     if (!response.ok)
       throw Error(
         "Pollinations anonymous thất bại (" +
@@ -119,22 +204,30 @@ export async function pollinationsImage(
     };
   }
 
-  const response = await fetch(POLLINATIONS + "/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer " + key,
-      "Content-Type": "application/json",
+  const response = await resilientFetch(
+    POLLINATIONS + "/v1/images/generations",
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + key,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        prompt,
+        size: aspect === "9:16" ? "768x1344" : "1344x768",
+        response_format: "b64_json",
+        seed,
+        n: 1,
+      }),
     },
-    body: JSON.stringify({
-      model,
-      prompt,
-      size: aspect === "9:16" ? "768x1344" : "1344x768",
-      response_format: "b64_json",
-      seed,
-      n: 1,
-    }),
-    signal: AbortSignal.timeout(300000),
-  });
+    {
+      key: "pollinations-image-keyed",
+      minIntervalMs: 300,
+      attempts: 5,
+      timeoutMs: 300000,
+    },
+  );
   if (!response.ok)
     throw Error(
       "Pollinations Image thất bại (" +
@@ -157,36 +250,44 @@ export async function aiHordeImage(
 ) {
   const apikey = process.env.AI_HORDE_API_KEY || "0000000000";
   const [width, height] = aspect === "9:16" ? [448, 768] : [768, 448];
-  const request = await fetch(HORDE + "/generate/async", {
-    method: "POST",
-    headers: {
-      apikey,
-      "Client-Agent": "StoryFlow:1.0:github.com/techzoneadapter-droid/tool-ytb",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      prompt,
-      params: {
-        sampler_name: "k_euler_a",
-        cfg_scale: 7,
-        steps: 22,
-        width,
-        height,
-        n: 1,
-        seed: String(Math.max(0, seed)),
+  const request = await resilientFetch(
+    HORDE + "/generate/async",
+    {
+      method: "POST",
+      headers: {
+        apikey,
+        "Client-Agent": "StoryFlow:1.0:github.com/techzoneadapter-droid/tool-ytb",
+        "Content-Type": "application/json",
       },
-      nsfw: false,
-      censor_nsfw: true,
-      slow_workers: true,
-      trusted_workers: false,
-      r2: true,
-      shared: false,
-      ...(process.env.AI_HORDE_MODEL
-        ? { models: [process.env.AI_HORDE_MODEL] }
-        : {}),
-    }),
-    signal: AbortSignal.timeout(30000),
-  });
+      body: JSON.stringify({
+        prompt,
+        params: {
+          sampler_name: "k_euler_a",
+          cfg_scale: 7,
+          steps: 22,
+          width,
+          height,
+          n: 1,
+          seed: String(Math.max(0, seed)),
+        },
+        nsfw: false,
+        censor_nsfw: true,
+        slow_workers: true,
+        trusted_workers: false,
+        r2: true,
+        shared: false,
+        ...(process.env.AI_HORDE_MODEL
+          ? { models: [process.env.AI_HORDE_MODEL] }
+          : {}),
+      }),
+    },
+    {
+      key: "aihorde-submit",
+      minIntervalMs: apikey === "0000000000" ? 700 : 400,
+      attempts: 5,
+      timeoutMs: 30000,
+    },
+  );
   if (!request.ok)
     throw Error("AI Horde không nhận yêu cầu (" + request.status + ").");
   const submitted = await request.json();

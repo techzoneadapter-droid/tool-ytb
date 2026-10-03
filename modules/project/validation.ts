@@ -19,6 +19,7 @@ export const settingsSchema = z.object({
       "auto-local",
       "aihorde",
       "pollinations",
+      "flow-browser",
       "openai",
     ])
     .optional(),

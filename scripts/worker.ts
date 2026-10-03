@@ -619,6 +619,89 @@ async function main() {
         });
         continue;
       }
+      if (kind === "pipeline" && job.outputMode === "separate") {
+        const chapters = p.chapters.filter((chapter) =>
+          job.chapterIds.includes(chapter.id),
+        );
+        const outputs: NonNullable<Job["outputs"]> = [];
+        let subtitlesReady = false;
+
+        for (let index = 0; index < chapters.length; index++) {
+          const chapter = chapters[index];
+          const chapterScenes = chapter.scenes.filter(
+            (scene) => !job.sceneIds || job.sceneIds.includes(scene.id),
+          );
+          if (!chapterScenes.length) continue;
+
+          const base = 75 + (index / Math.max(1, chapters.length)) * 24;
+          const span = 24 / Math.max(1, chapters.length);
+          checkpoint(
+            "rendering",
+            Math.floor(base),
+            `Đang dựng video ${index + 1}/${chapters.length} — ${chapter.title}`,
+          );
+          const result = await render(chapterScenes, s, (n) => {
+            if (n >= 0.65 && s.burnSubtitles && !subtitlesReady) {
+              updateJob(job.id, { subtitlesReady: true });
+              subtitlesReady = true;
+            }
+            checkpoint(
+              "rendering",
+              Math.floor(base + n * span),
+              `Đang dựng video ${index + 1}/${chapters.length} — ${chapter.title}`,
+            );
+          });
+          if (!assetExists(result.output))
+            throw Error(`Không tìm thấy MP4 của ${chapter.title} sau khi xuất.`);
+          await verifyVideo(path.join(assets, result.output));
+
+          const child: Job = {
+            ...job,
+            id: `${job.id}:${chapter.id}`,
+            chapterIds: [chapter.id],
+            outputTitle: chapter.title,
+            outputMode: undefined,
+            outputs: undefined,
+            ...result,
+            status: "done",
+            progress: 100,
+            verified: true,
+            finishedAt: new Date().toISOString(),
+            message: "MP4 đã xuất và kiểm tra thành công",
+          };
+          await createVideoRecord(child, p);
+          outputs.push({
+            chapterIds: [chapter.id],
+            output: result.output,
+            srt: result.srt,
+            vtt: result.vtt,
+            verified: true,
+          });
+          updateJob(job.id, {
+            outputs,
+            counts: {
+              ...(get<Job>(job.id, "job").counts || {
+                audio: scenes.length,
+                image: scenes.length,
+                total: scenes.length,
+                failed: 0,
+              }),
+              rendered: outputs.length,
+            },
+          });
+        }
+
+        updateJob(job.id, {
+          outputs,
+          status: "done",
+          progress: 100,
+          verified: outputs.length === chapters.length && outputs.length > 0,
+          finishedAt: new Date().toISOString(),
+          message: `Đã tạo xong ${outputs.length}/${chapters.length} video`,
+        });
+        continue;
+      }
+
       checkpoint(
         "rendering",
         kind === "pipeline" ? 75 : 0,

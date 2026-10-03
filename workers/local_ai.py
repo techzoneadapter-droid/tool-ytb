@@ -2,6 +2,8 @@
 import argparse
 import base64
 import io
+import json
+import time
 import os
 from pathlib import Path
 import subprocess
@@ -24,10 +26,16 @@ class Generate(BaseModel):
     prompt: str = Field(min_length=1, max_length=8000)
     aspect: str = Field(default="16:9", pattern=r"^(16:9|9:16)$")
     image_base64: str | None = Field(default=None, max_length=40_000_000)
+    seed: int = Field(default=0, ge=0, le=2147483647)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "engine": engine, "model_loaded": pipeline is not None}
+    available = pipeline is not None
+    if engine == 'fast':
+        available = pipeline is not None
+    if engine == 'wan':
+        available = (Path(os.environ.get('WAN22_CHECKPOINT_DIR', '')) / 'config.json').is_file() and (Path(os.environ.get('WAN22_REPO_DIR', '')) / 'generate.py').is_file()
+    return {"status": "ok", "engine": engine, "model_loaded": pipeline is not None, "available": available}
 
 @app.post("/generate")
 def generate(request: Generate):
@@ -35,6 +43,28 @@ def generate(request: Generate):
     if not lock.acquire(blocking=False):
         raise HTTPException(409, "Worker đang bận. Chờ tác vụ trước hoàn tất.")
     try:
+        if engine == 'fast':
+            import torch
+            from diffusers import AutoPipelineForText2Image
+            if request.model != 'stabilityai/sd-turbo':
+                raise ValueError('Unsupported Local Fast model')
+            model_path = Path('data/models/sd-turbo')
+            if not (model_path / 'model_index.json').is_file():
+                raise ValueError('Chưa tải SD-Turbo. Mở Thiết lập và xác nhận tải model.')
+            started = time.perf_counter()
+            if pipeline is None:
+                # Pascal lacks native BF16; use FP32 with component CPU offload.
+                pipeline = AutoPipelineForText2Image.from_pretrained(str(model_path), torch_dtype=torch.float32, variant='fp16', local_files_only=True)
+                if torch.cuda.is_available():
+                    pipeline.enable_model_cpu_offload()
+                pipeline.enable_attention_slicing()
+                pipeline.enable_vae_slicing()
+            image = pipeline(prompt=request.prompt, width=512, height=512, num_inference_steps=1,
+                             guidance_scale=0.0, generator=torch.Generator('cpu').manual_seed(request.seed)).images[0]
+            output = io.BytesIO()
+            image.save(output, format='PNG')
+            print(json.dumps({'engine':'fast','seconds':time.perf_counter()-started,'seed':request.seed}), flush=True)
+            return Response(output.getvalue(), media_type='image/png')
         if engine == "flux":
             if request.model != "flux2-klein-4b":
                 raise ValueError("Worker chỉ cấu hình flux2-klein-4b; không tự đổi sang bản dev.")
@@ -42,11 +72,13 @@ def generate(request: Generate):
             from diffusers import Flux2KleinPipeline
             if not torch.cuda.is_available():
                 raise ValueError("Cần PyTorch CUDA và GPU phù hợp để chạy FLUX.2 worker này.")
+            if not torch.cuda.is_bf16_supported() or torch.cuda.get_device_properties(0).total_memory < 8 * 2**30:
+                raise ValueError('FLUX.2 cần nhiều bộ nhớ GPU hơn cấu hình hiện tại. FLUX.2 REAL = NOT AVAILABLE ON THIS GPU. Chọn Local Fast sau khi benchmark.')
             if pipeline is None:
-                pipeline = Flux2KleinPipeline.from_pretrained("black-forest-labs/FLUX.2-klein-4B", torch_dtype=torch.bfloat16)
+                pipeline = Flux2KleinPipeline.from_pretrained("black-forest-labs/FLUX.2-klein-4B", torch_dtype=torch.bfloat16, local_files_only=True)
                 pipeline.enable_model_cpu_offload()
             width, height = (1280, 704) if request.aspect == "16:9" else (704, 1280)
-            image = pipeline(prompt=request.prompt, width=width, height=height, guidance_scale=1.0, num_inference_steps=4).images[0]
+            image = pipeline(prompt=request.prompt, width=width, height=height, guidance_scale=1.0, num_inference_steps=4, generator=torch.Generator('cpu').manual_seed(request.seed)).images[0]
             output = io.BytesIO()
             image.save(output, format="PNG")
             return Response(output.getvalue(), media_type="image/png")
@@ -88,7 +120,8 @@ def generate(request: Generate):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--engine", choices=["flux", "wan"], required=True)
+    parser.add_argument("--engine", choices=["flux", "wan", "fast"], required=True)
+    parser.add_argument("--port", type=int)
     args = parser.parse_args()
     engine = args.engine
-    uvicorn.run(app, host="127.0.0.1", port=7861 if engine == "flux" else 7862)
+    uvicorn.run(app, host="127.0.0.1", port=args.port or (7861 if engine == "flux" else 7862))

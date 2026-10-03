@@ -46,7 +46,7 @@ export function run(
     );
   });
 }
-export async function verifyVideo(file: string) {
+export async function verifyVideo(file: string, requireAudio = true) {
   const data = JSON.parse(
     await run(
       ["-v", "error", "-show_streams", "-show_format", "-of", "json", file],
@@ -58,9 +58,10 @@ export async function verifyVideo(file: string) {
     !data.streams?.some(
       (s: { codec_type: string }) => s.codec_type === "video",
     ) ||
-    !data.streams?.some(
-      (s: { codec_type: string }) => s.codec_type === "audio",
-    ) ||
+    (requireAudio &&
+      !data.streams?.some(
+        (s: { codec_type: string }) => s.codec_type === "audio",
+      )) ||
     !(Number(data.format?.duration) > 0)
   )
     throw Error("MP4 không có luồng hình/âm thanh hoặc thời lượng hợp lệ.");

@@ -1,7 +1,9 @@
 import dotenv from "dotenv";
 dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
-import { mkdir, open, unlink } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
+import sharp from "sharp";
+import { acquireLock } from "../modules/providers/services";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -15,21 +17,30 @@ import {
 import type { Job, Project } from "../modules/project/types";
 import { speak } from "../modules/tts";
 import { makeImage } from "../modules/imagePrompt";
+import {
+  sceneVisual,
+  ensureVisualProfile,
+} from "../modules/imagePrompt/profile";
 import { imageConfig } from "../modules/providers/config";
 import { ttsSource } from "../modules/tts";
-import { assetExists, requireSceneMedia } from "../modules/project/media";
+import {
+  assetExists,
+  requireSceneMedia,
+  resolveSceneImage,
+} from "../modules/project/media";
 import { duration, verifyVideo } from "../modules/videoRender/process";
 import { assets, render } from "../modules/videoRender";
 import { makeMotion, usesMotion } from "../modules/providers/local-workers";
 const lockPath = path.join(root, "worker.lock");
 async function main() {
-  const lock = await open(lockPath, "wx").catch(() => {
-    throw Error(
-      "Tiến trình xử lý khác đang chạy hoặc còn khóa cũ. Xem README.",
-    );
-  });
-  await lock.writeFile(String(process.pid));
-  await lock.close();
+  await acquireLock(lockPath);
+  const heartbeat = () =>
+    writeFile(
+      path.join(root, "worker.health.json"),
+      JSON.stringify({ pid: process.pid, time: Date.now() }),
+    ).catch(() => {});
+  await heartbeat();
+  setInterval(heartbeat, 3000);
   for (const signal of ["SIGINT", "SIGTERM"] as const)
     process.on(signal, () => {
       void unlink(lockPath).finally(() => process.exit(0));
@@ -48,6 +59,11 @@ async function main() {
     try {
       const p = get<Project>(job.projectId, "project");
       const s = job.snapshot.settings;
+      for (const chapter of p.chapters.filter((c) =>
+        job.chapterIds.includes(c.id),
+      ))
+        ensureVisualProfile(chapter, s);
+      put("project", p);
       // Project order is authoritative even if the request selected IDs in reverse order.
       let scenes = p.chapters
         .filter((c) => job.chapterIds.includes(c.id))
@@ -69,27 +85,113 @@ async function main() {
           message,
         });
       };
+      if (
+        s.imageEnabled === false &&
+        ["pipeline", "prepare", "render"].includes(kind)
+      ) {
+        for (const scene of scenes) {
+          if (!(await resolveSceneImage(scene, s)))
+            throw Error(
+              "Cảnh chưa có ảnh hợp lệ. Hãy chọn ảnh dùng chung trước khi render.",
+            );
+        }
+        updateJob(job.id, { message: "Đã kiểm tra ảnh cảnh / ảnh dùng chung" });
+      }
       if (kind !== "render") {
         let completed = 0;
+        let failed = 0;
+        const completedItems = new Set(job.completedItems || []);
+        updateJob(job.id, { subtitlesReady: false });
         const tasks =
-          kind === "prepare"
-            ? s.imageEnabled === false
-              ? ["audio"]
-              : ["audio", "image"]
+          kind === "prepare" || kind === "pipeline"
+            ? [
+                ...(s.audioEnabled === false ? [] : ["audio"]),
+                ...(s.imageEnabled === false ? [] : ["image"]),
+                ...(kind === "pipeline" &&
+                s.motionMode &&
+                s.motionMode !== "off"
+                  ? ["motion"]
+                  : []),
+              ]
             : [kind];
-        const total = scenes.length * tasks.length;
-        for (const scene of scenes) {
-          for (const type of tasks as ("audio" | "image" | "motion")[]) {
+        const total = scenes.reduce(
+          (n, scene) =>
+            n +
+            tasks.filter((t) => t !== "motion" || usesMotion(scene, s)).length,
+          0,
+        );
+        const valid = async (
+          scene: (typeof scenes)[number],
+          type: "audio" | "image" | "motion",
+        ) => {
+          if (!assetExists(scene[type])) return false;
+          try {
+            if (type === "audio") {
+              if (!scene.audioSource) return false;
+              const seconds = await duration(path.join(assets, scene.audio!));
+              if (!(seconds > 0)) return false;
+              scene.duration = seconds;
+            } else if (type === "image") {
+              if (!scene.imageSource) return false;
+              await sharp(path.join(assets, scene.image!)).stats();
+            } else await verifyVideo(path.join(assets, scene.motion!), false);
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        const counts = () => ({
+          audio: scenes.filter((x) => completedItems.has(x.id + ":audio"))
+            .length,
+          image:
+            s.imageEnabled === false
+              ? scenes.length
+              : scenes.filter((x) => completedItems.has(x.id + ":image"))
+                  .length,
+          motion: scenes.filter((x) => completedItems.has(x.id + ":motion"))
+            .length,
+          total: scenes.length,
+          failed,
+        });
+        for (const type of tasks as ("audio" | "image" | "motion")[]) {
+          for (const scene of scenes) {
+            if (type === "motion" && !usesMotion(scene, s)) continue;
+            const key = scene.id + ":" + type;
+            if(type==='image' && !job.regenerate && completedItems.has(key) && scene.imageError && s.fallbackOnImageError && await resolveSceneImage(scene,s)) {
+              completed++;updateJob(job.id,{counts:counts()});continue;
+            }
+            if (
+              (!job.regenerate || completedItems.has(key)) &&
+              (await valid(scene, type))
+            ) {
+              completedItems.add(key);
+              scene[(type + "Status") as "audioStatus"] = "done";
+              scene[(type + "Error") as "audioError"] = undefined;
+              completed++;
+              put("project", p);
+              updateJob(job.id, {
+                completedItems: [...completedItems],
+                counts: counts(),
+              });
+              continue;
+            }
+            completedItems.delete(key);
             checkpoint(
               type === "audio" ? "audio" : "images",
-              Math.floor((completed / total) * 99),
+              Math.floor(
+                (completed / Math.max(1, total)) *
+                  (kind === "pipeline" ? 75 : 99),
+              ),
               "Đang tạo " +
                 (type === "audio"
                   ? "lời đọc"
                   : type === "motion"
                     ? "ảnh động"
                     : "ảnh") +
-                " cảnh " +
+                " — " +
+                p.chapters.find((c) => c.scenes.some((x) => x.id === scene.id))
+                  ?.title +
+                " / cảnh " +
                 (scenes.indexOf(scene) + 1),
             );
             scene[(type + "Status") as "audioStatus"] = "working";
@@ -111,44 +213,120 @@ async function main() {
                 scene.motion = file;
               } else {
                 const file = randomUUID() + ".png";
-                await makeImage(scene.prompt, path.join(assets, file), s);
+                const chapter = p.chapters.find((c) =>
+                  c.scenes.some((x) => x.id === scene.id),
+                )!;
+                const visual = sceneVisual(chapter, scene, s);
+                scene.finalImagePrompt = visual.prompt;
+                scene.imageSeed = visual.seed;
+                put("project", p);
+                const generated = await makeImage(
+                  visual.prompt,
+                  path.join(assets, file),
+                  s,
+                  visual.seed,
+                );
+                scene.imageEngine = generated.engine;
+                scene.imageModel = generated.model;
                 scene.image = file;
-                scene.imageSource = s.imageProvider || imageConfig().provider;
+                scene.imageSource = generated.engine;
                 scene.motion = undefined;
                 scene.motionStatus = undefined;
                 scene.motionError = undefined;
               }
               scene[(type + "Status") as "audioStatus"] = "done";
-              scene.approved = false;
+              scene.approved = !s.humanCheck;
               put("project", p);
               completed++;
+              completedItems.add(key);
             } catch (e) {
+              if (
+                type === "image" &&
+                s.fallbackOnImageError &&
+                (await resolveSceneImage({ ...scene, image: undefined }, s))
+              ) {
+                scene.imageError = e instanceof Error ? e.message : String(e);
+                scene.imageStatus = "error";
+                scene.approved = !s.humanCheck;
+                completed++;
+                completedItems.add(key);
+                put("project", p);
+                updateJob(job.id, {
+                  completedItems: [...completedItems],
+                  counts: counts(),
+                });
+                continue;
+              }
               scene[(type + "Status") as "audioStatus"] = "error";
               scene[(type + "Error") as "audioError"] =
                 e instanceof Error ? e.message : String(e);
               put("project", p);
-              throw e;
+              failed++;
             }
+            updateJob(job.id, {
+              completedItems: [...completedItems],
+              counts: counts(),
+            });
           }
         }
-        checkpoint(
-          "ready",
-          99,
-          "Tài nguyên thật đã lưu. Có thể nghe, xem và duyệt cảnh.",
-        );
-        updateJob(job.id, { status: "ready", progress: 0 });
-        continue;
+        if (failed)
+          throw Error(
+            `${failed} tài nguyên lỗi. Thử lại chỉ xử lý tài nguyên lỗi hoặc còn thiếu. ${scenes.flatMap((scene) => [scene.audioError, scene.imageError, scene.motionError]).find(Boolean) || ""}`,
+          );
+        if (kind === "pipeline") {
+          checkpoint(
+            "rendering",
+            75,
+            "Tài nguyên đã sẵn sàng; chuẩn bị phụ đề và video",
+          );
+        } else {
+          checkpoint(
+            "ready",
+            99,
+            "Tài nguyên thật đã lưu. Có thể nghe, xem và duyệt cảnh.",
+          );
+          updateJob(job.id, { status: "ready", progress: 0 });
+          continue;
+        }
       }
       for (const scene of scenes) {
-        requireSceneMedia(scene);
+        await requireSceneMedia(scene, s);
+        if (usesMotion(scene, s)) {
+          if (!scene.motion)
+            throw Error("Ảnh động đã bật nhưng cảnh chưa có clip Wan hợp lệ.");
+          await verifyVideo(path.join(assets, scene.motion), false);
+        }
         scene.duration = await duration(path.join(assets, scene.audio!));
         if (!Number.isFinite(scene.duration) || scene.duration <= 0)
           throw Error("Tệp lời đọc không có thời lượng hợp lệ.");
       }
-      checkpoint("rendering", 0, "FFmpeg đang dựng video từ tài nguyên thật");
-      const result = await render(scenes, s, (n) =>
-        checkpoint("rendering", Math.floor(n * 99), "FFmpeg đang mã hóa video"),
+      if (s.humanCheck && scenes.some((scene) => !scene.approved)) {
+        updateJob(job.id, {
+          status: "paused",
+          message: "Tài nguyên đã lưu. Duyệt cảnh bên dưới rồi nhấn Tiếp tục.",
+        });
+        continue;
+      }
+      checkpoint(
+        "rendering",
+        kind === "pipeline" ? 75 : 0,
+        "FFmpeg đang dựng video từ tài nguyên thật",
       );
+      let subtitlesReady = false;
+      const result = await render(scenes, s, (n) => {
+        if (n >= 0.65 && s.burnSubtitles && !subtitlesReady) {
+          updateJob(job.id, { subtitlesReady: true });
+          subtitlesReady = true;
+        }
+        checkpoint(
+          "rendering",
+          Math.floor(
+            (kind === "pipeline" ? 75 : 0) +
+              n * (kind === "pipeline" ? 24 : 99),
+          ),
+          "FFmpeg đang mã hóa video",
+        );
+      });
       if (!assetExists(result.output))
         throw Error("Không tìm thấy MP4 sau khi xuất.");
       await verifyVideo(path.join(assets, result.output));
@@ -158,6 +336,7 @@ async function main() {
         status: "done",
         progress: 100,
         verified: true,
+        finishedAt: new Date().toISOString(),
         message: "MP4 đã xuất và kiểm tra thành công",
       });
     } catch (e) {
@@ -165,6 +344,7 @@ async function main() {
       if (error !== "PAUSED")
         updateJob(job.id, {
           status: "error",
+          finishedAt: new Date().toISOString(),
           error,
           message: "Xử lý thất bại — xem chi tiết lỗi",
         });

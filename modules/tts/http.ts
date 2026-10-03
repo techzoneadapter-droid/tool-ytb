@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+import { stat, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { isSameOrigin } from "../project/request";
@@ -7,8 +8,7 @@ import { defaults } from "../project/types";
 import { root } from "../project/store";
 import { defaultTTSProvider, speak } from "./index";
 
-const sample =
-  "Xin chào, hãy cùng bắt đầu một câu chuyện mới. Mỗi hành trình đều khởi đầu từ một bước chân.";
+const sample = "Xin chào, hãy cùng nghe câu chuyện hôm nay.";
 export async function ttsRequest(req: NextRequest, preview: boolean) {
   try {
     if (!isSameOrigin(req))
@@ -46,10 +46,43 @@ export async function ttsRequest(req: NextRequest, preview: boolean) {
       b.voice ||
       process.env.DEFAULT_VIETNAMESE_VOICE ||
       "ngoc_huyen";
-    const file = randomUUID() + "." + b.format;
+    const file =
+      (preview
+        ? createHash("sha256")
+            .update(JSON.stringify(["preview-v1", provider, voiceId, b.speed]))
+            .digest("hex")
+        : randomUUID()) +
+      "." +
+      (preview ? "mp3" : b.format);
+    const output = path.join(root, "assets", file);
+    if (preview) {
+      try {
+        const [info, meta] = await Promise.all([
+          stat(output),
+          readFile(output + ".json", "utf8").then(JSON.parse),
+        ]);
+        if (
+          info.size > 0 &&
+          meta.size === info.size &&
+          meta.mtime === info.mtimeMs &&
+          meta.duration > 0
+        )
+          return NextResponse.json({
+            ok: true,
+            audioUrl: "/api/files/" + file,
+            file,
+            duration: meta.duration,
+            provider,
+            voiceId,
+            cached: true,
+          });
+      } catch {
+        /* first preview */
+      }
+    }
     const seconds = await speak(
-      b.text || sample,
-      path.join(root, "assets", file),
+      preview ? sample : b.text!,
+      output,
       {
         ...defaults,
         ...b,
@@ -57,8 +90,21 @@ export async function ttsRequest(req: NextRequest, preview: boolean) {
         ttsProvider: provider,
         voice: voiceId,
         pause: 0,
+        ...(preview ? { pitch: 0, volume: 1 } : {}),
       },
+      { preview },
     );
+    if (preview) {
+      const info = await stat(output);
+      await writeFile(
+        output + ".json",
+        JSON.stringify({
+          size: info.size,
+          mtime: info.mtimeMs,
+          duration: seconds,
+        }),
+      );
+    }
     return NextResponse.json({
       ok: true,
       audioUrl: "/generated/audio/" + file,
@@ -66,6 +112,7 @@ export async function ttsRequest(req: NextRequest, preview: boolean) {
       duration: seconds,
       provider,
       voiceId,
+      cached: false,
     });
   } catch (e) {
     const message =

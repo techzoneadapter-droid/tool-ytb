@@ -1,19 +1,45 @@
 import sharp from "sharp";
-import { mkdir, unlink } from "node:fs/promises";
+import { mkdir, unlink, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Settings } from "../project/types";
 import { requireImage } from "../providers/config";
 import { localGenerate, publishGenerated } from "../providers/local-workers";
-export async function makeImage(prompt: string, file: string, s: Settings) {
+export async function makeImage(
+  prompt: string,
+  file: string,
+  s: Settings,
+  seed = 0,
+) {
   if (s.imageEnabled === false)
     throw Error("Tạo ảnh đang tắt. Có thể dùng ảnh đã có hoặc tải ảnh lên.");
   await mkdir(path.dirname(file), { recursive: true });
   let bytes: Buffer;
-  if (s.imageProvider === "flux2-local") {
-    bytes = await localGenerate("flux", {
-      model: process.env.FLUX2_MODEL || "flux2-klein-4b",
+  let provider = s.imageProvider;
+  if (provider === "auto-local") {
+    const tested = await readFile(
+      path.resolve("data/fast-benchmark.json"),
+      "utf8",
+    )
+      .then(JSON.parse)
+      .catch(() => null);
+    if (!tested?.passed)
+      throw Error(
+        "Auto chưa có engine đã benchmark thành công. Chọn Local Fast để kiểm tra sau khi cài model.",
+      );
+    provider = "local-fast";
+  }
+  const model =
+    provider === "local-fast"
+      ? "stabilityai/sd-turbo"
+      : provider === "flux2-local"
+        ? process.env.FLUX2_MODEL || "flux2-klein-4b"
+        : requireImage().model;
+  if (provider === "flux2-local" || provider === "local-fast") {
+    bytes = await localGenerate(provider === "local-fast" ? "fast" : "flux", {
+      model,
       prompt,
       aspect: s.aspect,
+      seed,
     });
   } else {
     const c = requireImage();
@@ -61,6 +87,7 @@ export async function makeImage(prompt: string, file: string, s: Settings) {
       .png()
       .toFile(file);
     await publishGenerated(file, "images");
+    return { engine: provider || "openai", model };
   } catch {
     await unlink(file).catch(() => {});
     throw Error("Không giải mã được ảnh trả về từ API.");

@@ -1,4 +1,8 @@
 export type Scene = {
+  finalImagePrompt?: string;
+  imageSeed?: number;
+  imageEngine?: string;
+  imageModel?: string;
   motion?: string;
   motionSelected?: boolean;
   motionStatus?: "working" | "done" | "error";
@@ -18,14 +22,28 @@ export type Scene = {
   approved: boolean;
 };
 export type Chapter = {
+  visualProfile?: VisualProfile;
   id: string;
   title: string;
   text: string;
   scenes: Scene[];
 };
+export type VisualProfile = {
+  style: string;
+  seed: number;
+  characters: { name: string; descriptor: string }[];
+  locations: string[];
+  era: string;
+  clothing: string;
+  visualNotes: string;
+};
 export type Settings = {
+  audioEnabled?: boolean;
+  splitScenes?: boolean;
+  fallbackImage?: string;
+  fallbackOnImageError?: boolean;
   imageEnabled?: boolean;
-  imageProvider?: "flux2-local" | "openai";
+  imageProvider?: "flux2-local" | "local-fast" | "auto-local" | "openai";
   motionMode?: "off" | "selected" | "all";
   ttsProvider?: import("../tts/local-voices").TTSProvider;
   provider: "openai";
@@ -59,6 +77,8 @@ export type Project = {
   settings: Settings;
 };
 export type Job = {
+  startedAt?: string;
+  finishedAt?: string;
   id: string;
   projectId: string;
   chapterIds: string[];
@@ -71,7 +91,17 @@ export type Job = {
     | "ready"
     | "done"
     | "error";
-  kind?: "audio" | "image" | "motion" | "prepare" | "render";
+  regenerate?: boolean;
+  subtitlesReady?: boolean;
+  completedItems?: string[];
+  counts?: {
+    motion?: number;
+    audio: number;
+    image: number;
+    total: number;
+    failed: number;
+  };
+  kind?: "pipeline" | "audio" | "image" | "motion" | "prepare" | "render";
   sceneIds?: string[];
   verified?: boolean;
   prepare?: boolean;
@@ -100,7 +130,7 @@ export const defaults: Settings = {
   color: "#ffffff",
   outline: 2,
   position: "bottom",
-  humanCheck: true,
+  humanCheck: false,
   musicVolume: 0.12,
   brandColor: "#6554d9",
 };

@@ -6,7 +6,7 @@ export const root = path.resolve("data");
 mkdirSync(root, { recursive: true });
 const db = new DatabaseSync(path.join(root, "storyflow.sqlite"));
 db.exec(
-  "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, kind TEXT NOT NULL, body TEXT NOT NULL)",
+  "PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, kind TEXT NOT NULL, body TEXT NOT NULL)",
 );
 export function list<T>(kind: string): T[] {
   return (
@@ -52,6 +52,8 @@ export function claim(): Job | undefined {
       .find((j) => j.status === "queued");
     if (job) {
       job.status = "audio";
+      job.startedAt ||= new Date().toISOString();
+      job.finishedAt = undefined;
       job.message = "Bắt đầu xử lý";
       put("job", job);
     }
@@ -60,5 +62,19 @@ export function claim(): Job | undefined {
   } catch (e) {
     db.exec("ROLLBACK");
     throw e;
+  }
+}
+
+// Delete records only. Assets may be shared by caches and other projects.
+export function removeProject(id: string) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const job of list<Job>("job").filter((j) => j.projectId === id))
+      db.prepare("DELETE FROM records WHERE id=? AND kind='job'").run(job.id);
+    db.prepare("DELETE FROM records WHERE id=? AND kind='project'").run(id);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
 }

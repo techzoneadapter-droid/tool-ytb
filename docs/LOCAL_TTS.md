@@ -1,5 +1,8 @@
 # TTS local miễn phí cho StoryFlow
 
+> Cập nhật workflow 02/10/2026: `npm run dev` (hoặc `npm run app`) và `npm start` tự khởi động worker. Không cần terminal thứ hai. Trang Tạo video chạy toàn bộ pipeline; tài liệu/lệnh thủ công bên dưới dùng để cài đặt hoặc chẩn đoán nâng cao. Korva giữ model trong `workers/korva_server.py`; VieNeu tự khởi động từ `VIENEU_REPO_DIR` (mặc định repo VieNeu-TTS cạnh StoryFlow). Nút **Khởi động AI Engine** không tự cài dependencies. Các kết quả cũ bên dưới là lịch sử, xem README cho kết quả mới nhất.
+
+
 Chỉ sử dụng giọng dựng sẵn. VieNeu là engine mặc định của dự án mới; Korva là lựa chọn dự phòng **do người dùng chọn**, không tự đổi engine hoặc gọi API trả phí khi lỗi. Dự án cũ giữ giọng cloud cho đến khi đổi và lưu thiết lập.
 
 ## Cấu hình
@@ -28,11 +31,18 @@ korvatts voices
 korvatts synth "Xin chào, mình là Ngọc Huyền." -v ngoc_huyen -o test.wav
 ```
 
-Lần đầu engine tải mô hình từ Hugging Face nên cần Internet và có thể mất thời gian. Sau khi có mô hình, tổng hợp chạy trên máy. Có thể cấu hình `KORVATTS_ASSETS_DIR` theo tài liệu engine để dùng mô hình đã tải. StoryFlow kiểm tra CLI bằng `--help`; nhãn “Đã cài CLI” không bảo đảm mô hình đã tải. Lỗi mô hình/CLI được hiển thị khi nghe thử. Lệnh chạy bằng `spawn` với mảng đối số và `shell: false`.
+Korva chạy resident tại `127.0.0.1:7863`, giữ một model trong RAM. Service dùng model đã có trong `KORVATTS_ASSETS_DIR` hoặc cache Hugging Face, không tự tải weights. `/voices` gọi `TTS.list_voices()`; `/preview` dùng 12 steps, `/synthesize` dùng 32 steps. CLI ở trên chỉ dùng chẩn đoán.
 
 Giọng: Ngọc Huyền, Bảo Kim, Khánh Vy, Phương Linh, Quỳnh Như, Gia Bảo, Hoàng Nam, Hữu Đạt, Quang Huy và Thanh Phong.
 
 ## VieNeu-TTS v3 Turbo
+
+Trên máy hiện tại, mở terminal riêng và giữ tiến trình chạy:
+
+```powershell
+cd "D:\Desktop\tool\VieNeu-TTS"
+python -m uv run python -m apps.openai_speech
+```
 
 Cài Git và uv nếu chưa có (`python -m pip install uv`), rồi mở terminal riêng:
 
@@ -43,9 +53,9 @@ uv sync
 uv run python -m apps.openai_speech
 ```
 
-Giữ terminal này chạy. Lần đầu cần tải mô hình. Kiểm tra `http://127.0.0.1:8000/health` và `/v1/voices`. StoryFlow chỉ đánh dấu giọng sẵn sàng khi health thành công và danh mục có Ngọc Huyền. Trạng thái được lưu đệm 15 giây.
+Lệnh trên dành cho chạy thủ công. Trong app, nút Khởi động mở service nền một lần. Kiểm tra `http://127.0.0.1:8000/health` và `/v1/voices`. StoryFlow hiển thị toàn bộ danh sách engine trả về (25 giọng trên máy này), nhận ID/name/aliases và gửi đúng ID. Trạng thái được lưu đệm 15 giây.
 
-Adapter gửi `model: vieneu-v3-turbo`, `voice: Ngọc Huyền`, `response_format: wav` đến `/v1/audio/speech`. WAV streaming được chuẩn hóa bằng FFmpeg trước khi đo thời lượng. Tốc độ, cao độ, âm lượng và nghỉ cuối cảnh được áp dụng trên máy; có thể xuất WAV hoặc MP3.
+Adapter gửi `model: vieneu-v3-turbo`, `voice: <ID được chọn>`, `response_format: wav` đến `/v1/audio/speech`. WAV streaming được chuẩn hóa bằng FFmpeg trước khi đo thời lượng. Tốc độ, cao độ, âm lượng và nghỉ cuối cảnh được áp dụng trên máy; audio cuối có thể xuất WAV hoặc MP3.
 
 ## Nghe thử và tạo audio
 
@@ -64,7 +74,7 @@ POST `/api/tts/preview` hoặc `/api/tts/generate`, cùng origin với app:
 {"provider":"vieneu-local","voiceId":"ngoc_huyen","text":"Xin chào, mình là Ngọc Huyền.","format":"wav","speed":1}
 ```
 
-Thành công trả `{ok:true,audioUrl,provider,voiceId,file,duration}`. Lỗi trả `{ok:false,message,error}` cùng HTTP 400; origin không hợp lệ trả 403. Preview tối đa 2.000 ký tự, generate 20.000; engine xử lý theo đoạn nhỏ. `format` nhận `wav` hoặc `mp3`.
+Thành công trả `{ok:true,audioUrl,provider,voiceId,file,duration,cached}`. Lỗi trả HTTP 400; origin không hợp lệ trả 403. Preview luôn đọc câu 9 từ cố định, xuất MP3 và bỏ qua text/pitch/volume từ client. Cache preview theo engine/voice/speed, giữ qua restart; bấm lại trong browser phát ngay không gọi API. Generate nhận tối đa 20.000 ký tự, xuất WAV hoặc MP3.
 
 File lưu tại `data/assets`, truy cập bằng `/api/files/<tên an toàn>`. Cache dùng hash nội dung, engine, giọng, định dạng và thông số đọc; file phải đo được thời lượng dương mới tái sử dụng. Đổi văn bản/giọng/thông số sẽ tạo cache khác. Không xóa `data` nếu muốn giữ dự án và audio qua lần khởi động sau. Cache không tự hết hạn; có thể xóa các file cache không còn cần thiết khi ứng dụng và worker đã dừng.
 

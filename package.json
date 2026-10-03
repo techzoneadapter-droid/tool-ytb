@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1",
+    "dev": "tsx scripts/app.ts",
     "build": "next build",
-    "start": "next start --hostname 127.0.0.1",
+    "start": "tsx scripts/app.ts --production",
     "worker": "tsx scripts/worker.ts",
-    "test": "tsx --test tests/core.test.ts"
+    "test": "tsx --test tests/core.test.ts",
+    "app": "tsx scripts/app.ts"
   },
   "dependencies": {
     "dotenv": "^17.0.0",

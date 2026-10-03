@@ -9,11 +9,10 @@ Cần Node.js 22.13+ (khuyên dùng 24), FFmpeg và ffprobe trên PATH, FFmpeg c
 ```sh
 npm install
 npm run dev
-# Terminal thứ hai:
-npm run worker
+# Hoặc: npm run app
 ```
 
-Mở http://127.0.0.1:3000. Chạy bản tối ưu: `npm run build`, `npm start` và `npm run worker`. Chỉ chạy một worker. Mặc định ứng dụng chỉ lắng nghe localhost, chưa có đăng nhập; không triển khai nguyên trạng ra Internet.
+Mở http://127.0.0.1:3000. Chạy bản tối ưu: `npm run build`, `npm start` (worker tự chạy). Chỉ chạy một worker. Mặc định ứng dụng chỉ lắng nghe localhost, chưa có đăng nhập; không triển khai nguyên trạng ra Internet.
 
 ## Giọng đọc local miễn phí
 
@@ -68,24 +67,21 @@ Các biến khác:
 
 Tài liệu chính thức: [OpenAI TTS](https://developers.openai.com/api/docs/guides/text-to-speech), [OpenAI Images](https://developers.openai.com/api/docs/guides/image-generation), [Azure Speech REST](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/rest-text-to-speech).
 
-## Luồng sử dụng
+## Workflow mới — 3 tab
 
-1. Nhập truyện hoặc chọn dự án đang có. Không thay đổi bộ tách chương.
-2. Vào **Giọng đọc**, chọn engine local hoặc giọng API đã cấu hình. **Nghe thử** tạo file thật, hiển thị trình phát và nút tải MP3 sau khi ffprobe xác nhận thời lượng > 0. Local không tính phí API; nhóm đám mây có thể tính phí.
-3. Chọn giọng, tốc độ, cao độ, âm lượng, lưu. Thay đổi thông số lời đọc sẽ bỏ liên kết audio cũ trong dự án để tránh dùng nhầm giọng khi render.
-4. Chọn phong cách ảnh; **Chia lại cảnh theo phong cách** thêm prompt hệ thống riêng vào mô tả từng cảnh. Có 10 preset: Tu tiên/Tiên hiệp, Huyền huyễn, Võ hiệp cổ trang, Cổ trang Trung Hoa, Anime, Manhua, Dark fantasy, Điện ảnh chân thực, Hoạt hình 2.5D, Chibi.
-5. **Tạo lời đọc cảnh này** / **Tạo ảnh cảnh này**, hoặc tạo cho toàn chương. Các tác vụ chạy tuần tự qua worker, lưu trạng thái và lỗi trên từng cảnh. Tạo lại thay thế liên kết sau khi nhận tệp hợp lệ. Ảnh thật được giải mã, cắt về 1280×720 hoặc 720×1280. Có thể tải ảnh lên thay cho API.
-6. Nghe audio, xem ảnh, duyệt cảnh. Chỉ xuất video khi mỗi cảnh có ảnh và lời đọc thật còn tồn tại trên đĩa, bất kể có bật duyệt trước hay không.
-7. **Xuất video** ghép theo thứ tự chương trong dự án. FFmpeg xuất MP4 với audio và phụ đề. Phần trăm mã hóa lấy từ `-progress` / thời gian đầu ra của FFmpeg; các công đoạn chiếm các khoảng phần trăm, không phải đồng hồ đếm giả. Lỗi có log FFmpeg.
-8. Trước khi ghi “Hoàn tất / 100%”, worker kiểm tra file tồn tại và ffprobe thấy luồng video, audio, thời lượng > 0. Trang Xuất video có trình phát, toàn màn hình, tải MP4/SRT/VTT; MP3 tải ở từng cảnh. Tác vụ tạo tài nguyên hiển thị “Tài nguyên đã lưu”, không giả là video hoàn tất.
-9. Tải lại trang vẫn giữ dự án, tài nguyên và video. Nếu file bị xóa khỏi máy, API không tiếp tục trả trạng thái thành công cho file đó.
+1. **Nhập truyện**: dán nội dung hoặc kéo/thả TXT/DOCX, xem trước chương rồi tạo dự án. Không chạy AI tại bước này. Danh sách dự án có mở, đổi tên và xóa có xác nhận; xóa bản ghi không xóa tệp dùng chung.
+2. **Tạo video**: chọn dự án/chương, VieNeu hoặc Korva, nghe thử, bật/tắt lời đọc, ảnh, phụ đề và ảnh động. Mặc định VieNeu/Ngọc Huyền, FLUX.2, phụ đề bật và Wan tắt. Chọn 16:9 hoặc 9:16, xuất riêng từng chương hoặc gộp theo thứ tự truyện.
+3. **Quản lý kênh**: YouTube/Facebook ghi rõ Đang phát triển; chưa có liên kết hoặc OAuth.
 
-Nghe thử không dùng giọng tổng hợp của trình duyệt. Khi thiếu engine local hoặc khóa API, ứng dụng báo lỗi cụ thể; không trả tệp giả và không tạo tác vụ hoàn tất.
+**Bắt đầu tạo video** lưu tùy chọn rồi chạy pipeline trên worker. Audio, ảnh và motion hợp lệ được tái sử dụng. Tiến trình lấy từ tác vụ/cảnh và FFmpeg. Lỗi có Chi tiết; retry giữ phần đã xong. Duyệt thủ công nằm trong Thiết lập nâng cao, mặc định tắt. MP4 chỉ hoàn thành sau ffprobe; player và tải MP4/SRT nằm ngay dưới cấu hình.
 
+Tắt tạo ảnh: dùng ảnh đã có hoặc tải Ảnh dùng chung cho cảnh thiếu ảnh. Tắt lời đọc: dùng audio đã có, báo lỗi khi thiếu. Engine local lỗi không chuyển sang dịch vụ trả phí. Thiết lập nâng cao giữ pitch, volume, pause, prompt, phụ đề, intro/outro, logo và nhạc nền.
+
+`npm run app`, `npm run dev` và `npm start` dùng launcher chung, giữ worker lock và heartbeat. Không chạy thêm terminal worker. FLUX/Wan cần được cài và tải model trước; FLUX chỉ đọc model có sẵn, không tự tải hàng chục GB. Xem `docs/LOCAL_AI_WORKERS.md` và `docs/LOCAL_TTS.md`.
 ## Lưu trữ, phạm vi
 
 - SQLite `data/storyflow.sqlite`, file `data/assets`, trung gian `data/work`; sao lưu cả thư mục.
-- Chỉ một worker, tạm dừng ở công đoạn hiện tại hoặc lần cập nhật FFmpeg kế tiếp. Nếu dừng cưỡng bức, xác nhận PID trong `data/worker.lock` không chạy rồi xóa lock. Khởi động lại sẽ phục hồi tác vụ dang dở; gọi lại dịch vụ có thể phát sinh phí.
+- Chỉ một worker, tạm dừng ở công đoạn hiện tại hoặc lần cập nhật FFmpeg kế tiếp. Nếu dừng cưỡng bức, lần khởi động sau tự phục hồi lock khi PID đã chết. Khởi động lại sẽ phục hồi tác vụ dang dở; gọi lại dịch vụ có thể phát sinh phí.
 - Phụ đề dựa trên thời lượng audio đo thật nhưng chia theo số từ, chưa có nhận dạng lời nói/căn từng từ.
 - Mở đầu/kết thúc có hình với nền âm thanh im lặng theo thiết kế cũ; **lời đọc cảnh luôn phải đến từ TTS thật**. Nhạc nền/biểu trưng tùy chọn.
 - YouTube/Facebook Page/Lịch đăng/Thống kê vẫn **Đang phát triển**.
@@ -104,10 +100,33 @@ Chưa có script lint. Bộ kiểm thử parser vẫn giữ nguyên. Kiểm th�
 
 Script trình duyệt dùng Microsoft Edge đã cài trên máy, tạo một dự án kiểm thử tạm rồi xóa đúng bản ghi đó. Không chạm nội dung dự án người dùng. Có khóa và mã giọng thì kiểm tra nghe thử, tạo MP3/ảnh, duyệt, xuất MP4, player, tải file, refresh. Khi thiếu khóa, chỉ kiểm tra lỗi rõ ràng, prompt Tu tiên và chặn render; ghi rõ **chưa kiểm tra đầu ra AI end-to-end**, không dựng video giả để thay thế. Kết quả lưu ở `test-results/real-media-results.json`.
 
-Kiểm tra TTS local ngày 02/10/2026: KorvaTTS 0.1.3 trong `.tts-venv` đã tạo WAV/MP3 thật, trình duyệt nhận thời lượng dương, tải được file sau refresh; worker tạo audio cảnh bằng `korva-local`, cache trả cùng nội dung file. VieNeu chưa được cài/chạy trên máy: đã kiểm tra thông báo thiếu engine, chưa kiểm thử tổng hợp VieNeu thật. Không gọi API đám mây trong kiểm tra local này.
+Kiểm tra TTS local ngày 02/10/2026: KorvaTTS 0.1.3 trong `.tts-venv` đã tạo WAV/MP3 thật, trình duyệt nhận thời lượng dương, tải được file sau refresh; worker tạo audio cảnh bằng `korva-local`, cache trả cùng nội dung file. Ở kiểm thử ban đầu VieNeu chưa chạy; kiểm thử mới phía dưới đã khởi động và xác minh WAV thật. Không gọi API đám mây trong kiểm tra local này.
 
 Kiểm tra lại sau khi chạy server và worker: `node scripts/verify-local-tts.mjs --audio`, `node scripts/verify-local-pipeline.mjs`. Cần Edge và Korva đã cấu hình; script pipeline chỉ tạo rồi xóa dự án kiểm thử riêng, không sửa truyện có sẵn.
 
 ## Các module
 
 `modules/providers/config.ts`: cấu hình và trạng thái không chứa khóa; `modules/tts`: giọng và API TTS; `modules/imagePrompt`: prompt hệ thống và API ảnh; `modules/project/media.ts`: xác minh tài nguyên; `modules/videoRender`: FFmpeg; `scripts/worker.ts`: hàng đợi; `app/api/tts/preview`: nghe thử; `app/api/studio`: thao tác dự án/cảnh/tác vụ.
+
+## Kiểm chứng workflow một nút — 02/10/2026
+
+- Korva tạo audio mới: cold load 18,27 giây; các lượt sau `model_loads=1`, `load_seconds=0` (6,25 và 12,79 giây tổng hợp hai đoạn khác nhau). Không dùng batch: ONNX của Korva cố định batch size 1.
+- VieNeu khởi động từ app, sửa lỗi kế thừa PORT của Next.js; WAV mới 3,877 giây đã được xác minh.
+- Browser one-click: hai chương → Korva thật → ảnh chụp rừng tải lên → SRT → MP4 10,12 giây. Player, Range HTTP 206, download, refresh và tái sử dụng tài nguyên đều qua. Ảnh tải lên không được tính là test suy luận FLUX.
+- `npm test`: 17/17 PASS; `npm run build`: PASS. Các script local TTS, local pipeline, local AI, real-media (nhánh thiếu khóa cloud), studio-panel, one-click và recovery đã PASS.
+- Recovery: hai lỗi FLUX không làm dừng tạo audio các cảnh khác; retry giữ audio; duyệt tùy chọn; resume qua khởi động lại worker; không tạo worker trùng; tắt phụ đề không tạo SRT/VTT.
+- FLUX/Wan chưa kiểm thử suy luận thật: máy chưa có môi trường `.ai-venv`; chưa xác minh dependencies, model và CUDA cho hai engine. Lỗi được giữ nguyên, không có ảnh/video AI giả.
+- Báo cáo và video TEST giữ trong `test-results/one-click.json`, `test-results/recovery.json` và các dự án có tiền tố `[TEST ...]`. Không sửa truyện người dùng.
+
+Kiểm thử bổ sung: `node scripts/verify-one-click.mjs`, `node scripts/verify-recovery.mjs`. Cần ảnh chụp thật tại `test-results/forest-photo.jpg` (fixture lần này: https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1280&q=80). Recovery kiểm tra tình huống FLUX chưa khả dụng. Các script tạo dự án riêng; không dùng dữ liệu truyện thật.
+
+## Kiểm chứng redesign — 03/10/2026
+
+- 3 tab mới; TXT/DOCX, preview parser, lưu/đổi tên dự án: PASS. Edge 1366×768 và 1600×900: không lỗi console/hydration, không tràn ngang.
+- VieNeu và Korva: WAV thật, ffprobe thời lượng dương, cache trả cùng audio. Không gọi TTS cloud.
+- Pipeline: MP4 riêng 2 chương và MP4 gộp đúng thứ tự, phụ đề SRT, player, download, Range 206 và refresh: PASS. Dùng ảnh chụp tải lên; không tính là FLUX inference.
+- Retry giữ audio, resume sau restart, lock không trùng, duyệt riêng nhiều chương và invalidation khi đổi giọng: PASS.
+- FLUX.2/Wan2.2: INTEGRATION ONLY. Real inference SKIPPED vì engine/môi trường chưa sẵn sàng. Pipeline Wan đã được kiểm tra thực sự gọi adapter và trả lỗi thật.
+- `npm test`: 18/18 PASS. `npm run build`: PASS; còn cảnh báo tracing đường dẫn động của launcher trong Turbopack.
+
+Kiểm tra UI: `node scripts/verify-redesign.mjs`. Kiểm tra thật: `verify-local-tts.mjs`, `verify-local-pipeline.mjs`, `verify-local-ai.mjs`, `verify-real-media.mjs`, `verify-one-click.mjs`, `verify-recovery.mjs`, `verify-chapter-review.mjs` trong `scripts/`. Cần app chạy; các script tạo dự án TEST riêng, không dùng truyện có sẵn. Báo cáo và ảnh chụp trong `test-results/`. Hai test phục hồi chỉ restart worker sau khi xác nhận không có job đang chạy.

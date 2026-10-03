@@ -1,5 +1,20 @@
 # StoryFlow: giọng, ảnh và ảnh động local
 
+## Thiết lập hiện tại — 03/10/2026
+
+Trong Hệ thống AI → Thiết lập, chọn **Cài / kiểm tra môi trường AI**. Hoặc chạy `powershell -ExecutionPolicy Bypass -File scripts/setup-local-ai.ps1`. Script dùng Python 3.10, tạo `.ai-venv` riêng, cài torch 2.7.1 CUDA 11.8 (hỗ trợ Pascal), Diffusers và kiểm tra import/CUDA thật. Tải PyTorch có chunk progress, tiếp tục được và xác minh SHA256. Không sửa `.tts-venv`, `.env.local` hay database.
+
+Model ảnh là bước riêng cần checkbox xác nhận. `-DownloadModel` là xác nhận rõ khi dùng CLI. SD-Turbo khoảng 2,6 GB, lưu `data/models/sd-turbo`; inference luôn `local_files_only=True`. Không có fallback API trả phí. GTX 1050 4 GB không đáp ứng worker FLUX.2 BF16; báo NOT AVAILABLE ON THIS GPU, không hứa chạy FLUX chỉ vì import thành công.
+
+Local Fast dùng SD-Turbo FP32/offload, 512×512, 1 step và seed xác định; cần benchmark thực tế trước khi sử dụng. `node scripts/verify-image-consistency.mjs` tạo ba PNG thật, decode bằng sharp, chạy TTS/subtitle/MP4 và ffprobe trước khi ghi bằng chứng cho Auto. Script không tải model. Auto chỉ chọn Local Fast sau benchmark PASS. SD-Turbo có giới hạn prompt dài/tiếng Việt; profile/seed không bảo đảm nhận dạng khuôn mặt, không có reference conditioning trong integration này.
+
+Mỗi chương lưu `visualProfile` (style/seed/characters/locations/era/clothing/notes), có thể sửa trong mục nâng cao. Mô tả ban đầu lấy nguyên văn nguồn, không suy diễn thông tin nhân vật. Mỗi scene lưu prompt thực tế, seed, engine/model. Ảnh chung nằm trong settings và được resolver chung kiểm tra/đưa vào FFmpeg, không copy sang từng scene. Tắt AI ảnh luôn cho phép ảnh chung; fallback khi AI lỗi mặc định OFF.
+
+Các lệnh cài thủ công và ghi nhận phía dưới là lịch sử tham khảo; ưu tiên script thiết lập ở trên.
+
+> Cập nhật workflow 02/10/2026: `npm run dev` (hoặc `npm run app`) và `npm start` tự khởi động worker. Không cần terminal thứ hai. Trang Tạo video chạy toàn bộ pipeline; tài liệu/lệnh thủ công bên dưới dùng để cài đặt hoặc chẩn đoán nâng cao. Korva giữ model trong `workers/korva_server.py`; VieNeu tự khởi động từ `VIENEU_REPO_DIR` (mặc định repo VieNeu-TTS cạnh StoryFlow). Nút **Khởi động AI Engine** không tự cài dependencies. Các kết quả cũ bên dưới là lịch sử, xem README cho kết quả mới nhất.
+
+
 VieNeu-TTS v3 Turbo là giọng chính; FLUX.2 tạo ảnh tĩnh; Wan2.2 chỉ tạo ảnh động/video ngắn khi bạn bật. FFmpeg và hàng đợi của StoryFlow vẫn dựng video như trước. Không cần chạy FLUX khi tắt tạo ảnh, không cần chạy Wan khi tắt ảnh động. Không tự chuyển từ local sang API trả phí.
 
 ## Cấu hình app
@@ -19,6 +34,15 @@ WAN22_MODEL=ti2v-5b
 Các URL local chỉ nhận loopback. Dự án mới mặc định VieNeu, FLUX.2, ảnh động tắt. Dự án cũ giữ lựa chọn đã lưu; đổi engine tại trang Giọng đọc và màn hình cảnh rồi lưu. Tên `Ngọc Huyền` được chuẩn hóa thành ID nội bộ `ngoc_huyen`; request VieNeu vẫn gửi đúng `voice: "Ngọc Huyền"`.
 
 ## VieNeu — giọng chính
+
+Nếu repo VieNeu đã có trên máy này:
+
+```powershell
+cd "D:\Desktop\tool\VieNeu-TTS"
+python -m uv run python -m apps.openai_speech
+```
+
+Panel chính kiểm tra kết nối worker FLUX/Wan, tiến trình StoryFlow và FFmpeg/FFprobe. Kết nối FLUX/Wan thành công chưa bảo đảm model hoặc VRAM sẵn sàng; lỗi tổng hợp vẫn được hiển thị khi tạo tài nguyên. Tắt tạo ảnh vẫn cần ảnh đã tải lên cho mỗi cảnh khi xuất video.
 
 ```powershell
 git clone https://github.com/pnnbao97/VieNeu-TTS.git

@@ -1,6 +1,7 @@
 import { vietnameseVoices, legacyOpenAIVoices } from "../tts/voices";
-import { localStatus, hasVieneuVoice } from "../tts/local";
-import { localVoices, type TTSProvider } from "../tts/local-voices";
+import { localStatus } from "../tts/local";
+import { localVoiceNames, type TTSProvider } from "../tts/local-voices";
+import { runtimeStatus } from "./runtime-status";
 export function ttsConfig() {
   const provider = process.env.TTS_PROVIDER || "openai";
   const key =
@@ -58,7 +59,7 @@ export function requireImage() {
   return c;
 }
 export async function providerStatus() {
-  const local = await localStatus();
+  const [local, runtime] = await Promise.all([localStatus(), runtimeStatus()]);
   let t;
   try {
     t = ttsConfig();
@@ -71,36 +72,31 @@ export async function providerStatus() {
   }
   return {
     local,
+    runtime,
     tts: { provider: t.provider, configured: t.configured },
     image: {
       provider: imageConfig().provider,
       configured: imageConfig().provider === "openai" && !!imageConfig().key,
     },
     voices: [
-      ...localVoices.map((v) => ({
+      ...local.korva.voices.map((v) => ({
         ...v,
+        name: localVoiceNames[v.id] || v.name || v.id,
         provider: "korva-local" as TTSProvider,
         key: "korva-local:" + v.id,
         configured: local.korva.ready,
         voiceId: v.id,
         status: local.korva.message,
       })),
-      {
-        ...localVoices[0],
-        name: "Ngọc Huyền",
-        description: "Giọng dựng sẵn của VieNeu-TTS v3 Turbo, chạy trên máy.",
+      ...local.vieneu.voices.map((v) => ({
+        ...v,
+        name: v.name || v.id,
         provider: "vieneu-local" as TTSProvider,
-        key: "vieneu-local:ngoc_huyen",
-        configured:
-          local.vieneu.ready &&
-          hasVieneuVoice(local.vieneu.voices, "Ngọc Huyền"),
-        voiceId: "Ngọc Huyền",
-        status: !local.vieneu.ready
-          ? local.vieneu.message
-          : hasVieneuVoice(local.vieneu.voices, "Ngọc Huyền")
-            ? "Engine đang chạy; có preset Ngọc Huyền"
-            : "Engine chưa có preset Ngọc Huyền",
-      },
+        key: "vieneu-local:" + v.id,
+        configured: local.vieneu.ready,
+        voiceId: v.id,
+        status: local.vieneu.message,
+      })),
       ...[
         ...vietnameseVoices,
         ...legacyOpenAIVoices.map((id) => ({
@@ -130,6 +126,10 @@ export async function providerStatus() {
             ? v.id
             : null),
       })),
-    ],
+    ].sort(
+      (a, b) =>
+        Number(b.provider === "vieneu-local") -
+        Number(a.provider === "vieneu-local"),
+    ),
   };
 }

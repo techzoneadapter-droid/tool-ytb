@@ -85,16 +85,26 @@ export const imageStyles = [
       "Chibi illustration, small stylized bodies, oversized expressive heads, charming simplified shapes, bright clean colors, soft light.",
   },
 ];
-export function styledPrompt(text: string, style: string, custom = "") {
+export function styledPrompt(
+  text: string,
+  style: string,
+  custom = "",
+  chapterContext = "",
+) {
   const preset =
     imageStyles.find((p) => p.name === style) ||
     imageStyles.find((p) => p.name === "Điện ảnh chân thực")!;
   return (
     preset.prompt +
+    (chapterContext
+      ? " Chapter context: " +
+        chapterContext.replace(/\s+/g, " ").slice(0, 3500) +
+        "."
+      : "") +
     " Scene: " +
     text +
     ". " +
     custom +
-    " Consistent characters, no text, no watermark."
+    " Keep the same character faces, age, hairstyle, clothing and signature objects across scenes. Follow the supplied character descriptions and story setting. No text, no lettering, no subtitles, no watermark."
   );
 }

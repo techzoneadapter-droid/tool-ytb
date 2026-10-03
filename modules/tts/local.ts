@@ -1,3 +1,4 @@
+import { startService, serviceURL } from "../providers/services";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -6,9 +7,10 @@ import type { Settings } from "../project/types";
 import { chunks } from "../project/parser";
 import { run, duration } from "../videoRender/process";
 import { localVoiceId, localVoiceNames } from "./local-voices";
+import { findEngineVoice, type EngineVoice } from "./catalog";
 
 export const vieneuMissing =
-  "Chưa chạy VieNeu-TTS local. Hãy mở VieNeu-TTS và chạy: uv run python -m apps.openai_speech";
+  "Chưa kết nối được VieNeu-TTS local. Nhấn Khởi động AI Engine hoặc xem Chi tiết dịch vụ.";
 export const korvaMissing =
   "Chưa cài KorvaTTS local. Mở PowerShell và chạy: python -m pip install korvatts";
 export function vieneuURL() {
@@ -93,7 +95,9 @@ export async function vieneuVoices() {
     const h = await health.json();
     const v = await voices.json();
     if (h.status !== "ok" || !Array.isArray(v.data)) throw Error(vieneuMissing);
-    return v.data as { id: string; name?: string; aliases?: string[] }[];
+    return v.data.filter(
+      (x: EngineVoice) => typeof x.id === "string" && x.id.length > 0,
+    ) as EngineVoice[];
   } catch {
     throw Error(vieneuMissing);
   }
@@ -102,10 +106,7 @@ let healthCache:
   | { until: number; promise: Promise<Awaited<ReturnType<typeof checkLocal>>> }
   | undefined;
 async function checkLocal() {
-  const [v, k] = await Promise.allSettled([
-    vieneuVoices(),
-    korva(["--help"], 5000),
-  ]);
+  const [v, k] = await Promise.allSettled([vieneuVoices(), korvaVoices()]);
   return {
     vieneu: {
       ready: v.status === "fulfilled",
@@ -115,10 +116,9 @@ async function checkLocal() {
     },
     korva: {
       ready: k.status === "fulfilled",
+      voices: k.status === "fulfilled" ? k.value : [],
       message:
-        k.status === "rejected"
-          ? String(k.reason.message)
-          : "Đã cài CLI; mô hình được kiểm tra khi tạo audio",
+        k.status === "rejected" ? String(k.reason.message) : "Engine đang chạy",
     },
   };
 }
@@ -135,24 +135,46 @@ export function hasVieneuVoice(
     (v) => v.id === name || v.name === name || v.aliases?.includes(name),
   );
 }
-export async function speakLocal(text: string, file: string, s: Settings) {
+export async function korvaVoices(): Promise<EngineVoice[]> {
+  const r = await fetch(new URL("/voices", serviceURL("korva")), {
+    signal: AbortSignal.timeout(3000),
+    redirect: "error",
+    cache: "no-store",
+  });
+  if (!r.ok)
+    throw Error(
+      "Korva chưa sẵn sàng. Khởi động engine để lấy danh sách giọng.",
+    );
+  const d = await r.json();
+  if (!Array.isArray(d.data))
+    throw Error("Danh sách giọng Korva không hợp lệ.");
+  return d.data;
+}
+export async function speakLocal(
+  text: string,
+  file: string,
+  s: Settings,
+  options: { preview?: boolean } = {},
+) {
   if (s.ttsProvider === "tts-studio-local")
     throw Error("Vietnamese TTS Studio - Clone giọng local - đang phát triển");
-  const voice = localVoiceId(s.voice);
-  if (
-    !Object.hasOwn(localVoiceNames, voice) ||
-    (s.ttsProvider === "vieneu-local" && voice !== "ngoc_huyen")
-  )
-    throw Error("Giọng không thuộc engine local đã chọn.");
-  if (
-    s.ttsProvider === "vieneu-local" &&
-    !hasVieneuVoice(await vieneuVoices(), localVoiceNames[voice])
-  )
-    throw Error(
-      "VieNeu-TTS chưa có preset " +
-        localVoiceNames[voice] +
-        ". Kiểm tra /v1/voices.",
-    );
+  let voice = localVoiceId(s.voice);
+  if (s.ttsProvider === "vieneu-local") {
+    try {
+      await vieneuVoices();
+    } catch {
+      await startService("vieneu");
+    }
+  }
+  if (s.ttsProvider === "korva-local") await startService("korva");
+  const catalog =
+    s.ttsProvider === "vieneu-local"
+      ? await vieneuVoices()
+      : await korvaVoices();
+  const selected = findEngineVoice(catalog, s.voice);
+  if (!selected)
+    throw Error("Giọng không thuộc danh sách thật của engine đã chọn.");
+  voice = selected.id;
   const directory = path.dirname(file);
   await mkdir(directory, { recursive: true });
   const temporary: string[] = [];
@@ -172,7 +194,7 @@ export async function speakLocal(text: string, file: string, s: Settings) {
             body: JSON.stringify({
               model: "vieneu-v3-turbo",
               input: part,
-              voice: localVoiceNames[voice],
+              voice,
               response_format: "wav",
             }),
             signal: AbortSignal.timeout(600000),
@@ -194,17 +216,22 @@ export async function speakLocal(text: string, file: string, s: Settings) {
           throw Error("VieNeu-TTS không trả về tệp WAV hợp lệ.");
         await writeFile(raw, bytes);
       } else {
-        // A leading space prevents CLI option parsing of user text starting with '-'.
-        await korva([
-          "synth",
-          " " + part,
-          "-v",
-          voice,
-          "-o",
-          raw,
-          "--speed",
-          "1",
-        ]);
+        await startService("korva");
+        const response = await fetch(
+          new URL(
+            options.preview ? "/preview" : "/synthesize",
+            serviceURL("korva"),
+          ),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: part, voice }),
+            signal: AbortSignal.timeout(600000),
+          },
+        );
+        if (!response.ok)
+          throw Error("KorvaTTS: " + (await response.text()).slice(-1200));
+        await writeFile(raw, Buffer.from(await response.arrayBuffer()));
       }
       // Normalize streaming WAV headers before probing duration or concatenating.
       await run([

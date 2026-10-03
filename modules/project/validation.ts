@@ -6,9 +6,15 @@ const asset = z
   .regex(/^[a-f0-9-]+\.(png|jpg|jpeg|webp|wav|mp3|mp4)$/)
   .optional();
 export const settingsSchema = z.object({
+  audioEnabled: z.boolean().optional(),
+  splitScenes: z.boolean().optional(),
+  fallbackImage: asset,
+  fallbackOnImageError: z.boolean().optional(),
   provider: z.literal("openai"),
   imageEnabled: z.boolean().optional(),
-  imageProvider: z.enum(["flux2-local", "openai"]).optional(),
+  imageProvider: z
+    .enum(["flux2-local", "local-fast", "auto-local", "openai"])
+    .optional(),
   motionMode: z.enum(["off", "selected", "all"]).optional(),
   ttsProvider: z
     .enum(["vieneu-local", "korva-local", "tts-studio-local", "cloud"])
@@ -16,16 +22,7 @@ export const settingsSchema = z.object({
   mode: z.enum(["original", "review", "summary"]),
   style: z.string().max(100),
   customPrompt: z.string().max(2000),
-  voice: z
-    .string()
-    .refine(
-      (id) =>
-        id === "Ngọc Huyền" ||
-        !!getVietnameseVoice(id) ||
-        legacyOpenAIVoices.includes(id) ||
-        Object.hasOwn(localVoiceNames, id),
-      "Giọng đọc không hợp lệ.",
-    ),
+  voice: z.string().trim().min(1).max(100),
   speed: z.number().min(0.5).max(2),
   pitch: z.number().min(-6).max(6),
   volume: z.number().min(0).max(2),

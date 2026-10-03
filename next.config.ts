@@ -1,3 +1,6 @@
 import type { NextConfig } from "next";
-const config: NextConfig = { serverExternalPackages: ["mammoth", "sharp"] };
+const config: NextConfig = {
+  devIndicators: false,
+  serverExternalPackages: ["mammoth", "sharp"],
+};
 export default config;

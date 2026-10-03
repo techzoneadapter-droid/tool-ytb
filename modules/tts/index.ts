@@ -34,8 +34,9 @@ export function assertTTS(s: Settings) {
     throw Error("Vietnamese TTS Studio - Clone giọng local - đang phát triển");
   const id = localVoiceId(s.voice);
   if (
-    !Object.hasOwn(localVoiceNames, id) ||
-    (p === "vieneu-local" && id !== "ngoc_huyen")
+    !s.voice.trim() ||
+    s.voice.length > 100 ||
+    (p === "korva-local" && !Object.hasOwn(localVoiceNames, id))
   )
     throw Error("Giọng không thuộc engine local đã chọn.");
 }
@@ -49,6 +50,7 @@ export async function speak(
   text: string,
   file: string,
   settings: Settings,
+  options: { preview?: boolean } = {},
 ): Promise<number> {
   const s = resolveTTS(settings);
   assertTTS(s);
@@ -64,6 +66,7 @@ export async function speak(
     .update(
       JSON.stringify([
         "tts-cache-v2",
+        ...(options.preview ? ["preview-12-steps"] : []),
         identity,
         s.ttsProvider,
         s.voice,
@@ -95,7 +98,7 @@ export async function speak(
         const seconds =
           s.ttsProvider === "cloud"
             ? await speakCloud(text, temporary, s)
-            : await speakLocal(text, temporary, s);
+            : await speakLocal(text, temporary, s, options);
         await rename(temporary, cache);
         return seconds;
       } finally {

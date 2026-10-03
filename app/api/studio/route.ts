@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ensureVisualProfile } from "@/modules/imagePrompt/profile";
+import { findEngineVoice, voiceKey } from "@/modules/tts/catalog";
+import { localStatus } from "@/modules/tts/local";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { get, list, put, updateJob } from "@/modules/project/store";
+import {
+  get,
+  list,
+  put,
+  updateJob,
+  removeProject,
+} from "@/modules/project/store";
 import { defaults, type Project, type Job } from "@/modules/project/types";
 import { parseChapters, plan, chunks } from "@/modules/project/parser";
 import { sceneSchema, settingsSchema } from "@/modules/project/validation";
@@ -13,11 +22,15 @@ import { usesMotion } from "@/modules/providers/local-workers";
 import { styledPrompt } from "@/modules/imagePrompt/styles";
 import {
   requireSceneMedia,
+  resolveSceneImage,
+  validImage,
   verifiedJob,
   assetExists,
   verifiedScene,
 } from "@/modules/project/media";
 import { isSameOrigin } from "@/modules/project/request";
+import { runtimeStatus } from "@/modules/providers/runtime-status";
+import { startService } from "@/modules/providers/services";
 const projectNameSchema = z
   .string({ error: "Vui lòng nhập tên dự án." })
   .trim()
@@ -55,7 +68,21 @@ export async function POST(req: NextRequest) {
         { status: 403 },
       );
     const b = await req.json();
-    if (b.action === "create") {
+    if (b.action === "previewChapters") {
+      const text = storySchema.parse(b.text);
+      return NextResponse.json(
+        b.splitChapters === false
+          ? [{ title: "Chương 1" }]
+          : parseChapters(text).map((c) => ({ title: c.title })),
+      );
+    }
+    if (b.action === "startService") {
+      await startService(
+        z.enum(["worker", "vieneu", "korva", "flux", "wan"]).parse(b.service),
+      );
+      return NextResponse.json({ ok: true });
+    }
+    if (b.action === "create" || b.action === "createVideo") {
       const text = storySchema.parse(b.text);
       const baseSettings = {
         ...defaults,
@@ -71,18 +98,38 @@ export async function POST(req: NextRequest) {
         ...baseSettings,
         ...(b.settings && typeof b.settings === "object" ? b.settings : {}),
       });
+      if (
+        settings.fallbackImage &&
+        (!(await validImage(settings.fallbackImage)) ||
+          !list<{ id: string }>("upload").some(
+            (u) => u.id === settings.fallbackImage,
+          ))
+      )
+        throw Error("Ảnh dùng chung chưa được tải lên hợp lệ.");
       const parsedChapters =
         b.splitChapters === false
           ? [{ id: randomUUID(), title: "Chương 1", text, scenes: [] }]
           : parseChapters(text);
       const chapters = parsedChapters.map((chapter) => ({
         ...chapter,
-        scenes: plan(chapter.text, settings.style).map((scene) => ({
+        scenes: (settings.splitScenes === false
+          ? [
+              {
+                id: randomUUID(),
+                text: chapter.text,
+                prompt: "",
+                duration: Math.max(3, chapter.text.split(/\s+/).length / 2.8),
+                approved: false,
+              },
+            ]
+          : plan(chapter.text, settings.style)
+        ).map((scene) => ({
           ...scene,
           prompt: styledPrompt(
             scene.text,
             settings.style,
             settings.customPrompt,
+            chapter.title + ": " + chapter.text,
           ),
         })),
       }));
@@ -93,7 +140,33 @@ export async function POST(req: NextRequest) {
         chapters,
         settings,
       };
+      for (const chapter of project.chapters)
+        ensureVisualProfile(chapter, settings);
       put("project", project);
+      if (b.action === "createVideo") {
+        const job: Job = {
+          id: randomUUID(),
+          projectId: project.id,
+          chapterIds: chapters.map((c) => c.id),
+          kind: "pipeline",
+          status: "queued",
+          progress: 0,
+          message: "Đã lưu truyện, tách chương và chia cảnh",
+          createdAt: new Date().toISOString(),
+          snapshot: { settings: structuredClone(settings) },
+        };
+        put("job", job);
+        // Keep the saved project/job even if the process cannot start, so retry is possible.
+        try {
+          await startService("worker");
+        } catch (e) {
+          updateJob(job.id, {
+            status: "error",
+            error: String(e),
+            message: "Worker chưa khởi động được",
+          });
+        }
+      }
       return NextResponse.json(project);
     }
     if (b.action === "preset") {
@@ -108,6 +181,18 @@ export async function POST(req: NextRequest) {
     if (b.action === "pause" || b.action === "resume" || b.action === "retry") {
       const j = get<Job>(z.string().uuid().parse(b.id), "job");
       if (
+        b.action !== "pause" &&
+        list<Job>("job").some(
+          (other) =>
+            other.id !== j.id &&
+            other.projectId === j.projectId &&
+            ["audio", "images", "rendering"].includes(other.status),
+        )
+      )
+        throw Error(
+          "Dự án đang có tác vụ khác. Hoàn tất tác vụ đó trước khi thử lại.",
+        );
+      if (
         b.action === "pause" &&
         !["done", "ready", "error"].includes(j.status)
       )
@@ -121,10 +206,37 @@ export async function POST(req: NextRequest) {
           error: undefined,
           message: "Đã xếp lại hàng đợi",
           progress: 0,
+          snapshot: {
+            settings: structuredClone(
+              get<Project>(j.projectId, "project").settings,
+            ),
+          },
         });
+      if (b.action !== "pause") await startService("worker");
       return NextResponse.json({ ok: true });
     }
     const p = get<Project>(z.string().uuid().parse(b.projectId), "project");
+    if (b.action === "approve") {
+      if (
+        list<Job>("job").some(
+          (j) =>
+            j.projectId === p.id &&
+            (["queued", "audio", "images", "rendering"].includes(j.status) ||
+              (j.status === "paused" &&
+                !j.message.startsWith("Tài nguyên đã lưu."))),
+        )
+      )
+        throw Error("Chờ công đoạn hiện tại hoàn tất trước khi duyệt.");
+      for (const chapter of p.chapters.filter(
+        (c) => !b.chapterIds || b.chapterIds.includes(c.id),
+      ))
+        for (const scene of chapter.scenes) {
+          await requireSceneMedia(scene, p.settings);
+          scene.approved = true;
+        }
+      put("project", p);
+      return NextResponse.json(p);
+    }
     if (
       list<Job>("job").some(
         (j) =>
@@ -158,12 +270,60 @@ export async function POST(req: NextRequest) {
       put("project", p);
       return NextResponse.json(p);
     }
+    if (b.action === "rename") {
+      p.name = projectNameSchema.parse(b.name);
+      put("project", p);
+      return NextResponse.json(p);
+    }
+    if (b.action === "delete") {
+      removeProject(p.id);
+      return NextResponse.json({ ok: true });
+    }
+    if (b.action === "motionSelection") {
+      const ids = z.array(z.string().uuid()).parse(b.sceneIds);
+      if (
+        ids.some(
+          (id) => !p.chapters.some((c) => c.scenes.some((s) => s.id === id)),
+        )
+      )
+        throw Error("Cảnh không hợp lệ.");
+      for (const c of p.chapters)
+        for (const scene of c.scenes)
+          scene.motionSelected = ids.includes(scene.id);
+      put("project", p);
+      return NextResponse.json(p);
+    }
     if (b.action === "settings") {
       const settings = settingsSchema.parse(b.settings);
       if (
+        settings.ttsProvider === "vieneu-local" ||
+        settings.ttsProvider === "korva-local"
+      ) {
+        const catalog = await localStatus();
+        const match = findEngineVoice(
+          settings.ttsProvider === "vieneu-local"
+            ? catalog.vieneu.voices
+            : catalog.korva.voices,
+          settings.voice,
+        );
+        if (match) settings.voice = match.id;
+      }
+      if (
+        settings.fallbackImage &&
+        (!(await validImage(settings.fallbackImage)) ||
+          !list<{ id: string }>("upload").some(
+            (u) => u.id === settings.fallbackImage,
+          ))
+      )
+        throw Error("Ảnh dùng chung chưa được tải lên hợp lệ.");
+      if (
         (
           ["ttsProvider", "voice", "speed", "pitch", "volume", "pause"] as const
-        ).some((key) => settings[key] !== p.settings[key])
+        ).some((key) =>
+          key === "voice" && settings.ttsProvider !== "cloud"
+            ? voiceKey(settings.voice) !== voiceKey(p.settings.voice)
+            : settings[key] !== p.settings[key],
+        )
       )
         for (const c of p.chapters)
           for (const scene of c.scenes) {
@@ -173,7 +333,66 @@ export async function POST(req: NextRequest) {
             scene.audioError = undefined;
             scene.approved = false;
           }
+      if (
+        settings.style !== p.settings.style ||
+        settings.customPrompt !== p.settings.customPrompt ||
+        settings.imageProvider !== p.settings.imageProvider ||
+        settings.aspect !== p.settings.aspect
+      )
+        for (const chapter of p.chapters)
+          for (const scene of chapter.scenes) {
+            scene.prompt = styledPrompt(
+              scene.text,
+              settings.style,
+              settings.customPrompt,
+              chapter.title + ": " + chapter.text,
+            );
+            if (scene.imageSource !== "upload") {
+              scene.image = undefined;
+              scene.imageSource = undefined;
+              scene.imageStatus = undefined;
+              scene.imageError = undefined;
+              scene.approved = false;
+            }
+            scene.motion = undefined;
+            scene.motionStatus = undefined;
+            scene.motionError = undefined;
+          }
+      for (const chapter of p.chapters)
+        ensureVisualProfile(chapter, settings).style = settings.style;
       p.settings = settings;
+      put("project", p);
+      return NextResponse.json(p);
+    }
+    if (b.action === "visualProfile") {
+      const chapter = p.chapters.find((c) => c.id === b.chapterId);
+      if (!chapter) throw Error("Không tìm thấy chương");
+      chapter.visualProfile = z
+        .object({
+          style: z.string().min(1).max(100),
+          seed: z.number().int().min(0).max(2147483647),
+          characters: z
+            .array(
+              z.object({
+                name: z.string().min(1).max(100),
+                descriptor: z.string().max(500),
+              }),
+            )
+            .max(8),
+          locations: z.array(z.string().max(200)).max(10),
+          era: z.string().max(200),
+          clothing: z.string().max(200),
+          visualNotes: z.string().max(700),
+        })
+        .parse(b.profile);
+      for (const scene of chapter.scenes) {
+        if (scene.imageSource !== "upload") {
+          scene.image = undefined;
+          scene.imageSource = undefined;
+        }
+        scene.motion = undefined;
+        scene.approved = false;
+      }
       put("project", p);
       return NextResponse.json(p);
     }
@@ -203,6 +422,7 @@ export async function POST(req: NextRequest) {
       if (scene.audio && scene.audio !== previous.audio)
         throw Error("Không thể thay lời đọc bằng tệp chưa xác minh.");
       c.scenes[i] = {
+        ...previous,
         ...scene,
         motion:
           scene.image === previous.image && scene.prompt === previous.prompt
@@ -240,6 +460,7 @@ export async function POST(req: NextRequest) {
             scene.text,
             p.settings.style,
             p.settings.customPrompt,
+            c.title + ": " + c.text,
           );
       }
       put("project", p);
@@ -251,9 +472,39 @@ export async function POST(req: NextRequest) {
         throw Error("Chương không hợp lệ");
       const prepare = !!b.prepare;
       const kind = z
-        .enum(["audio", "image", "motion", "prepare", "render"])
+        .enum(["audio", "image", "motion", "prepare", "render", "pipeline"])
         .parse(b.kind || (prepare ? "prepare" : "render"));
       const selected = p.chapters.filter((c) => ids.includes(c.id));
+      if (kind === "pipeline") {
+        for (const chapter of selected)
+          if (!chapter.scenes.length) {
+            chapter.scenes = (
+              p.settings.splitScenes === false
+                ? [
+                    {
+                      id: randomUUID(),
+                      text: chapter.text,
+                      prompt: "",
+                      duration: Math.max(
+                        3,
+                        chapter.text.split(/\s+/).length / 2.8,
+                      ),
+                      approved: false,
+                    },
+                  ]
+                : plan(chapter.text, p.settings.style)
+            ).map((scene) => ({
+              ...scene,
+              prompt: styledPrompt(
+                scene.text,
+                p.settings.style,
+                p.settings.customPrompt,
+                chapter.title + ": " + chapter.text,
+              ),
+            }));
+          }
+        put("project", p);
+      }
       const sceneIds = b.sceneIds
         ? z.array(z.string().uuid()).min(1).parse(b.sceneIds)
         : undefined;
@@ -271,7 +522,9 @@ export async function POST(req: NextRequest) {
       if (
         (kind === "image" ||
           (kind === "prepare" && p.settings.imageEnabled !== false)) &&
-        p.settings.imageProvider !== "flux2-local"
+        !["flux2-local", "local-fast", "auto-local"].includes(
+          p.settings.imageProvider || "",
+        )
       )
         requireImage();
       if (kind === "motion") {
@@ -280,19 +533,23 @@ export async function POST(req: NextRequest) {
         const targets = scenes.filter((s) => usesMotion(s, p.settings));
         if (!targets.length) throw Error("Chưa chọn cảnh nào để tạo ảnh động.");
         for (const scene of targets)
-          if (!scene.imageSource || !assetExists(scene.image))
+          if (!(await resolveSceneImage(scene, p.settings)))
             throw Error(
               "Cảnh được chọn chưa có ảnh thật. Tạo hoặc tải ảnh lên trước.",
             );
       }
-      if (kind === "render")
-        for (const scene of scenes) requireSceneMedia(scene);
+      if (kind === "render") {
+        const runtime = await runtimeStatus();
+        if (!runtime.ffmpeg)
+          throw Error(
+            "Chưa chạy được FFmpeg/FFprobe. Kiểm tra FFMPEG_PATH và FFPROBE_PATH rồi khởi động lại app và worker.",
+          );
+        for (const scene of scenes) await requireSceneMedia(scene, p.settings);
+      }
       if (
         kind === "render" &&
         p.settings.humanCheck &&
-        selected.some((c) =>
-          c.scenes.some((s) => !s.approved || !s.audio || !s.image),
-        )
+        selected.some((c) => c.scenes.some((s) => !s.approved || !s.audio))
       )
         throw Error(
           "Hãy tạo tài nguyên và duyệt tất cả cảnh trước khi render.",
@@ -307,6 +564,7 @@ export async function POST(req: NextRequest) {
           chapterIds,
           status: "queued",
           kind,
+          regenerate: b.regenerate === true,
           sceneIds,
           progress: 0,
           message:
@@ -318,6 +576,16 @@ export async function POST(req: NextRequest) {
         put("job", j);
         return j;
       });
+      try {
+        await startService("worker");
+      } catch (e) {
+        for (const j of jobs)
+          updateJob(j.id, {
+            status: "error",
+            error: String(e),
+            message: "Worker chưa khởi động được",
+          });
+      }
       return NextResponse.json(jobs);
     }
     throw Error("Thao tác không hợp lệ");

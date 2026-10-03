@@ -1,7 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { root } from "./store";
-import type { Scene, Job } from "./types";
+import type { Scene, Job, Settings } from "./types";
+import sharp from "sharp";
 export function assetExists(name?: string) {
   try {
     return (
@@ -36,10 +37,45 @@ export function verifiedScene(scene: Scene): Scene {
   }
   return s;
 }
-export function requireSceneMedia(scene: Scene) {
+const decoded = new Map<string, { stamp: string; valid: boolean }>();
+export async function validImage(name?: string): Promise<boolean> {
+  if (!name || !/\.(png|jpg|jpeg|webp)$/.test(name) || !assetExists(name))
+    return false;
+  const file = path.join(root, "assets", name);
+  const stat = statSync(file);
+  const stamp = `${stat.size}:${stat.mtimeMs}`;
+  if (decoded.get(name)?.stamp === stamp) return decoded.get(name)!.valid;
+  let valid = false;
+  try {
+    const meta = await sharp(file).metadata();
+    await sharp(file).stats();
+    valid = !!meta.width && !!meta.height;
+  } catch {}
+  decoded.set(name, { stamp, valid });
+  return valid;
+}
+/** One resolver for preflight, review, motion and final FFmpeg input. Never copies the shared asset. */
+export async function resolveSceneImage(
+  scene: Scene,
+  settings?: Settings,
+): Promise<string | undefined> {
+  // Legacy jobs sometimes copied the common image into scene.image. Respect a changed/removed setting.
+  const legacyShared = scene.imageSource === "shared";
+  if (!legacyShared && scene.imageSource && (await validImage(scene.image)))
+    return scene.image;
+  if (
+    settings &&
+    (settings.imageEnabled === false ||
+      settings.fallbackOnImageError === true) &&
+    (await validImage(settings.fallbackImage))
+  )
+    return settings.fallbackImage;
+  return undefined;
+}
+export async function requireSceneMedia(scene: Scene, settings?: Settings) {
   if (!scene.audioSource || !assetExists(scene.audio))
     throw Error("Cảnh chưa có tệp lời đọc thật. Hãy tạo lại lời đọc.");
-  if (!scene.imageSource || !assetExists(scene.image))
+  if (!(await resolveSceneImage(scene, settings)))
     throw Error("Cảnh chưa có tệp ảnh thật. Hãy tạo hoặc tải ảnh lên.");
 }
 export function verifiedJob(job: Job): Job {

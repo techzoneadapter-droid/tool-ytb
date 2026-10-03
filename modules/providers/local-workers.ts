@@ -2,7 +2,10 @@ import path from "node:path";
 import { mkdir, copyFile, readFile, writeFile, unlink } from "node:fs/promises";
 import { run } from "../videoRender/process";
 import type { Scene, Settings } from "../project/types";
-export function workerURL(engine: "flux" | "wan") {
+import { startService, serviceURL } from "./services";
+import { resolveSceneImage } from "../project/media";
+export function workerURL(engine: "flux" | "wan" | "fast") {
+  if (engine === "fast") return serviceURL("fast").href.replace(/\/$/, "");
   const u = new URL(
     engine === "flux"
       ? process.env.FLUX2_WORKER_URL || "http://127.0.0.1:7861"
@@ -19,8 +22,12 @@ export function workerURL(engine: "flux" | "wan") {
     throw Error("Địa chỉ worker phải nằm trên máy cục bộ.");
   return u.href.replace(/\/$/, "");
 }
-export async function localGenerate(engine: "flux" | "wan", body: object) {
-  const label = engine === "flux" ? "FLUX.2" : "Wan2.2";
+export async function localGenerate(
+  engine: "flux" | "wan" | "fast",
+  body: object,
+) {
+  const label =
+    engine === "flux" ? "FLUX.2" : engine === "fast" ? "Local Fast" : "Wan2.2";
   let r: Response;
   try {
     r = await fetch(workerURL(engine) + "/generate", {
@@ -31,9 +38,20 @@ export async function localGenerate(engine: "flux" | "wan", body: object) {
       signal: AbortSignal.timeout(1800000),
     });
   } catch {
-    throw Error(
-      `Không kết nối được ${label} local hoặc quá thời gian chờ. Chạy: python workers/local_ai.py --engine ${engine}. Xem docs/LOCAL_AI_WORKERS.md.`,
-    );
+    try {
+      await startService(engine);
+    } catch (e) {
+      throw Error(
+        `Không kết nối được ${label} local. ${e instanceof Error ? e.message : e}`,
+      );
+    }
+    r = await fetch(workerURL(engine) + "/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      redirect: "error",
+      signal: AbortSignal.timeout(1800000),
+    });
   }
   if (!r.ok)
     throw Error(
@@ -60,8 +78,9 @@ export function usesMotion(scene: Scene, s: Settings) {
   );
 }
 export async function makeMotion(scene: Scene, file: string, s: Settings) {
-  if (!scene.image) throw Error("Cần tạo hoặc tải ảnh trước khi tạo ảnh động.");
-  const image = await readFile(path.resolve("data/assets", scene.image));
+  const effective = await resolveSceneImage(scene, s);
+  if (!effective) throw Error("Cần tạo hoặc tải ảnh trước khi tạo ảnh động.");
+  const image = await readFile(path.resolve("data/assets", effective));
   const bytes = await localGenerate("wan", {
     model: process.env.WAN22_MODEL || "ti2v-5b",
     prompt: scene.prompt,

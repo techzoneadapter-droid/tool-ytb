@@ -6,7 +6,7 @@ import type { Scene, Settings } from "../project/types";
 import { subtitles } from "../subtitle";
 import { run, duration } from "./process";
 import { usesMotion } from "../providers/local-workers";
-import { assetExists } from "../project/media";
+import { assetExists, resolveSceneImage } from "../project/media";
 export const assets = path.join(root, "assets");
 export async function render(
   scenes: Scene[],
@@ -61,20 +61,22 @@ export async function render(
   for (let i = 0; i < scenes.length; i++) {
     checkpoint((i / scenes.length) * 0.6);
     const scene = scenes[i];
+    const image = await resolveSceneImage(scene, s);
+    if (!image) throw Error('Cảnh chưa có ảnh hợp lệ hoặc ảnh dùng chung.');
     const motion =
       usesMotion(scene, s) &&
       scene.motionStatus === "done" &&
       assetExists(scene.motion)
         ? scene.motion
         : undefined;
-    const frames = Math.ceil(scene.duration * 25);
-    const vf = `scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},zoompan=z='min(zoom+0.0005,1.08)':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=${frames}:s=${w}x${h}:fps=25,fade=t=in:st=0:d=0.25,fade=t=out:st=${Math.max(0, scene.duration - 0.25)}:d=0.25,format=yuv420p`;
     await run(
       [
         "-y",
-        ...(motion ? ["-stream_loop", "-1"] : []),
+        ...(motion
+          ? ["-stream_loop", "-1"]
+          : ["-loop", "1", "-framerate", "25"]),
         "-i",
-        path.join(assets, motion || scene.image!),
+        path.join(assets, motion || image),
         "-i",
         path.join(assets, scene.audio!),
         "-map",
@@ -82,7 +84,7 @@ export async function render(
         "-map",
         "1:a:0",
         "-vf",
-        motion ? normal : vf,
+        normal,
         "-t",
         String(scene.duration),
         "-c:v",
@@ -129,11 +131,13 @@ export async function render(
   const subtitleScenes = introDuration
     ? [{ ...scenes[0], text: "", duration: introDuration }, ...scenes]
     : scenes;
-  const srt = subtitles(subtitleScenes),
-    vtt = subtitles(subtitleScenes, true);
-  await writeFile(path.join(work, "subtitles.srt"), srt);
-  await writeFile(path.join(assets, `${id}.srt`), srt);
-  await writeFile(path.join(assets, `${id}.vtt`), vtt);
+  if (s.burnSubtitles) {
+    const srt = subtitles(subtitleScenes),
+      vtt = subtitles(subtitleScenes, true);
+    await writeFile(path.join(work, "subtitles.srt"), srt);
+    await writeFile(path.join(assets, `${id}.srt`), srt);
+    await writeFile(path.join(assets, `${id}.vtt`), vtt);
+  }
   const args = ["-y", "-i", "joined.mp4"];
   let index = 1;
   let musicIndex = -1,
@@ -195,5 +199,9 @@ export async function render(
     seconds: await duration(path.join(work, "joined.mp4")),
     onProgress: (n) => checkpoint(0.65 + n * 0.34),
   });
-  return { output: `${id}.mp4`, srt: `${id}.srt`, vtt: `${id}.vtt` };
+  return {
+    output: `${id}.mp4`,
+    srt: s.burnSubtitles ? `${id}.srt` : undefined,
+    vtt: s.burnSubtitles ? `${id}.vtt` : undefined,
+  };
 }

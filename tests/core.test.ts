@@ -14,6 +14,68 @@ import {
 import { imageStyles, styledPrompt } from "../modules/imagePrompt/styles";
 import { usesMotion, workerURL } from "../modules/providers/local-workers";
 import { localVoiceId } from "../modules/tts/local-voices";
+import { acquireLock } from "../modules/providers/services";
+import { mkdtemp, readFile, writeFile, unlink, rmdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {findEngineVoice} from '../modules/tts/catalog';
+import {ensureVisualProfile,sceneVisual} from '../modules/imagePrompt/profile';
+import type {Chapter} from '../modules/project/types';
+
+test('voice catalog resolves real IDs and aliases without restricting VieNeu presets',()=>{
+ const voices=[{id:'Thiện Minh',name:'Thiện Minh',aliases:['Anh Khôi']},{id:'Ngọc Huyền',name:'Ngọc Huyền'}];
+ assert.equal(findEngineVoice(voices,'anh_khoi')?.id,'Thiện Minh');
+ assert.equal(findEngineVoice(voices,'ngoc_huyen')?.id,'Ngọc Huyền');
+ assert.equal(findEngineVoice(voices,'bao_kim'),undefined);
+});
+test('chapter visual context survives reload and scene variations preserve character descriptors',()=>{
+ const chapter:Chapter={id:'chapter-fixed',title:'Rừng xanh',text:'Lâm Phong mặc áo đen, tóc dài. Lâm Phong bước qua suối.',scenes:[]};
+ const profile=ensureVisualProfile(chapter,defaults);
+ profile.characters=[{name:'Lâm Phong',descriptor:'24-year-old man, long black hair, black robe, silver sword'}];
+ const a={id:'a',text:'Lâm Phong bước qua suối.',prompt:'',duration:3,approved:false};
+ const b={...a,id:'b',text:'Lâm Phong đứng trên núi.'};
+ const first=sceneVisual(chapter,a,defaults),second=sceneVisual(chapter,b,defaults);
+ assert.notEqual(first.seed,second.seed);
+ assert.notEqual(first.prompt,second.prompt);
+ assert.match(first.prompt,/long black hair/);assert.match(second.prompt,/long black hair/);
+ assert.deepEqual(sceneVisual(JSON.parse(JSON.stringify(chapter)),a,defaults),first);
+ assert.equal(ensureVisualProfile(chapter,defaults),profile);
+});
+
+test("worker lock preserves live owners and admits only one stale-lock recovery", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "storyflow-lock-"));
+  const file = path.join(directory, "worker.lock");
+  try {
+    await acquireLock(file);
+    await assert.rejects(acquireLock(file));
+    assert.equal(Number(await readFile(file, "utf8")), process.pid);
+    await writeFile(file, "2147483647");
+    const results = await Promise.allSettled([
+      acquireLock(file),
+      acquireLock(file),
+    ]);
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    assert.equal(Number(await readFile(file, "utf8")), process.pid);
+  } finally {
+    await unlink(file).catch(() => {});
+    await unlink(file + ".reclaim").catch(() => {});
+    await rmdir(directory);
+  }
+});
+test("one-click settings default to automatic approval and preserve skip choices", () => {
+  assert.equal(defaults.humanCheck, false);
+  const settings = settingsSchema.parse({
+    ...defaults,
+    audioEnabled: false,
+    imageEnabled: false,
+    splitScenes: false,
+    burnSubtitles: false,
+  });
+  assert.equal(settings.audioEnabled, false);
+  assert.equal(settings.imageEnabled, false);
+  assert.equal(settings.splitScenes, false);
+  assert.equal(settings.burnSubtitles, false);
+});
 test("motion remains optional and only selected scenes are eligible", () => {
   const scene = {
     id: "test",
@@ -67,10 +129,7 @@ test("missing VieNeu service reports setup instructions without cloud fallback",
   const saved = process.env.VIENEU_LOCAL_URL;
   try {
     process.env.VIENEU_LOCAL_URL = "http://127.0.0.1:1";
-    await assert.rejects(
-      vieneuVoices(),
-      /Chưa chạy VieNeu-TTS local.*uv run python/,
-    );
+    await assert.rejects(vieneuVoices(), /Chưa kết nối được VieNeu-TTS local/);
   } finally {
     if (saved === undefined) delete process.env.VIENEU_LOCAL_URL;
     else process.env.VIENEU_LOCAL_URL = saved;
@@ -91,7 +150,7 @@ test("local selections never require cloud credentials or accept another engine'
   );
   assert.throws(
     () =>
-      assertTTS({ ...defaults, ttsProvider: "vieneu-local", voice: "bao_kim" }),
+      assertTTS({ ...defaults, ttsProvider: "vieneu-local", voice: "" }),
     /không thuộc/,
   );
   assert.throws(
@@ -255,6 +314,13 @@ test("missing credentials fail closed and never activate named presets", async (
     }
   }
 });
+test("chapter context is bounded and preserves scene, style and custom prompt", () => {
+  const prompt = styledPrompt("Lan crosses the river", "Tu tiên", "Blue robe", "Lan has dark hair. " + "context ".repeat(1000));
+  assert.match(prompt, /Chapter context: Lan has dark hair/);
+  assert.match(prompt, /Scene: Lan crosses the river/);
+  assert.match(prompt, /Blue robe/);
+  assert.ok(prompt.length < 4500);
+});
 test("all ten image presets have distinct system prompts including xianxia", () => {
   assert.ok(imageStyles.length >= 10);
   assert.equal(
@@ -269,4 +335,16 @@ test("all ten image presets have distinct system prompts including xianxia", () 
   assert.match(prompt, /Chinese xianxia cultivation fantasy/);
   assert.match(prompt, /Một người đứng trên núi/);
   assert.match(prompt, /Áo trắng/);
+  assert.match(prompt, /same character faces/);
+  assert.match(prompt, /No text.*no watermark/);
+  for (const name of [
+    "Tu tiên",
+    "Tiên hiệp",
+    "Kiếm hiệp",
+    "Huyền huyễn",
+    "Cổ trang",
+    "Anime",
+    "Manhua",
+  ])
+    assert.ok(imageStyles.some((style) => style.name === name));
 });

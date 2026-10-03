@@ -31,7 +31,7 @@ import {
 import { isSameOrigin } from "@/modules/project/request";
 import { runtimeStatus } from "@/modules/providers/runtime-status";
 import { startService } from "@/modules/providers/services";
-import { openFlowBrowser } from "@/modules/providers/flow-browser";
+import { flowProfiles, openFlowBrowser } from "@/modules/providers/flow-browser";
 import { modalConfigured } from "@/modules/providers/modal/client";
 const projectNameSchema = z
   .string({ error: "Vui lòng nhập tên dự án." })
@@ -84,9 +84,23 @@ export async function POST(req: NextRequest) {
       );
       return NextResponse.json({ ok: true });
     }
+    if (b.action === "flowProfiles") {
+      await startService("flow");
+      const profiles = await flowProfiles();
+      return NextResponse.json({ ok: true, ...profiles });
+    }
     if (b.action === "openFlow") {
       await startService("flow");
-      const status = await openFlowBrowser();
+      const profileMode =
+        b.profileMode === "chrome" ? "chrome" : "storyflow";
+      const profileDirectory =
+        typeof b.profileDirectory === "string"
+          ? b.profileDirectory.slice(0, 120)
+          : undefined;
+      const status = await openFlowBrowser({
+        profileMode,
+        profileDirectory,
+      });
       return NextResponse.json({ ok: true, status });
     }
     if (b.action === "create" || b.action === "createVideo") {

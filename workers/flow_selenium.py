@@ -37,6 +37,71 @@ BROWSER_MODE = os.getenv("FLOW_BROWSER_MODE", "minimized").strip().lower()
 WAIT_SECONDS = int(os.getenv("FLOW_UI_WAIT_SECONDS", "45"))
 COOLDOWN_SECONDS = float(os.getenv("FLOW_COOLDOWN_SECONDS", "3"))
 
+def default_chrome_user_data():
+    if os.name == "nt":
+        base = os.getenv("LOCALAPPDATA", "")
+        if base:
+            return pathlib.Path(base) / "Google" / "Chrome" / "User Data"
+    if sys.platform == "darwin":
+        return pathlib.Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
+    return pathlib.Path.home() / ".config" / "google-chrome"
+
+CHROME_USER_DATA_DIR = pathlib.Path(
+    os.getenv("FLOW_CHROME_USER_DATA_DIR", str(default_chrome_user_data()))
+).resolve()
+SELECTION_FILE = pathlib.Path("data/flow-profile-selection.json").resolve()
+
+def load_profile_selection():
+    try:
+        data = json.loads(SELECTION_FILE.read_text(encoding="utf-8"))
+        mode = data.get("mode") if data.get("mode") in ("storyflow", "chrome") else "storyflow"
+        directory = str(data.get("profileDirectory") or "Default")
+        return {"mode": mode, "profileDirectory": directory}
+    except Exception:
+        return {"mode": "storyflow", "profileDirectory": "Default"}
+
+_profile_selection = load_profile_selection()
+
+def save_profile_selection(mode, profile_directory):
+    global _profile_selection
+    _profile_selection = {
+        "mode": mode if mode in ("storyflow", "chrome") else "storyflow",
+        "profileDirectory": profile_directory or "Default",
+    }
+    SELECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SELECTION_FILE.write_text(
+        json.dumps(_profile_selection, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+def chrome_profiles():
+    results = [{
+        "id": "storyflow",
+        "mode": "storyflow",
+        "directory": "",
+        "name": "StoryFlow riêng",
+        "email": "",
+        "recommended": True,
+    }]
+    local_state = CHROME_USER_DATA_DIR / "Local State"
+    try:
+        state = json.loads(local_state.read_text(encoding="utf-8"))
+        cache = state.get("profile", {}).get("info_cache", {})
+        for directory, info in cache.items():
+            if not isinstance(info, dict):
+                continue
+            results.append({
+                "id": f"chrome:{directory}",
+                "mode": "chrome",
+                "directory": directory,
+                "name": str(info.get("name") or directory),
+                "email": str(info.get("user_name") or ""),
+                "recommended": False,
+            })
+    except Exception:
+        pass
+    return results
+
 PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -66,7 +131,15 @@ def flow_host(url):
 
 def chrome_options(visible=False):
     options = webdriver.ChromeOptions()
-    options.add_argument(f"--user-data-dir={PROFILE_DIR}")
+    mode = _profile_selection.get("mode", "storyflow")
+    profile_directory = _profile_selection.get("profileDirectory", "Default")
+
+    if mode == "chrome":
+        options.add_argument(f"--user-data-dir={CHROME_USER_DATA_DIR}")
+        options.add_argument(f"--profile-directory={profile_directory}")
+    else:
+        options.add_argument(f"--user-data-dir={PROFILE_DIR}")
+
     options.add_argument("--window-size=1600,1000")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-popup-blocking")
@@ -77,13 +150,12 @@ def chrome_options(visible=False):
     options.add_argument("--no-default-browser-check")
 
     # Login is always visible. Normal generation can be minimized or headless
-    # after the dedicated profile has already been authenticated.
+    # after the selected profile has already been authenticated.
     if not visible and BROWSER_MODE == "headless":
         options.add_argument("--headless=new")
     elif not visible and BROWSER_MODE == "minimized":
         options.add_argument("--start-minimized")
     return options
-
 
 def close_driver():
     global _driver
@@ -110,6 +182,14 @@ def ensure_driver(visible=False, target_url=None):
                 # Selenium Manager resolves the installed Chrome/driver.
                 _driver = webdriver.Chrome(options=chrome_options(visible=visible))
             except WebDriverException as exc:
+                mode = _profile_selection.get("mode", "storyflow")
+                if mode == "chrome":
+                    raise RuntimeError(
+                        "Không mở được profile Chrome đã chọn. Nếu profile này đang mở "
+                        "trong Chrome bình thường, hãy đóng toàn bộ cửa sổ Chrome của profile đó "
+                        "rồi bấm Kết nối Flow lại; Selenium không thể gắn trực tiếp vào một "
+                        "profile Chrome đang chạy bình thường."
+                    ) from exc
                 raise RuntimeError(
                     "Không mở được Chrome cho Google Flow. Hãy chắc chắn Chrome đã cài "
                     "và không có tiến trình khác đang giữ profile StoryFlow Flow."
@@ -391,26 +471,42 @@ def connected_health():
         "currentUrl": current_url or None,
         "title": title or None,
         "model": MODEL_LABEL,
+        "profileMode": _profile_selection.get("mode", "storyflow"),
+        "profileDirectory": _profile_selection.get("profileDirectory", "Default"),
         "active": state["active"],
         "queued": state["queued"],
         "lastError": state["lastError"],
         "lastCompletedAt": state["lastCompletedAt"],
         "message": (
-            "Đã kết nối Google Flow bằng profile Chrome riêng của StoryFlow."
+            (
+                "Đã kết nối Google Flow bằng profile Chrome bạn đã chọn."
+                if _profile_selection.get("mode") == "chrome"
+                else "Đã kết nối Google Flow bằng profile riêng của StoryFlow."
+            )
             if connected
-            else "Flow Worker sẵn sàng. Bấm Kết nối Flow để đăng nhập/chọn project."
+            else "Flow Worker sẵn sàng. Bấm Kết nối Flow để chọn profile/đăng nhập."
         ),
     }
 
 
-def open_for_login(project_url=None):
+def open_for_login(project_url=None, profile_mode=None, profile_directory=None):
+    requested_mode = profile_mode if profile_mode in ("storyflow", "chrome") else _profile_selection.get("mode", "storyflow")
+    requested_directory = profile_directory or _profile_selection.get("profileDirectory", "Default")
+
+    changed = (
+        requested_mode != _profile_selection.get("mode")
+        or requested_directory != _profile_selection.get("profileDirectory")
+    )
+    if changed:
+        close_driver()
+        save_profile_selection(requested_mode, requested_directory)
+
     driver = ensure_driver(visible=True, target_url=project_url or PROJECT_URL)
     try:
         driver.maximize_window()
     except Exception:
         pass
     return connected_health()
-
 
 def generate_image(prompt, aspect="16:9", project_url=None):
     prompt = (prompt or "").strip()
@@ -490,6 +586,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self.send_json(200, connected_health())
             return
+        if self.path == "/profiles":
+            self.send_json(200, {
+                "profiles": chrome_profiles(),
+                "selection": _profile_selection,
+                "chromeUserDataDir": str(CHROME_USER_DATA_DIR),
+            })
+            return
         self.send_json(404, {"error": "Không tìm thấy Flow Worker endpoint."})
 
     def do_POST(self):
@@ -498,7 +601,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/open":
                 self.send_json(
                     200,
-                    open_for_login(str(payload.get("projectUrl") or PROJECT_URL)),
+                    open_for_login(
+                        str(payload.get("projectUrl") or PROJECT_URL),
+                        str(payload.get("profileMode") or ""),
+                        str(payload.get("profileDirectory") or ""),
+                    ),
                 )
                 return
             if self.path == "/close":

@@ -46,8 +46,7 @@ async function imageEngineReady(settings: Settings) {
   )
     return (await modalHealth("image")).ready;
   if (settings.imageProvider === "aihorde") return true;
-  if (settings.imageProvider === "pollinations")
-    return !!process.env.POLLINATIONS_API_KEY;
+  if (settings.imageProvider === "pollinations") return true;
   if (
     settings.imageProvider === "flux2-local" ||
     settings.imageProvider === "local-fast" ||
@@ -179,6 +178,59 @@ async function main() {
           status,
           progress: Math.min(99, progress),
           message,
+        });
+      };
+
+      const stageTimers = new Map<
+        string,
+        { startedAt: number; baseline: number }
+      >();
+      const reportStage = (
+        status: Job["status"],
+        label: string,
+        current: number,
+        total: number,
+        detail: string,
+        concurrency = 1,
+        globalProgress?: number,
+      ) => {
+        const currentStatus = get<Job>(job.id, "job").status;
+        if (currentStatus === "paused" || currentStatus === "cancelled") return;
+        let timer = stageTimers.get(label);
+        if (!timer) {
+          timer = { startedAt: Date.now(), baseline: current };
+          stageTimers.set(label, timer);
+        }
+        const elapsedSeconds = Math.max(
+          0,
+          Math.floor((Date.now() - timer.startedAt) / 1000),
+        );
+        const produced = Math.max(0, current - timer.baseline);
+        const ratePerMinute =
+          elapsedSeconds >= 2 && produced > 0
+            ? (produced * 60) / elapsedSeconds
+            : undefined;
+        const etaSeconds =
+          ratePerMinute && current < total
+            ? Math.round(((total - current) / ratePerMinute) * 60)
+            : undefined;
+        updateJob(job.id, {
+          status,
+          ...(globalProgress === undefined
+            ? {}
+            : { progress: Math.min(99, Math.max(0, globalProgress)) }),
+          message: detail,
+          stageProgress: {
+            label,
+            current,
+            total,
+            detail,
+            concurrency,
+            elapsedSeconds,
+            etaSeconds,
+            ratePerMinute,
+            updatedAt: new Date().toISOString(),
+          },
         });
       };
       if (

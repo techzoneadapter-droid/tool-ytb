@@ -601,15 +601,21 @@ export async function POST(req: NextRequest) {
         );
       const groups =
         kind === "pipeline"
-          ? [selected.map((c) => c.id)]
+          ? b.merge
+            ? [selected.map((c) => c.id)]
+            : selected.map((c) => [c.id])
           : b.merge
             ? [selected.map((c) => c.id)]
             : selected.map((c) => [c.id]);
-      const jobs = groups.map((chapterIds) => {
+      const batchId = randomUUID();
+      const jobs = groups.map((chapterIds, index) => {
         const j: Job & { prepare: boolean } = {
           id: randomUUID(),
           projectId: p.id,
           chapterIds,
+          batchId,
+          batchIndex: index,
+          batchTotal: groups.length,
           status: "queued",
           kind,
           outputMode:
@@ -626,9 +632,11 @@ export async function POST(req: NextRequest) {
           message:
             kind === "render"
               ? "Chờ xuất video"
-              : kind === "pipeline" && chapterIds.length > 1
-                ? `Chờ xử lý ${chapterIds.length} chương trong một lô`
-                : "Chờ tạo tài nguyên thật",
+              : kind === "pipeline" && !b.merge
+                ? `Video ${index + 1}/${groups.length} đang chờ xử lý độc lập`
+                : kind === "pipeline" && chapterIds.length > 1
+                  ? `Chờ xử lý ${chapterIds.length} chương trong một lô`
+                  : "Chờ tạo tài nguyên thật",
           createdAt: new Date().toISOString(),
           snapshot: { settings: structuredClone(p.settings) },
           prepare,

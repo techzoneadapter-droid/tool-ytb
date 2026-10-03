@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import pathlib
+import sys
 import threading
 import time
 import traceback
@@ -16,6 +17,13 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+
+# Force UTF-8 for Windows consoles/log pipes (notably Python 3.14 + cp1252).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 HOST = "127.0.0.1"
 BRIDGE_URL = os.getenv("FLOW_BRIDGE_URL", "http://127.0.0.1:7865")

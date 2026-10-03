@@ -7,6 +7,7 @@ export type LocalProvider = (typeof localProviderIds)[number];
 export type TTSProvider =
   | LocalProvider
   | "modal-vieneu"
+  | "edge-online"
   | "pollinations"
   | "cloud";
 export const localVoiceNames: Record<string, string> = {

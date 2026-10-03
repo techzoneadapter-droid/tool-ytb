@@ -19,6 +19,7 @@ export function ProviderStatus({
   const [flowSetup, setFlowSetup] = useState(false);
   const [flowProfiles, setFlowProfiles] = useState<FlowProfile[]>([]);
   const [flowSelection, setFlowSelection] = useState("storyflow");
+  const [flowProfileQuery, setFlowProfileQuery] = useState("");
   const [install, setInstall] = useState<{
     state: string;
     log?: string;
@@ -87,6 +88,7 @@ export function ProviderStatus({
           ? "chrome:" + data.selection.profileDirectory
           : "storyflow";
       setFlowSelection(selected);
+      setFlowProfileQuery("");
       setFlowSetup(true);
     } catch (error) {
       setDetail((error as Error).message);
@@ -235,6 +237,18 @@ export function ProviderStatus({
 
     return { tts, image, ready, motionReady };
   }, [p, settings]);
+
+  const visibleFlowProfiles = flowProfiles.filter((profile) => {
+    const query = flowProfileQuery.trim().toLocaleLowerCase("vi");
+    if (!query) return true;
+    return [profile.name, profile.email, profile.directory]
+      .filter(Boolean)
+      .some((value) => String(value).toLocaleLowerCase("vi").includes(query));
+  });
+
+  const selectedFlowProfile = flowProfiles.find(
+    (profile) => profile.id === flowSelection,
+  );
 
   const rows = [
     {
@@ -392,61 +406,127 @@ export function ProviderStatus({
       {flowSetup && (
         <div className="modal-backdrop" onClick={() => setFlowSetup(false)}>
           <section
-            className="card setup-modal"
+            className="card setup-modal flow-profile-modal"
             role="dialog"
             aria-modal="true"
             aria-label="Chọn profile Google Flow"
             onClick={(event) => event.stopPropagation()}
           >
-            <h2>Chọn profile Google Flow</h2>
-            <p className="muted">
-              Chọn tài khoản Chrome đã có Flow Plus, hoặc dùng profile riêng của
-              StoryFlow. StoryFlow chỉ mở profile đã chọn; không đọc mật khẩu.
-            </p>
-            <div className="service-list">
-              {flowProfiles.map((profile) => (
-                <label className="service-row" key={profile.id}>
-                  <span className="service-name">
-                    <strong>
-                      {profile.name}
-                      {profile.recommended ? " · Khuyên dùng" : ""}
-                    </strong>
-                    <small>
-                      {profile.email ||
-                        (profile.mode === "storyflow"
-                          ? "Profile riêng, đăng nhập một lần"
-                          : profile.directory)}
-                    </small>
-                  </span>
-                  <input
-                    type="radio"
-                    name="flow-profile"
-                    checked={flowSelection === profile.id}
-                    onChange={() => setFlowSelection(profile.id)}
-                  />
-                </label>
-              ))}
+            <header className="flow-profile-header">
+              <div>
+                <span className="flow-profile-kicker">GOOGLE FLOW</span>
+                <h2>Chọn tài khoản Flow Plus</h2>
+                <p>
+                  Chọn profile Chrome đang có tài khoản Flow Plus. StoryFlow chỉ
+                  mở profile bạn chọn và không đọc mật khẩu.
+                </p>
+              </div>
+              <button
+                className="flow-profile-close"
+                type="button"
+                aria-label="Đóng"
+                onClick={() => setFlowSetup(false)}
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="flow-profile-toolbar">
+              <div className="flow-profile-search">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  autoFocus
+                  value={flowProfileQuery}
+                  onChange={(event) => setFlowProfileQuery(event.target.value)}
+                  placeholder="Tìm theo tên profile hoặc Gmail…"
+                />
+              </div>
+              <span className="flow-profile-count">
+                {visibleFlowProfiles.length}/{flowProfiles.length} profile
+              </span>
             </div>
+
+            <div className="flow-profile-list" role="radiogroup">
+              {visibleFlowProfiles.map((profile) => {
+                const selected = flowSelection === profile.id;
+                const initial =
+                  profile.mode === "storyflow"
+                    ? "S"
+                    : (profile.name || profile.email || "G")
+                        .trim()
+                        .charAt(0)
+                        .toLocaleUpperCase("vi");
+                return (
+                  <label
+                    className={"flow-profile-item " + (selected ? "selected" : "")}
+                    key={profile.id}
+                  >
+                    <input
+                      type="radio"
+                      name="flow-profile"
+                      checked={selected}
+                      onChange={() => setFlowSelection(profile.id)}
+                    />
+                    <span className="flow-profile-avatar" aria-hidden="true">
+                      {initial}
+                    </span>
+                    <span className="flow-profile-copy">
+                      <span className="flow-profile-name">
+                        {profile.name}
+                        {profile.recommended && (
+                          <em className="flow-profile-recommended">Khuyên dùng</em>
+                        )}
+                      </span>
+                      <small>
+                        {profile.email ||
+                          (profile.mode === "storyflow"
+                            ? "Profile riêng của StoryFlow · đăng nhập một lần"
+                            : profile.directory)}
+                      </small>
+                    </span>
+                    <span className="flow-profile-radio" aria-hidden="true">
+                      <i />
+                    </span>
+                  </label>
+                );
+              })}
+              {!visibleFlowProfiles.length && (
+                <div className="flow-profile-empty">
+                  Không tìm thấy profile phù hợp với “{flowProfileQuery}”.
+                </div>
+              )}
+            </div>
+
+            <footer className="flow-profile-footer">
+              <div className="flow-profile-selected">
+                <small>Đang chọn</small>
+                <strong>
+                  {selectedFlowProfile?.name || "Chưa chọn profile"}
+                </strong>
+                {selectedFlowProfile?.email && (
+                  <span>{selectedFlowProfile.email}</span>
+                )}
+              </div>
+              <div className="flow-profile-actions">
+                <button disabled={!!busy} onClick={() => setFlowSetup(false)}>
+                  Hủy
+                </button>
+                <button
+                  className="primary"
+                  disabled={!!busy || !selectedFlowProfile}
+                  onClick={() => void openFlow()}
+                >
+                  {busy === "flow" ? "Đang mở…" : "Kết nối profile này"}
+                </button>
+              </div>
+            </footer>
+
             {flowSelection.startsWith("chrome:") && (
-              <p className="notice">
-                Profile Chrome thật chỉ mở được khi Chrome không đang giữ profile
-                đó. Hãy đóng các cửa sổ Chrome của profile này trước khi bấm mở.
-                Chrome hiện đại không cho Selenium gắn trực tiếp vào một phiên
-                Chrome bình thường đang chạy.
+              <p className="flow-profile-note">
+                Nếu profile này đang mở trong Chrome, hãy đóng các cửa sổ Chrome
+                của đúng profile đó trước khi kết nối để tránh profile bị khóa.
               </p>
             )}
-            <div className="row">
-              <button
-                className="primary"
-                disabled={!!busy || !flowProfiles.length}
-                onClick={() => void openFlow()}
-              >
-                {busy === "flow" ? "Đang mở…" : "Mở Flow bằng profile này"}
-              </button>
-              <button disabled={!!busy} onClick={() => setFlowSetup(false)}>
-                Đóng
-              </button>
-            </div>
           </section>
         </div>
       )}

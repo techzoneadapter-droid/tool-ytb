@@ -26,6 +26,7 @@ import {
 import { imageConfig } from "../modules/providers/config";
 import { runtimeStatus } from "../modules/providers/runtime-status";
 import { modalHealth } from "../modules/providers/modal/client";
+import { flowHealth } from "../modules/providers/flow-browser";
 import { ttsSource } from "../modules/tts";
 import {
   assetExists,
@@ -46,6 +47,8 @@ async function imageEngineReady(settings: Settings) {
     settings.imageProvider === "modal-reference"
   )
     return (await modalHealth("image")).ready;
+  if (settings.imageProvider === "flow-browser")
+    return (await flowHealth()).connected;
   if (settings.imageProvider === "aihorde") return true;
   if (settings.imageProvider === "pollinations") return true;
   if (

@@ -645,18 +645,43 @@ async function main() {
                       item.imageError = undefined;
                       saveProject();
                       try {
-                        const generated = await makeImage(
-                          visual.prompt,
-                          path.join(assets, file),
-                          s,
-                          visual.seed,
-                        );
+                        let generated;
+                        try {
+                          generated = await makeImage(
+                            visual.prompt,
+                            path.join(assets, file),
+                            s,
+                            visual.seed,
+                          );
+                        } catch (primaryError) {
+                          const alternateProvider =
+                            s.imageProvider === "aihorde"
+                              ? "pollinations"
+                              : "aihorde";
+                          updateJob(job.id, {
+                            message:
+                              `${engineName} tạm lỗi; video này tự chuyển sang ${alternateProvider === "aihorde" ? "AI Horde" : "Pollinations"}`,
+                          });
+                          generated = await makeImage(
+                            visual.prompt,
+                            path.join(assets, file),
+                            {
+                              ...s,
+                              imageProvider: alternateProvider,
+                            },
+                            visual.seed,
+                          );
+                          item.imageError =
+                            "Provider chính lỗi, đã tự chuyển: " +
+                            (primaryError instanceof Error
+                              ? primaryError.message
+                              : String(primaryError));
+                        }
                         item.imageEngine = generated.engine;
                         item.imageModel = generated.model;
                         item.image = file;
                         item.imageSource = generated.engine;
                         item.imageStatus = "done";
-                        item.imageError = undefined;
                         item.motion = undefined;
                         item.motionStatus = undefined;
                         item.motionError = undefined;

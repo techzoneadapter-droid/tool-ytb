@@ -187,18 +187,9 @@ export async function POST(req: NextRequest) {
     }
     if (["pause", "resume", "retry", "restart", "cancel"].includes(b.action)) {
       const j = get<Job>(z.string().uuid().parse(b.id), "job");
-      if (
-        !["pause", "cancel"].includes(b.action) &&
-        list<Job>("job").some(
-          (other) =>
-            other.id !== j.id &&
-            other.projectId === j.projectId &&
-            ["audio", "images", "rendering"].includes(other.status),
-        )
-      )
-        throw Error(
-          "Dự án đang có tác vụ khác. Hoàn tất hoặc hủy tác vụ đó trước khi chạy lại.",
-        );
+      // Independent chapter jobs may be resumed/retried while sibling videos run.
+      // Chapter writes are merged atomically by the worker, so one failed video
+      // no longer blocks the rest of the project.
       if (
         b.action === "pause" &&
         ["queued", "audio", "images", "rendering"].includes(j.status)

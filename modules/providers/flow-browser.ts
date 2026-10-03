@@ -49,7 +49,27 @@ export type FlowHealth = {
   currentUrl?: string;
   title?: string;
   model?: string;
+  profileMode?: "storyflow" | "chrome";
+  profileDirectory?: string;
   message: string;
+};
+
+export type FlowProfile = {
+  id: string;
+  mode: "storyflow" | "chrome";
+  directory: string;
+  name: string;
+  email?: string;
+  recommended?: boolean;
+};
+
+export type FlowProfiles = {
+  profiles: FlowProfile[];
+  selection: {
+    mode: "storyflow" | "chrome";
+    profileDirectory: string;
+  };
+  chromeUserDataDir?: string;
 };
 
 export async function flowHealth(): Promise<FlowHealth> {
@@ -70,13 +90,22 @@ export async function flowHealth(): Promise<FlowHealth> {
   }
 }
 
-export async function openFlowBrowser() {
+export async function flowProfiles() {
+  return call<FlowProfiles>("/profiles", {}, 5000);
+}
+
+export async function openFlowBrowser(options?: {
+  profileMode?: "storyflow" | "chrome";
+  profileDirectory?: string;
+}) {
   return call<FlowHealth>(
     "/open",
     {
       method: "POST",
       body: JSON.stringify({
         projectUrl: process.env.FLOW_PROJECT_URL || "",
+        profileMode: options?.profileMode,
+        profileDirectory: options?.profileDirectory,
       }),
     },
     120000,

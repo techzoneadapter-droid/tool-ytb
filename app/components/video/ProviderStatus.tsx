@@ -76,6 +76,13 @@ export function ProviderStatus({
             configured: !!p?.modal?.tts?.configured,
             service: "",
           }
+        : ttsProvider === "edge-online"
+          ? {
+              label: "Edge TTS Online",
+              ready: true,
+              configured: true,
+              service: "",
+            }
         : ttsProvider === "pollinations"
           ? {
               label: "Pollinations TTS",
@@ -273,6 +280,7 @@ export function ProviderStatus({
         <div className="service-list">
           {[
             ["VieNeu Cloud", !!p?.modal?.tts?.ready],
+            ["Edge TTS Online", true],
             ["Story AI Cloud", !!p?.modal?.image?.ready],
             ["AI Horde", !!p?.freeCloud?.aiHorde?.ready],
             ["Pollinations", !!p?.freeCloud?.pollinations?.configured],

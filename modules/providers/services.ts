@@ -5,6 +5,7 @@ import path from "node:path";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu" | "flow";
 export const WORKER_PROTOCOL = 6;
+export const FLOW_PROTOCOL = 2;
 export async function alive(file: string) {
   try {
     const pid = Number(
@@ -95,7 +96,8 @@ async function ready(service: Service) {
     return (
       response.ok &&
       health.status === "ok" &&
-      (service === "vieneu" || health.engine === service)
+      (service === "vieneu" || health.engine === service) &&
+      (service !== "flow" || health.protocol === FLOW_PROTOCOL)
     );
   } catch {
     return false;
@@ -164,6 +166,43 @@ export function startService(service: Service): Promise<void> {
 }
 async function start(service: Service) {
   if (await ready(service)) return;
+
+  if (service === "flow") {
+    const flowPidFile = path.resolve("data/flow.service.pid");
+    if (await alive(flowPidFile)) {
+      const pid = Number(await readFile(flowPidFile, "utf8").catch(() => "0"));
+      let protocolOk = false;
+      try {
+        const response = await fetch(new URL("/health", serviceURL("flow")), {
+          signal: AbortSignal.timeout(1000),
+          redirect: "error",
+        });
+        const health = await response.json();
+        protocolOk =
+          response.ok &&
+          health.status === "ok" &&
+          health.engine === "flow" &&
+          health.protocol === FLOW_PROTOCOL;
+      } catch {}
+      if (!protocolOk && Number.isInteger(pid) && pid > 0) {
+        if (process.platform === "win32") {
+          await new Promise<void>((resolve) => {
+            const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+              shell: false,
+              windowsHide: true,
+            });
+            killer.on("close", () => resolve());
+            killer.on("error", () => resolve());
+          });
+        } else {
+          try {
+            process.kill(pid, "SIGTERM");
+          } catch {}
+        }
+        await unlink(flowPidFile).catch(() => {});
+      }
+    }
+  }
 
   if (service === "worker") {
     const workerLock = path.resolve("data/worker.lock");

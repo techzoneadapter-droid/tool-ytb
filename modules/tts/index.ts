@@ -5,6 +5,7 @@ import { speak as speakCloud } from "./cloud";
 import { speakLocal, vieneuHealth, vieneuURL } from "./local";
 import { speakModal, speakModalBatch } from "./modal";
 import { speakPollinations } from "./pollinations";
+import { hasEdgeVoice, speakEdge } from "./edge";
 import { pollinationsConfigured } from "../providers/free-cloud";
 import {
   localProviderIds,
@@ -17,12 +18,14 @@ import { modalConfigured } from "../providers/modal/client";
 import { duration } from "../videoRender/process";
 import type { Settings } from "../project/types";
 import { publishGenerated } from "../providers/local-workers";
+import { cleanNarrationText } from "../project/parser";
 
 export function defaultTTSProvider(): TTSProvider {
   const fallback = modalConfigured("tts") ? "modal-vieneu" : "vieneu-local";
   const p = process.env.DEFAULT_TTS_PROVIDER || fallback;
   if (
     p !== "modal-vieneu" &&
+    p !== "edge-online" &&
     p !== "pollinations" &&
     p !== "cloud" &&
     !localProviderIds.includes(p as never)
@@ -41,6 +44,11 @@ export function assertTTS(s: Settings) {
     if (!modalConfigured("tts"))
       throw Error("Chưa cấu hình VieNeu Cloud. Thiết lập MODAL_TTS_URL trước.");
     if (!s.voice.trim()) throw Error("Chưa chọn giọng VieNeu Cloud.");
+    return;
+  }
+  if (p === "edge-online") {
+    if (!hasEdgeVoice(s.voice))
+      throw Error("Giọng Edge TTS không hợp lệ.");
     return;
   }
   if (p === "pollinations") {
@@ -76,6 +84,8 @@ function identity(s: Settings) {
   if (s.ttsProvider === "vieneu-local") return vieneuURL();
   if (s.ttsProvider === "korva-local")
     return process.env.KORVATTS_BIN || "korvatts";
+  if (s.ttsProvider === "edge-online")
+    return ["edge-online", "node-edge-tts@1.2.10", s.voice];
   if (s.ttsProvider === "pollinations")
     return [
       "pollinations",
@@ -131,9 +141,10 @@ export async function speak(
 ): Promise<number> {
   const s = resolveTTS(settings);
   assertTTS(s);
-  if (!text.trim()) throw Error("Nội dung lời đọc đang trống.");
+  const narration = cleanNarrationText(text);
+  if (!narration) throw Error("Nội dung lời đọc đang trống sau khi làm sạch.");
 
-  const cache = cacheFile(text, file, s, options);
+  const cache = cacheFile(narration, file, s, options);
   await mkdir(path.dirname(file), { recursive: true });
   let task = pending.get(cache);
   if (!task) {
@@ -147,12 +158,14 @@ export async function speak(
       try {
         const seconds =
           s.ttsProvider === "modal-vieneu"
-            ? await speakModal(text, temporary, s, options)
-            : s.ttsProvider === "pollinations"
-              ? await speakPollinations(text, temporary, s)
+            ? await speakModal(narration, temporary, s, options)
+            : s.ttsProvider === "edge-online"
+              ? await speakEdge(narration, temporary, s)
+              : s.ttsProvider === "pollinations"
+                ? await speakPollinations(narration, temporary, s)
               : s.ttsProvider === "cloud"
-                ? await speakCloud(text, temporary, s)
-                : await speakLocal(text, temporary, s, options);
+                ? await speakCloud(narration, temporary, s)
+                : await speakLocal(narration, temporary, s, options);
         await rename(temporary, cache);
         return seconds;
       } finally {
@@ -177,6 +190,22 @@ export async function speakBatch(
 ) {
   const s = resolveTTS(settings);
   assertTTS(s);
+  if (s.ttsProvider === "edge-online") {
+    const output = new Map<string, number>();
+    let cursor = 0;
+    const limit = Math.min(6, Math.max(1, items.length));
+    const workers = Array.from({ length: limit }, async () => {
+      while (true) {
+        const index = cursor++;
+        if (index >= items.length) return;
+        const item = items[index];
+        output.set(item.id, await speak(item.text, item.file, s));
+      }
+    });
+    await Promise.all(workers);
+    return output;
+  }
+
   if (s.ttsProvider === "vieneu-local") {
     const output = new Map<string, number>();
     const health = await vieneuHealth().catch(() => ({

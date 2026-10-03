@@ -291,7 +291,7 @@ async function main() {
 
             if (
               type === "audio" &&
-              ["modal-vieneu", "vieneu-local"].includes(s.ttsProvider || "") &&
+              ["modal-vieneu", "vieneu-local", "edge-online"].includes(s.ttsProvider || "") &&
               !completedItems.has(scene.id + ":audio") &&
               !(await valid(scene, "audio"))
             ) {
@@ -312,7 +312,7 @@ async function main() {
                     (completed / Math.max(1, total)) *
                       (kind === "pipeline" ? 75 : 99),
                   ),
-                  `${s.ttsProvider === "modal-vieneu" ? "VieNeu Cloud" : "VieNeu Local"} đang tạo ${group.length} lời đọc song song`,
+                  `${s.ttsProvider === "modal-vieneu" ? "VieNeu Cloud" : s.ttsProvider === "edge-online" ? "Edge TTS Online" : "VieNeu Local"} đang tạo ${group.length} lời đọc song song`,
                 );
                 const files = group.map(() =>
                   path.join(assets, randomUUID() + ".mp3"),
@@ -334,7 +334,7 @@ async function main() {
                   for (let index = 0; index < group.length; index++) {
                     const item = group[index];
                     const seconds = durations.get(item.id);
-                    if (!seconds) throw Error("VieNeu Cloud thiếu audio trong batch.");
+                    if (!seconds) throw Error("Engine giọng đọc thiếu audio trong batch.");
                     item.audio = path.basename(files[index]);
                     item.audioSource = ttsSource(s);
                     item.duration = seconds;

@@ -27,6 +27,7 @@ export const settingsSchema = z.object({
   ttsProvider: z
     .enum([
       "modal-vieneu",
+      "edge-online",
       "vieneu-local",
       "korva-local",
       "tts-studio-local",

@@ -86,10 +86,39 @@ export async function pollinationsImage(
   seed: number,
 ) {
   const key = process.env.POLLINATIONS_API_KEY;
-  if (!key)
-    throw Error(
-      "Pollinations chưa có API key. Tạo key ở enter.pollinations.ai rồi đặt POLLINATIONS_API_KEY trong .env.local.",
-    );
+  const model = process.env.POLLINATIONS_IMAGE_MODEL || "flux";
+
+  if (!key) {
+    const [width, height] = aspect === "9:16" ? [768, 1344] : [1344, 768];
+    const url =
+      "https://image.pollinations.ai/prompt/" +
+      encodeURIComponent(prompt) +
+      "?" +
+      new URLSearchParams({
+        model,
+        width: String(width),
+        height: String(height),
+        seed: String(Math.max(0, seed)),
+        nologo: "true",
+        private: "true",
+      }).toString();
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(300000),
+      redirect: "follow",
+      cache: "no-store",
+    });
+    if (!response.ok)
+      throw Error(
+        "Pollinations anonymous thất bại (" +
+          response.status +
+          "). Có thể anonymous đang bị giới hạn; thêm POLLINATIONS_API_KEY để tăng độ ổn định.",
+      );
+    return {
+      bytes: Buffer.from(await response.arrayBuffer()),
+      model: model + "-anonymous",
+    };
+  }
+
   const response = await fetch(POLLINATIONS + "/v1/images/generations", {
     method: "POST",
     headers: {
@@ -97,7 +126,7 @@ export async function pollinationsImage(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.POLLINATIONS_IMAGE_MODEL || "flux",
+      model,
       prompt,
       size: aspect === "9:16" ? "768x1344" : "1344x768",
       response_format: "b64_json",
@@ -117,7 +146,7 @@ export async function pollinationsImage(
   if (!encoded) throw Error("Pollinations không trả dữ liệu ảnh hợp lệ.");
   return {
     bytes: Buffer.from(encoded, "base64"),
-    model: process.env.POLLINATIONS_IMAGE_MODEL || "flux",
+    model,
   };
 }
 

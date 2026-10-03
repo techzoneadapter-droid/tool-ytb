@@ -386,7 +386,11 @@ async function main() {
                     ? "VieNeu Cloud"
                     : s.ttsProvider === "edge-online"
                       ? "Edge TTS Online"
-                      : "VieNeu Local";
+                      : s.ttsProvider === "pollinations"
+                        ? "Pollinations TTS"
+                        : s.ttsProvider === "cloud"
+                          ? "Cloud TTS"
+                          : "VieNeu Local";
                 const expectedConcurrency =
                   s.ttsProvider === "modal-vieneu"
                     ? Math.min(16, group.length)

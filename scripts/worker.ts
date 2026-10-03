@@ -31,6 +31,7 @@ import {
 import { duration, verifyVideo } from "../modules/videoRender/process";
 import { assets, render } from "../modules/videoRender";
 import { makeMotion, usesMotion } from "../modules/providers/local-workers";
+import { createVideoRecord, mergeVideoRecords } from "../modules/videoLibrary";
 const lockPath = path.join(root, "worker.lock");
 async function main() {
   await acquireLock(lockPath);
@@ -70,6 +71,22 @@ async function main() {
         .flatMap((c) => c.scenes)
         .filter((scene) => !job.sceneIds || job.sceneIds.includes(scene.id));
       const kind = job.kind || (job.prepare ? "prepare" : "render");
+
+      if (kind === "merge-video") {
+        checkpoint("rendering", 10, "Đang ghép các video đã chọn");
+        const merged = await mergeVideoRecords(job, p);
+        job.chapterIds = merged.chapterIds;
+        job.output = merged.output;
+        job.verified = true;
+        job.progress = 100;
+        job.status = "done";
+        job.finishedAt = new Date().toISOString();
+        job.message = "Video ghép đã xuất và kiểm tra thành công";
+        put("job", job);
+        await createVideoRecord(job, p);
+        continue;
+      }
+
       if (kind === "motion")
         scenes = scenes.filter((scene) => usesMotion(scene, s));
       if (!scenes.length) throw Error("Không có cảnh để xử lý.");
@@ -331,7 +348,7 @@ async function main() {
         throw Error("Không tìm thấy MP4 sau khi xuất.");
       await verifyVideo(path.join(assets, result.output));
       checkpoint("rendering", 99, "Đã kiểm tra tệp video");
-      updateJob(job.id, {
+      const finished = updateJob(job.id, {
         ...result,
         status: "done",
         progress: 100,
@@ -339,6 +356,7 @@ async function main() {
         finishedAt: new Date().toISOString(),
         message: "MP4 đã xuất và kiểm tra thành công",
       });
+      await createVideoRecord(finished, p);
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       if (error !== "PAUSED")

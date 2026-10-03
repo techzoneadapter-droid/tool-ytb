@@ -51,6 +51,7 @@ export type Settings = {
     | "auto-local"
     | "aihorde"
     | "pollinations"
+    | "flow-browser"
     | "openai";
   referenceImages?: string[];
   motionMode?: "off" | "selected" | "all";

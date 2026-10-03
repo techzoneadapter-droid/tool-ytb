@@ -319,6 +319,45 @@ async function main() {
           total: scenes.length,
           failed,
         });
+        const reportResource = (
+          type: "audio" | "image" | "motion",
+          scene: (typeof scenes)[number],
+          concurrency = 1,
+        ) => {
+          const currentCounts = counts();
+          const stageCurrent =
+            type === "audio"
+              ? currentCounts.audio
+              : type === "image"
+                ? currentCounts.image
+                : currentCounts.motion || 0;
+          const stageTotal =
+            type === "motion"
+              ? scenes.filter((item) => usesMotion(item, s)).length
+              : scenes.length;
+          const label =
+            type === "audio"
+              ? "Lời đọc"
+              : type === "motion"
+                ? "Ảnh động"
+                : "Hình ảnh";
+          const chapter = p.chapters.find((candidate) =>
+            candidate.scenes.some((item) => item.id === scene.id),
+          );
+          reportStage(
+            type === "audio" ? "audio" : "images",
+            label,
+            stageCurrent,
+            stageTotal,
+            `${label}: ${stageCurrent}/${stageTotal} cảnh · ${chapter?.title || "Chương"} · cảnh ${scenes.indexOf(scene) + 1}`,
+            concurrency,
+            Math.floor(
+              (completed / Math.max(1, total)) *
+                (kind === "pipeline" ? 75 : 99),
+            ),
+          );
+          return currentCounts;
+        };
         const sharedFallbackReady =
           s.imageEnabled !== false &&
           s.fallbackOnImageError === true &&

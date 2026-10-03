@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Settings } from "../project/types";
 import { requireImage } from "../providers/config";
 import { localGenerate, publishGenerated } from "../providers/local-workers";
-import { makeModalImage } from "./modal";
+import { makeModalImage, makeModalStoryBatch } from "./modal";
 
 export async function makeImage(
   prompt: string,
@@ -117,4 +117,46 @@ export async function makeImage(
     await unlink(file).catch(() => {});
     throw Error("Không giải mã được ảnh trả về từ API.");
   }
+}
+
+
+export async function makeStoryImageBatch(
+  prompts: string[],
+  files: string[],
+  settings: Settings,
+  seed: number,
+  characterDescription: string,
+) {
+  if (settings.imageProvider !== "modal-story")
+    throw Error("Batch Story chỉ dùng với Story AI Cloud.");
+  if (prompts.length !== files.length)
+    throw Error("Số prompt và file ảnh không khớp.");
+  const generated = await makeModalStoryBatch(
+    prompts,
+    settings,
+    seed,
+    characterDescription,
+  );
+  for (let index = 0; index < generated.images.length; index++) {
+    const file = files[index];
+    await mkdir(path.dirname(file), { recursive: true });
+    try {
+      await sharp(generated.images[index], { limitInputPixels: 40000000 })
+        .resize(
+          settings.aspect === "9:16" ? 720 : 1280,
+          settings.aspect === "9:16" ? 1280 : 720,
+          { fit: "cover" },
+        )
+        .png()
+        .toFile(file);
+      await publishGenerated(file, "images");
+    } catch {
+      await unlink(file).catch(() => {});
+      throw Error("Không giải mã được ảnh StoryDiffusion.");
+    }
+  }
+  return {
+    engine: "modal-story" as const,
+    model: generated.model,
+  };
 }

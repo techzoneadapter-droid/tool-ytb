@@ -151,27 +151,36 @@ export async function POST(req: NextRequest) {
         ensureVisualProfile(chapter, settings);
       put("project", project);
       if (b.action === "createVideo") {
-        const job: Job = {
-          id: randomUUID(),
-          projectId: project.id,
-          chapterIds: chapters.map((c) => c.id),
-          kind: "pipeline",
-          status: "queued",
-          progress: 0,
-          message: "Đã lưu truyện, tách chương và chia cảnh",
-          createdAt: new Date().toISOString(),
-          snapshot: { settings: structuredClone(settings) },
-        };
-        put("job", job);
-        // Keep the saved project/job even if the process cannot start, so retry is possible.
+        const batchId = randomUUID();
+        const jobs = chapters.map((chapter, index) => {
+          const job: Job = {
+            id: randomUUID(),
+            projectId: project.id,
+            chapterIds: [chapter.id],
+            batchId,
+            batchIndex: index,
+            batchTotal: chapters.length,
+            kind: "pipeline",
+            outputMode: "separate",
+            status: "queued",
+            progress: 0,
+            message: `Video ${index + 1}/${chapters.length} đang chờ xử lý độc lập`,
+            createdAt: new Date().toISOString(),
+            snapshot: { settings: structuredClone(settings) },
+          };
+          put("job", job);
+          return job;
+        });
+        // Keep every saved job even if the process cannot start, so retry is possible.
         try {
           await startService("worker");
         } catch (e) {
-          updateJob(job.id, {
-            status: "error",
-            error: String(e),
-            message: "Worker chưa khởi động được",
-          });
+          for (const job of jobs)
+            updateJob(job.id, {
+              status: "error",
+              error: String(e),
+              message: "Worker chưa khởi động được",
+            });
         }
       }
       return NextResponse.json(project);
@@ -187,18 +196,9 @@ export async function POST(req: NextRequest) {
     }
     if (["pause", "resume", "retry", "restart", "cancel"].includes(b.action)) {
       const j = get<Job>(z.string().uuid().parse(b.id), "job");
-      if (
-        !["pause", "cancel"].includes(b.action) &&
-        list<Job>("job").some(
-          (other) =>
-            other.id !== j.id &&
-            other.projectId === j.projectId &&
-            ["audio", "images", "rendering"].includes(other.status),
-        )
-      )
-        throw Error(
-          "Dự án đang có tác vụ khác. Hoàn tất hoặc hủy tác vụ đó trước khi chạy lại.",
-        );
+      // Independent chapter jobs may be resumed/retried while sibling videos run.
+      // Chapter writes are merged atomically by the worker, so one failed video
+      // no longer blocks the rest of the project.
       if (
         b.action === "pause" &&
         ["queued", "audio", "images", "rendering"].includes(j.status)
@@ -601,15 +601,21 @@ export async function POST(req: NextRequest) {
         );
       const groups =
         kind === "pipeline"
-          ? [selected.map((c) => c.id)]
+          ? b.merge
+            ? [selected.map((c) => c.id)]
+            : selected.map((c) => [c.id])
           : b.merge
             ? [selected.map((c) => c.id)]
             : selected.map((c) => [c.id]);
-      const jobs = groups.map((chapterIds) => {
+      const batchId = randomUUID();
+      const jobs = groups.map((chapterIds, index) => {
         const j: Job & { prepare: boolean } = {
           id: randomUUID(),
           projectId: p.id,
           chapterIds,
+          batchId,
+          batchIndex: index,
+          batchTotal: groups.length,
           status: "queued",
           kind,
           outputMode:
@@ -626,9 +632,11 @@ export async function POST(req: NextRequest) {
           message:
             kind === "render"
               ? "Chờ xuất video"
-              : kind === "pipeline" && chapterIds.length > 1
-                ? `Chờ xử lý ${chapterIds.length} chương trong một lô`
-                : "Chờ tạo tài nguyên thật",
+              : kind === "pipeline" && !b.merge
+                ? `Video ${index + 1}/${groups.length} đang chờ xử lý độc lập`
+                : kind === "pipeline" && chapterIds.length > 1
+                  ? `Chờ xử lý ${chapterIds.length} chương trong một lô`
+                  : "Chờ tạo tài nguyên thật",
           createdAt: new Date().toISOString(),
           snapshot: { settings: structuredClone(p.settings) },
           prepare,

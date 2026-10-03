@@ -14,6 +14,7 @@ import {
   put,
   remove,
   updateJob,
+  mergeProjectChapters,
 } from "../modules/project/store";
 import type { Job, Project, Settings } from "../modules/project/types";
 import { speak, speakBatch } from "../modules/tts";
@@ -61,47 +62,51 @@ async function imageEngineReady(settings: Settings) {
   return false;
 }
 
-function sameSnapshot(a: Job, b: Job) {
-  return JSON.stringify(a.snapshot.settings) === JSON.stringify(b.snapshot.settings);
-}
-
-async function coalesceLegacyPipelineJobs() {
-  const queued = list<Job>("job").filter(
+async function splitLegacyPipelineJobs() {
+  const candidates = list<Job>("job").filter(
     (job) =>
       job.kind === "pipeline" &&
       job.status === "queued" &&
-      !job.outputMode &&
-      !job.sceneIds?.length,
+      job.outputMode !== "merged" &&
+      job.chapterIds.length > 1,
   );
-  const groups = new Map<string, Job[]>();
-  for (const job of queued) {
-    const key = job.projectId;
-    const group = groups.get(key) || [];
-    group.push(job);
-    groups.set(key, group);
-  }
-  for (const jobs of groups.values()) {
-    if (jobs.length < 2) continue;
-    jobs.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-    const compatible = jobs.filter((job) => sameSnapshot(job, jobs[0]));
-    if (compatible.length < 2) continue;
-    const project = get<Project>(jobs[0].projectId, "project");
-    const wanted = new Set(compatible.flatMap((job) => job.chapterIds));
+  for (const job of candidates) {
+    const project = get<Project>(job.projectId, "project");
     const chapterIds = project.chapters
-      .filter((chapter) => wanted.has(chapter.id))
+      .filter((chapter) => job.chapterIds.includes(chapter.id))
       .map((chapter) => chapter.id);
-    const completedItems = [
-      ...new Set(compatible.flatMap((job) => job.completedItems || [])),
-    ];
-    updateJob(compatible[0].id, {
-      chapterIds,
-      outputMode: "separate",
-      completedItems,
-      progress: 0,
-      error: undefined,
-      message: `Đã gộp ${chapterIds.length} chương vào một lô xử lý`,
+    if (chapterIds.length < 2) continue;
+    const batchId = job.batchId || randomUUID();
+    const sharedCompleted = new Set(job.completedItems || []);
+    chapterIds.forEach((chapterId, index) => {
+      const chapter = project.chapters.find((item) => item.id === chapterId)!;
+      const sceneIds = new Set(chapter.scenes.map((scene) => scene.id));
+      const completedItems = [...sharedCompleted].filter((key) => {
+        const sceneId = key.split(":")[0];
+        return sceneIds.has(sceneId);
+      });
+      const child: Job = {
+        ...job,
+        id: index === 0 ? job.id : randomUUID(),
+        chapterIds: [chapterId],
+        batchId,
+        batchIndex: index,
+        batchTotal: chapterIds.length,
+        completedItems,
+        outputs: undefined,
+        output: undefined,
+        srt: undefined,
+        vtt: undefined,
+        verified: false,
+        progress: 0,
+        status: "queued",
+        error: undefined,
+        stageProgress: undefined,
+        finishedAt: undefined,
+        message: `Khôi phục video ${index + 1}/${chapterIds.length} dưới dạng tác vụ độc lập`,
+      };
+      put("job", child);
     });
-    for (const extra of compatible.slice(1)) remove("job", extra.id);
   }
 }
 async function main() {
@@ -125,22 +130,34 @@ async function main() {
   for (const j of list<Job>("job"))
     if (["audio", "images", "rendering"].includes(j.status))
       updateJob(j.id, { status: "queued", message: "Khôi phục xử lý" });
-  await coalesceLegacyPipelineJobs();
-  console.log("StoryFlow: chỉ xử lý API và tài nguyên thật.");
+  await splitLegacyPipelineJobs();
+  const configuredParallel = Number(process.env.MAX_PARALLEL_VIDEOS || 2);
+  const maxParallelVideos = Number.isFinite(configuredParallel)
+    ? Math.max(1, Math.min(4, Math.floor(configuredParallel)))
+    : 2;
+  const running = new Set<Promise<void>>();
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+  console.log(
+    `StoryFlow: pipeline độc lập theo video · tối đa ${maxParallelVideos} video chạy song song.`,
+  );
   while (true) {
-    const job = claim();
-    if (!job) {
-      await new Promise((r) => setTimeout(r, 1200));
-      continue;
-    }
-    try {
+    while (running.size < maxParallelVideos) {
+      const job = claim();
+      if (!job) break;
+      let task!: Promise<void>;
+      task = (async () => {
+        try {
       const p = get<Project>(job.projectId, "project");
+      const saveProject = () => {
+        mergeProjectChapters(p, job.chapterIds);
+      };
       const s = job.snapshot.settings;
       for (const chapter of p.chapters.filter((c) =>
         job.chapterIds.includes(c.id),
       ))
         ensureVisualProfile(chapter, s);
-      put("project", p);
+      saveProject();
       // Project order is authoritative even if the request selected IDs in reverse order.
       let scenes = p.chapters
         .filter((c) => job.chapterIds.includes(c.id))
@@ -160,7 +177,7 @@ async function main() {
         job.message = "Video ghép đã xuất và kiểm tra thành công";
         put("job", job);
         await createVideoRecord(job, p);
-        continue;
+        return;
       }
 
       if (kind === "motion")
@@ -386,7 +403,7 @@ async function main() {
               scene.imageError = undefined;
               scene.approved = !s.humanCheck;
               finishKey(key);
-              put("project", p);
+              saveProject();
               const currentCounts = reportResource("image", scene, 1);
               updateJob(job.id, {
                 completedItems: [...completedItems],
@@ -475,7 +492,7 @@ async function main() {
                   item.audioStatus = "working";
                   item.audioError = undefined;
                 }
-                put("project", p);
+                saveProject();
                 try {
                   const durations = await speakBatch(
                     group.map((item, index) => ({
@@ -500,7 +517,7 @@ async function main() {
                         item.audioError = undefined;
                         item.approved = !s.humanCheck;
                         finishKey(item.id + ":audio");
-                        put("project", p);
+                        saveProject();
                         const chapter = p.chapters.find((candidate) =>
                           candidate.scenes.some((x) => x.id === item.id),
                         );
@@ -547,7 +564,7 @@ async function main() {
                     handledThisRun.add(item.id + ":audio");
                     failed++;
                   }
-                  put("project", p);
+                  saveProject();
                   updateJob(job.id, {
                     completedItems: [...completedItems],
                     counts: counts(),
@@ -580,8 +597,10 @@ async function main() {
                   s.imageProvider === "aihorde"
                     ? "AI Horde"
                     : "Pollinations";
-                const concurrency =
-                  s.imageProvider === "aihorde" ? 3 : 4;
+                // Each video owns one image lane. Parallelism comes from
+                // independent video jobs, which avoids hammering free APIs
+                // (AI Horde anonymous commonly rate-limits bursts).
+                const concurrency = 1;
                 checkpoint(
                   "images",
                   Math.floor(
@@ -624,14 +643,40 @@ async function main() {
                       item.imageSeed = visual.seed;
                       item.imageStatus = "working";
                       item.imageError = undefined;
-                      put("project", p);
+                      saveProject();
                       try {
-                        const generated = await makeImage(
-                          visual.prompt,
-                          path.join(assets, file),
-                          s,
-                          visual.seed,
-                        );
+                        let generated;
+                        try {
+                          generated = await makeImage(
+                            visual.prompt,
+                            path.join(assets, file),
+                            s,
+                            visual.seed,
+                          );
+                        } catch (primaryError) {
+                          const alternateProvider =
+                            s.imageProvider === "aihorde"
+                              ? "pollinations"
+                              : "aihorde";
+                          updateJob(job.id, {
+                            message:
+                              `${engineName} tạm lỗi; video này tự chuyển sang ${alternateProvider === "aihorde" ? "AI Horde" : "Pollinations"}`,
+                          });
+                          generated = await makeImage(
+                            visual.prompt,
+                            path.join(assets, file),
+                            {
+                              ...s,
+                              imageProvider: alternateProvider,
+                            },
+                            visual.seed,
+                          );
+                          item.imageError =
+                            "Provider chính lỗi, đã tự chuyển: " +
+                            (primaryError instanceof Error
+                              ? primaryError.message
+                              : String(primaryError));
+                        }
                         item.imageEngine = generated.engine;
                         item.imageModel = generated.model;
                         item.image = file;
@@ -665,7 +710,7 @@ async function main() {
                         }
                       }
 
-                      put("project", p);
+                      saveProject();
                       const currentCounts = counts();
                       const globalProgress = Math.floor(
                         (completed / Math.max(1, total)) *
@@ -739,7 +784,7 @@ async function main() {
                   files.push(path.join(assets, randomUUID() + ".png"));
                   prompts.push(visual.prompt);
                 }
-                put("project", p);
+                saveProject();
                 try {
                   const characterDescription =
                     chapter.visualProfile?.characters?.[0]?.descriptor ||
@@ -766,7 +811,7 @@ async function main() {
                     item.approved = !s.humanCheck;
                     finishKey(item.id + ":image");
                   }
-                  put("project", p);
+                  saveProject();
                   const imageCounts = counts();
                   reportStage(
                     "images",
@@ -806,7 +851,7 @@ async function main() {
                       failed++;
                     }
                   }
-                  put("project", p);
+                  saveProject();
                   updateJob(job.id, {
                     completedItems: [...completedItems],
                     counts: counts(),
@@ -826,7 +871,7 @@ async function main() {
               finishKey(key);
               scene[(type + "Status") as "audioStatus"] = "done";
               scene[(type + "Error") as "audioError"] = undefined;
-              put("project", p);
+              saveProject();
               updateJob(job.id, {
                 completedItems: [...completedItems],
                 counts: counts(),
@@ -854,7 +899,7 @@ async function main() {
             );
             scene[(type + "Status") as "audioStatus"] = "working";
             scene[(type + "Error") as "audioError"] = undefined;
-            put("project", p);
+            saveProject();
             try {
               if (type === "audio") {
                 const file = randomUUID() + ".mp3";
@@ -877,7 +922,7 @@ async function main() {
                 const visual = sceneVisual(chapter, scene, s);
                 scene.finalImagePrompt = visual.prompt;
                 scene.imageSeed = visual.seed;
-                put("project", p);
+                saveProject();
                 const generated = await makeImage(
                   visual.prompt,
                   path.join(assets, file),
@@ -894,7 +939,7 @@ async function main() {
               }
               scene[(type + "Status") as "audioStatus"] = "done";
               scene.approved = !s.humanCheck;
-              put("project", p);
+              saveProject();
               finishKey(key);
             } catch (e) {
               if (
@@ -906,7 +951,7 @@ async function main() {
                 scene.imageStatus = "error";
                 scene.approved = !s.humanCheck;
                 finishKey(key);
-                put("project", p);
+                saveProject();
                 const fallbackCounts = reportResource(type, scene, 1);
                 updateJob(job.id, {
                   completedItems: [...completedItems],
@@ -917,7 +962,7 @@ async function main() {
               scene[(type + "Status") as "audioStatus"] = "error";
               scene[(type + "Error") as "audioError"] =
                 e instanceof Error ? e.message : String(e);
-              put("project", p);
+              saveProject();
               failed++;
             }
             const currentCounts = reportResource(type, scene, 1);
@@ -944,7 +989,7 @@ async function main() {
             "Tài nguyên thật đã lưu. Có thể nghe, xem và duyệt cảnh.",
           );
           updateJob(job.id, { status: "ready", progress: 0 });
-          continue;
+          return;
         }
       }
       for (const scene of scenes) {
@@ -963,7 +1008,7 @@ async function main() {
           status: "paused",
           message: "Tài nguyên đã lưu. Duyệt cảnh bên dưới rồi nhấn Tiếp tục.",
         });
-        continue;
+        return;
       }
       if (kind === "pipeline" && job.outputMode === "separate") {
         const chapters = p.chapters.filter((chapter) =>
@@ -1022,7 +1067,7 @@ async function main() {
 
           const child: Job = {
             ...job,
-            id: `${job.id}:${chapter.id}`,
+            id: chapters.length === 1 ? job.id : `${job.id}:${chapter.id}`,
             chapterIds: [chapter.id],
             outputTitle: chapter.title,
             outputMode: undefined,
@@ -1053,6 +1098,14 @@ async function main() {
           );
           updateJob(job.id, {
             outputs,
+            ...(chapters.length === 1
+              ? {
+                  output: result.output,
+                  srt: result.srt,
+                  vtt: result.vtt,
+                  verified: true,
+                }
+              : {}),
             counts: {
               ...(get<Job>(job.id, "job").counts || {
                 audio: scenes.length,
@@ -1073,7 +1126,7 @@ async function main() {
           finishedAt: new Date().toISOString(),
           message: `Đã tạo xong ${outputs.length}/${chapters.length} video`,
         });
-        continue;
+        return;
       }
 
       checkpoint(
@@ -1128,16 +1181,22 @@ async function main() {
         message: "MP4 đã xuất và kiểm tra thành công",
       });
       await createVideoRecord(finished, p);
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      if (error !== "PAUSED" && error !== "CANCELLED")
-        updateJob(job.id, {
-          status: "error",
-          finishedAt: new Date().toISOString(),
-          error,
-          message: "Xử lý thất bại — xem chi tiết lỗi",
-        });
+        } catch (e) {
+          const error = e instanceof Error ? e.message : String(e);
+          if (error !== "PAUSED" && error !== "CANCELLED")
+            updateJob(job.id, {
+              status: "error",
+              finishedAt: new Date().toISOString(),
+              error,
+              message: "Video này xử lý thất bại — các video khác vẫn tiếp tục",
+            });
+        }
+      })().finally(() => running.delete(task));
+      running.add(task);
     }
+
+    if (!running.size) await sleep(600);
+    else await Promise.race([...running, sleep(250)]);
   }
 }
 main().catch((e) => {

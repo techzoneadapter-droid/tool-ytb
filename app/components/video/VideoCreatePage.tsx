@@ -131,6 +131,23 @@ export function VideoCreatePage({
       setBusy(false);
     }
   }
+  async function actMany(action: string, ids: string[]) {
+    if (!ids.length) return;
+    setBusy(true);
+    setError("");
+    try {
+      await Promise.all(
+        ids.map((id) =>
+          request({ action, id, projectId: project?.id }),
+        ),
+      );
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function addReferences(files?: FileList | null) {
     if (!files?.length) return;
     setBusy(true);
@@ -178,6 +195,7 @@ export function VideoCreatePage({
           jobs={jobs}
           busy={busy}
           act={(action, id) => void act(action, id)}
+          actMany={(action, ids) => void actMany(action, ids)}
         />
       )}
       <div className="video-grid">
@@ -341,7 +359,11 @@ export function VideoCreatePage({
                         <span className="badge">
                           {settings.imageProvider?.startsWith("modal-")
                             ? "Cloud GPU"
-                            : "Local"}
+                            : ["aihorde", "pollinations"].includes(
+                                  settings.imageProvider || "",
+                                )
+                              ? "Cloud miễn phí"
+                              : "Local"}
                         </span>
                       </div>
                       <label>
@@ -604,7 +626,13 @@ export function VideoCreatePage({
                         checked={!merge}
                         onChange={() => setMerge(false)}
                       />
-                      Tạo video riêng theo từng chương
+                      <span>
+                        Tạo video riêng theo từng chương
+                        <small>
+                          Mỗi video chạy độc lập; video nào xong sẽ lưu ngay vào
+                          Quản lý video.
+                        </small>
+                      </span>
                     </label>
                     <label className="check">
                       <input

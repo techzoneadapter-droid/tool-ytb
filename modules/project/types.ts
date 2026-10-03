@@ -91,6 +91,9 @@ export type Job = {
   id: string;
   projectId: string;
   chapterIds: string[];
+  batchId?: string;
+  batchIndex?: number;
+  batchTotal?: number;
   status:
     | "queued"
     | "audio"

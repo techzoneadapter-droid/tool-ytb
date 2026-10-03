@@ -14,12 +14,12 @@ function formatTime(seconds?: number) {
 }
 
 const labels: Record<string, string> = {
-  queued: "Đang chuẩn bị",
+  queued: "Đang chờ lượt",
   audio: "Đang tạo lời đọc",
   images: "Đang tạo hình ảnh",
   rendering: "Đang dựng video",
   paused: "Đã tạm dừng",
-  error: "Có lỗi cần xử lý",
+  error: "Có video cần chạy lại",
   cancelled: "Đã hủy",
   ready: "Tài nguyên đã sẵn sàng",
   done: "Hoàn thành",
@@ -30,76 +30,114 @@ export function PipelineProgress({
   project,
   busy,
   act,
+  actMany,
 }: {
   jobs: Job[];
   project: Project;
   busy: boolean;
   act: (action: string, id: string) => void;
+  actMany?: (action: string, ids: string[]) => void;
 }) {
   const data = useMemo(() => {
     const sorted = [...jobs].sort(
       (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
     );
-    const active = sorted.filter(isActive);
-    const visible = active.length
-      ? active
-      : sorted
-          .filter((job) => ["error", "cancelled"].includes(job.status))
-          .slice(0, 1);
+    const focus =
+      sorted.find(isActive) ||
+      sorted.find((job) => ["error", "cancelled"].includes(job.status));
+    if (!focus) return null;
 
-    if (!visible.length) return null;
+    const batchJobs = focus.batchId
+      ? sorted
+          .filter((job) => job.batchId === focus.batchId)
+          .sort((a, b) => (a.batchIndex ?? 0) - (b.batchIndex ?? 0))
+      : [focus];
 
-    const weight = visible.reduce(
-      (sum, job) => sum + Math.max(1, job.chapterIds.length),
-      0,
+    const running = batchJobs.filter((job) =>
+      ["audio", "images", "rendering"].includes(job.status),
+    );
+    const queued = batchJobs.filter((job) => job.status === "queued");
+    const paused = batchJobs.filter((job) => job.status === "paused");
+    const failedJobs = batchJobs.filter((job) => job.status === "error");
+    const cancelledJobs = batchJobs.filter((job) => job.status === "cancelled");
+    const done = batchJobs.filter(
+      (job) =>
+        job.status === "done" &&
+        (job.verified || !!job.outputs?.some((output) => output.verified)),
+    );
+
+    const current =
+      running.find((job) => job.status === "rendering") ||
+      running.find((job) => job.status === "images") ||
+      running.find((job) => job.status === "audio") ||
+      queued[0] ||
+      paused[0] ||
+      failedJobs[0] ||
+      cancelledJobs[0] ||
+      batchJobs[0];
+
+    const total = Math.max(
+      focus.batchTotal || 0,
+      batchJobs.length,
+      new Set(batchJobs.flatMap((job) => job.chapterIds)).size,
     );
     const progress = Math.max(
       0,
       Math.min(
         100,
         Math.round(
-          visible.reduce(
+          batchJobs.reduce(
             (sum, job) =>
-              sum + job.progress * Math.max(1, job.chapterIds.length),
+              sum +
+              (job.status === "done" && job.verified ? 100 : job.progress),
             0,
-          ) / Math.max(1, weight),
+          ) / Math.max(1, total),
         ),
       ),
     );
-    const chapterIds = new Set(visible.flatMap((job) => job.chapterIds));
-    const rendered = visible.reduce(
-      (sum, job) =>
-        sum +
-        (job.outputs?.length ||
-          job.counts?.rendered ||
-          (job.status === "done" && job.verified ? job.chapterIds.length : 0)),
-      0,
-    );
-    const current =
-      visible.find((job) => ["rendering", "images", "audio"].includes(job.status)) ||
-      visible[0];
-    const failed = visible.filter((job) => job.status === "error").length;
-    const cancelled = visible.filter((job) => job.status === "cancelled").length;
 
     return {
       progress,
-      chapters: chapterIds.size,
-      rendered,
+      total,
+      done: done.length,
+      running,
+      queued,
+      paused,
+      failedJobs,
+      cancelledJobs,
       current,
-      failed,
-      cancelled,
-      activeCount: active.length,
+      batchJobs,
     };
   }, [jobs]);
 
   if (!data) return null;
 
+  const invokeMany = (action: string, targets: Job[]) => {
+    const ids = targets.map((job) => job.id);
+    if (!ids.length) return;
+    if (actMany) actMany(action, ids);
+    else ids.forEach((id) => act(action, id));
+  };
+
+  const stoppable = [...data.running, ...data.queued];
+  const resumable = data.paused;
+  const retryable = [...data.failedJobs, ...data.cancelledJobs];
+
   return (
-    <section className={"batch-progress " + (data.failed ? "has-error" : "")}>
+    <section
+      className={
+        "batch-progress " + (data.failedJobs.length ? "has-error" : "")
+      }
+    >
       <div className="batch-progress-top">
         <div className="batch-progress-copy">
           <strong>{labels[data.current.status] || "Đang xử lý"}</strong>
-          <span>{data.current.message}</span>
+          <span>
+            {data.current.batchIndex !== undefined
+              ? `Video ${data.current.batchIndex + 1}/${data.total} · `
+              : ""}
+            {data.current.message}
+          </span>
         </div>
         <strong className="batch-progress-percent">{data.progress}%</strong>
       </div>
@@ -155,72 +193,71 @@ export function PipelineProgress({
 
       <div className="batch-progress-footer">
         <div className="batch-progress-meta">
-          <span>{data.chapters} chương trong lô</span>
-          <span>{data.rendered}/{data.chapters} video hoàn thành</span>
-          {data.activeCount > 1 && <span>{data.activeCount} tác vụ đang xử lý</span>}
-          {data.failed > 0 && <span>{data.failed} tác vụ lỗi</span>}
-          {data.cancelled > 0 && <span>{data.cancelled} tác vụ đã hủy</span>}
+          <span>
+            ✓ {data.done}/{data.total} video đã lưu
+          </span>
+          {data.running.length > 0 && (
+            <span>{data.running.length} video đang chạy song song</span>
+          )}
+          {data.queued.length > 0 && (
+            <span>{data.queued.length} video đang chờ</span>
+          )}
+          {data.paused.length > 0 && (
+            <span>{data.paused.length} video tạm dừng</span>
+          )}
+          {data.failedJobs.length > 0 && (
+            <span>{data.failedJobs.length} video lỗi riêng</span>
+          )}
         </div>
 
         <div className="batch-progress-actions">
-          {["queued", "audio", "images", "rendering"].includes(
-            data.current.status,
-          ) && (
+          {stoppable.length > 0 && (
             <>
               <button
                 disabled={busy}
-                onClick={() => act("pause", data.current.id)}
-                title="Tạm dừng sau bước đang xử lý"
+                onClick={() => invokeMany("pause", stoppable)}
+                title="Tạm dừng toàn bộ lô; video đã hoàn thành vẫn được giữ"
               >
                 <Pause size={15} />
-                Tạm dừng
+                Tạm dừng lô
               </button>
               <button
                 className="danger-outline"
                 disabled={busy}
                 onClick={() => {
-                  if (confirm("Hủy tác vụ đang chạy? Tài nguyên hợp lệ đã tạo sẽ vẫn được giữ lại."))
-                    act("cancel", data.current.id);
+                  if (
+                    confirm(
+                      "Hủy các video chưa hoàn thành? Video đã tạo xong vẫn nằm trong Quản lý video.",
+                    )
+                  )
+                    invokeMany("cancel", stoppable);
                 }}
               >
                 <XCircle size={15} />
-                Hủy
+                Hủy phần còn lại
               </button>
             </>
           )}
 
-          {data.current.status === "paused" && (
-            <>
-              <button
-                className="primary"
-                disabled={busy}
-                onClick={() => act("resume", data.current.id)}
-              >
-                <Play size={15} />
-                Tiếp tục
-              </button>
-              <button
-                className="danger-outline"
-                disabled={busy}
-                onClick={() => {
-                  if (confirm("Hủy hẳn tác vụ đang tạm dừng?"))
-                    act("cancel", data.current.id);
-                }}
-              >
-                <XCircle size={15} />
-                Hủy
-              </button>
-            </>
-          )}
-
-          {["error", "cancelled"].includes(data.current.status) && (
+          {resumable.length > 0 && !stoppable.length && (
             <button
               className="primary"
               disabled={busy}
-              onClick={() => act("restart", data.current.id)}
+              onClick={() => invokeMany("resume", resumable)}
+            >
+              <Play size={15} />
+              Tiếp tục lô
+            </button>
+          )}
+
+          {retryable.length > 0 && !stoppable.length && !resumable.length && (
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() => invokeMany("restart", retryable)}
             >
               <RotateCcw size={15} />
-              Chạy lại
+              Chạy lại video lỗi
             </button>
           )}
         </div>

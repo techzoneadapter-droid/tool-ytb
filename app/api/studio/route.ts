@@ -151,27 +151,36 @@ export async function POST(req: NextRequest) {
         ensureVisualProfile(chapter, settings);
       put("project", project);
       if (b.action === "createVideo") {
-        const job: Job = {
-          id: randomUUID(),
-          projectId: project.id,
-          chapterIds: chapters.map((c) => c.id),
-          kind: "pipeline",
-          status: "queued",
-          progress: 0,
-          message: "Đã lưu truyện, tách chương và chia cảnh",
-          createdAt: new Date().toISOString(),
-          snapshot: { settings: structuredClone(settings) },
-        };
-        put("job", job);
-        // Keep the saved project/job even if the process cannot start, so retry is possible.
+        const batchId = randomUUID();
+        const jobs = chapters.map((chapter, index) => {
+          const job: Job = {
+            id: randomUUID(),
+            projectId: project.id,
+            chapterIds: [chapter.id],
+            batchId,
+            batchIndex: index,
+            batchTotal: chapters.length,
+            kind: "pipeline",
+            outputMode: "separate",
+            status: "queued",
+            progress: 0,
+            message: `Video ${index + 1}/${chapters.length} đang chờ xử lý độc lập`,
+            createdAt: new Date().toISOString(),
+            snapshot: { settings: structuredClone(settings) },
+          };
+          put("job", job);
+          return job;
+        });
+        // Keep every saved job even if the process cannot start, so retry is possible.
         try {
           await startService("worker");
         } catch (e) {
-          updateJob(job.id, {
-            status: "error",
-            error: String(e),
-            message: "Worker chưa khởi động được",
-          });
+          for (const job of jobs)
+            updateJob(job.id, {
+              status: "error",
+              error: String(e),
+              message: "Worker chưa khởi động được",
+            });
         }
       }
       return NextResponse.json(project);

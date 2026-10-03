@@ -15,19 +15,21 @@ import { VoiceSelector } from "./VoiceSelector";
 import { AdvancedOptions } from "./AdvancedOptions";
 import { VisualProfiles } from "./VisualProfiles";
 import { ProviderStatus } from "./ProviderStatus";
-import { PipelineProgress, VideoResults } from "./PipelineProgress";
+import { PipelineProgress } from "./PipelineProgress";
 export function VideoCreatePage({
   data,
   projectId,
   onProject,
   refresh,
   onImport,
+  onLibrary,
 }: {
   data: StudioData;
   projectId: string;
   onProject: (id: string) => void;
   refresh: () => Promise<void>;
   onImport: () => void;
+  onLibrary: () => void;
 }) {
   const project =
     data.projects.find((p) => p.id === projectId) || data.projects[0];
@@ -62,8 +64,12 @@ export function VideoCreatePage({
     setBusy(true);
     setError("");
     try {
-      if (!["vieneu-local", "korva-local"].includes(settings.ttsProvider || ""))
-        throw Error("Chọn giọng VieNeu hoặc Korva để dùng workflow local.");
+      if (
+        !["modal-vieneu", "vieneu-local", "korva-local"].includes(
+          settings.ttsProvider || "",
+        )
+      )
+        throw Error("Chọn VieNeu Cloud, VieNeu Local hoặc Korva để tạo video.");
       if (
         settings.motionMode === "selected" &&
         !project.chapters
@@ -101,15 +107,15 @@ export function VideoCreatePage({
     try {
       if (action === "retry" && project && !active) {
         if (
-          !["vieneu-local", "korva-local"].includes(settings.ttsProvider || "")
+          !["modal-vieneu", "vieneu-local", "korva-local"].includes(
+            settings.ttsProvider || "",
+          )
         )
-          throw Error(
-            "Chọn giọng VieNeu hoặc Korva để tiếp tục bằng giọng local.",
-          );
+          throw Error("Chọn engine giọng hợp lệ trước khi thử lại.");
         await request({
           action: "settings",
           projectId: project.id,
-          settings: { ...settings, imageProvider: "flux2-local" },
+          settings,
         });
         await request({
           action: "motionSelection",
@@ -304,7 +310,11 @@ export function VideoCreatePage({
                     <div className="inset">
                       <div className="row between">
                         <h3>Ảnh minh họa</h3>
-                        <span className="badge">Local</span>
+                        <span className="badge">
+                          {settings.imageProvider?.startsWith("modal-")
+                            ? "Cloud GPU"
+                            : "Local"}
+                        </span>
                       </div>
                       <label>
                         Engine ảnh
@@ -317,8 +327,14 @@ export function VideoCreatePage({
                             })
                           }
                         >
+                          <option value="modal-story">
+                            Story AI Cloud · Đồng nhất theo chương
+                          </option>
+                          <option value="modal-reference">
+                            Reference AI Cloud · Ảnh tham chiếu
+                          </option>
                           <option value="flux2-local">
-                            FLUX.2 · Chất lượng
+                            FLUX.2 Local · Chất lượng
                           </option>
                           <option value="local-fast">
                             Local Fast · GPU thấp (cần test)
@@ -558,6 +574,14 @@ export function VideoCreatePage({
                       : "Bắt đầu tạo video"}
                 </button>
               </div>
+              {jobs.some((job) => job.status === "done" && job.verified) && (
+                <div className="completed-summary">
+                  <span>✓ Video hoàn thành đã được lưu vào thư viện.</span>
+                  <button className="text-button" onClick={onLibrary}>
+                    Mở Quản lý video →
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -580,7 +604,6 @@ export function VideoCreatePage({
           </div>
         </aside>
       </div>
-      {project && <VideoResults project={project} jobs={jobs} />}
     </>
   );
 }

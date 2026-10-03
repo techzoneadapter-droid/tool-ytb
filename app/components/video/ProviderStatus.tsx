@@ -115,9 +115,9 @@ export function ProviderStatus({
           }
         : provider === "pollinations"
           ? {
-              label: "Pollinations Image",
-              ready: !!p?.freeCloud?.pollinations?.configured,
-              configured: !!p?.freeCloud?.pollinations?.configured,
+              label: "Pollinations Image · anonymous",
+              ready: !!p?.freeCloud?.pollinations?.imageReady,
+              configured: true,
               service: "",
             }
         : provider === "modal-story" || provider === "modal-reference"
@@ -283,7 +283,7 @@ export function ProviderStatus({
             ["Edge TTS Online", true],
             ["Story AI Cloud", !!p?.modal?.image?.ready],
             ["AI Horde", !!p?.freeCloud?.aiHorde?.ready],
-            ["Pollinations", !!p?.freeCloud?.pollinations?.configured],
+            ["Pollinations Image", !!p?.freeCloud?.pollinations?.imageReady],
             ["VieNeu Local", !!p?.local.vieneu.ready],
             ["Korva Local", !!p?.local.korva.ready],
             ["FLUX.2 Local", !!p?.runtime.flux],

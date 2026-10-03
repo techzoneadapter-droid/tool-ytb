@@ -114,6 +114,24 @@ export async function vieneuVoices() {
     throw Error(vieneuMissing);
   }
 }
+let vieneuVoiceCache:
+  | { until: number; promise: Promise<EngineVoice[]> }
+  | undefined;
+
+async function cachedVieneuVoices(force = false) {
+  if (force || !vieneuVoiceCache || vieneuVoiceCache.until < Date.now())
+    vieneuVoiceCache = {
+      until: Date.now() + 30000,
+      promise: vieneuVoices(),
+    };
+  try {
+    return await vieneuVoiceCache.promise;
+  } catch (error) {
+    vieneuVoiceCache = undefined;
+    throw error;
+  }
+}
+
 let healthCache:
   | { until: number; promise: Promise<Awaited<ReturnType<typeof checkLocal>>> }
   | undefined;
@@ -171,18 +189,18 @@ export async function speakLocal(
   if (s.ttsProvider === "tts-studio-local")
     throw Error("Vietnamese TTS Studio - Clone giọng local - đang phát triển");
   let voice = localVoiceId(s.voice);
+  let catalog: EngineVoice[];
   if (s.ttsProvider === "vieneu-local") {
     try {
-      await vieneuVoices();
+      catalog = await cachedVieneuVoices();
     } catch {
       await startService("vieneu");
+      catalog = await cachedVieneuVoices(true);
     }
+  } else {
+    await startService("korva");
+    catalog = await korvaVoices();
   }
-  if (s.ttsProvider === "korva-local") await startService("korva");
-  const catalog =
-    s.ttsProvider === "vieneu-local"
-      ? await vieneuVoices()
-      : await korvaVoices();
   const selected = findEngineVoice(catalog, s.voice);
   if (!selected)
     throw Error("Giọng không thuộc danh sách thật của engine đã chọn.");
@@ -194,6 +212,7 @@ export async function speakLocal(
     const normalized: string[] = [];
     const parts =
       s.ttsProvider === "vieneu-local" ? chunks(text, 18000) : chunks(text, 1500);
+    const factor = Math.pow(2, s.pitch / 12);
     for (const part of parts) {
       const raw = path.join(directory, randomUUID() + ".wav");
       const clean = path.join(directory, randomUUID() + ".wav");
@@ -211,7 +230,7 @@ export async function speakLocal(
               voice,
               response_format: "wav",
               sample_rate: 24000,
-              max_chars: 512,
+              max_chars: 1024,
             }),
             signal: AbortSignal.timeout(600000),
           });
@@ -249,7 +268,27 @@ export async function speakLocal(
           throw Error("KorvaTTS: " + (await response.text()).slice(-1200));
         await writeFile(raw, Buffer.from(await response.arrayBuffer()));
       }
-      // Normalize streaming WAV headers before probing duration or concatenating.
+      if (parts.length === 1) {
+        await run([
+          "-y",
+          "-i",
+          raw,
+          "-vn",
+          "-af",
+          `asetrate=${24000 * factor},aresample=24000,atempo=${1 / factor},atempo=${s.speed},volume=${s.volume},apad=pad_dur=${s.pause}`,
+          "-ar",
+          "24000",
+          "-ac",
+          "1",
+          file,
+        ]);
+        const seconds = await duration(file);
+        if (!Number.isFinite(seconds) || seconds <= 0)
+          throw Error("Engine không tạo được tệp audio hợp lệ.");
+        return seconds;
+      }
+
+      // Multi-part narration still normalizes each streaming WAV before concat.
       await run([
         "-y",
         "-i",
@@ -272,7 +311,6 @@ export async function speakLocal(
       list,
       normalized.map((f) => "file '" + path.basename(f) + "'").join("\n"),
     );
-    const factor = Math.pow(2, s.pitch / 12);
     await run(
       [
         "-y",

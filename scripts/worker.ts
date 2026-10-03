@@ -46,8 +46,7 @@ async function imageEngineReady(settings: Settings) {
   )
     return (await modalHealth("image")).ready;
   if (settings.imageProvider === "aihorde") return true;
-  if (settings.imageProvider === "pollinations")
-    return !!process.env.POLLINATIONS_API_KEY;
+  if (settings.imageProvider === "pollinations") return true;
   if (
     settings.imageProvider === "flux2-local" ||
     settings.imageProvider === "local-fast" ||
@@ -181,6 +180,59 @@ async function main() {
           message,
         });
       };
+
+      const stageTimers = new Map<
+        string,
+        { startedAt: number; baseline: number }
+      >();
+      const reportStage = (
+        status: Job["status"],
+        label: string,
+        current: number,
+        total: number,
+        detail: string,
+        concurrency = 1,
+        globalProgress?: number,
+      ) => {
+        const currentStatus = get<Job>(job.id, "job").status;
+        if (currentStatus === "paused" || currentStatus === "cancelled") return;
+        let timer = stageTimers.get(label);
+        if (!timer) {
+          timer = { startedAt: Date.now(), baseline: current };
+          stageTimers.set(label, timer);
+        }
+        const elapsedSeconds = Math.max(
+          0,
+          Math.floor((Date.now() - timer.startedAt) / 1000),
+        );
+        const produced = Math.max(0, current - timer.baseline);
+        const ratePerMinute =
+          elapsedSeconds >= 2 && produced > 0
+            ? (produced * 60) / elapsedSeconds
+            : undefined;
+        const etaSeconds =
+          ratePerMinute && current < total
+            ? Math.round(((total - current) / ratePerMinute) * 60)
+            : undefined;
+        updateJob(job.id, {
+          status,
+          ...(globalProgress === undefined
+            ? {}
+            : { progress: Math.min(99, Math.max(0, globalProgress)) }),
+          message: detail,
+          stageProgress: {
+            label,
+            current,
+            total,
+            detail,
+            concurrency,
+            elapsedSeconds,
+            etaSeconds,
+            ratePerMinute,
+            updatedAt: new Date().toISOString(),
+          },
+        });
+      };
       if (
         s.imageEnabled === false &&
         ["pipeline", "prepare", "render"].includes(kind)
@@ -216,6 +268,20 @@ async function main() {
             tasks.filter((t) => t !== "motion" || usesMotion(scene, s)).length,
           0,
         );
+        const handledThisRun = new Set<string>();
+        const relevantKeys = scenes.flatMap((scene) =>
+          tasks
+            .filter((type) => type !== "motion" || usesMotion(scene, s))
+            .map((type) => scene.id + ":" + type),
+        );
+        completed = relevantKeys.filter((key) => completedItems.has(key)).length;
+        const finishKey = (key: string) => {
+          if (!completedItems.has(key)) {
+            completedItems.add(key);
+            completed++;
+          }
+          handledThisRun.add(key);
+        };
         const valid = async (
           scene: (typeof scenes)[number],
           type: "audio" | "image" | "motion",
@@ -253,6 +319,45 @@ async function main() {
           total: scenes.length,
           failed,
         });
+        const reportResource = (
+          type: "audio" | "image" | "motion",
+          scene: (typeof scenes)[number],
+          concurrency = 1,
+        ) => {
+          const currentCounts = counts();
+          const stageCurrent =
+            type === "audio"
+              ? currentCounts.audio
+              : type === "image"
+                ? currentCounts.image
+                : currentCounts.motion || 0;
+          const stageTotal =
+            type === "motion"
+              ? scenes.filter((item) => usesMotion(item, s)).length
+              : scenes.length;
+          const label =
+            type === "audio"
+              ? "Lời đọc"
+              : type === "motion"
+                ? "Ảnh động"
+                : "Hình ảnh";
+          const chapter = p.chapters.find((candidate) =>
+            candidate.scenes.some((item) => item.id === scene.id),
+          );
+          reportStage(
+            type === "audio" ? "audio" : "images",
+            label,
+            stageCurrent,
+            stageTotal,
+            `${label}: ${stageCurrent}/${stageTotal} cảnh · ${chapter?.title || "Chương"} · cảnh ${scenes.indexOf(scene) + 1}`,
+            concurrency,
+            Math.floor(
+              (completed / Math.max(1, total)) *
+                (kind === "pipeline" ? 75 : 99),
+            ),
+          );
+          return currentCounts;
+        };
         const sharedFallbackReady =
           s.imageEnabled !== false &&
           s.fallbackOnImageError === true &&
@@ -267,6 +372,8 @@ async function main() {
 
         for (const type of tasks as ("audio" | "image" | "motion")[]) {
           for (const scene of scenes) {
+            const loopKey = scene.id + ":" + type;
+            if (handledThisRun.has(loopKey)) continue;
             if (
               type === "image" &&
               bypassUnavailableImageAI &&
@@ -278,20 +385,27 @@ async function main() {
               scene.imageStatus = "done";
               scene.imageError = undefined;
               scene.approved = !s.humanCheck;
-              completedItems.add(key);
-              completed++;
+              finishKey(key);
               put("project", p);
+              const currentCounts = reportResource("image", scene, 1);
               updateJob(job.id, {
                 completedItems: [...completedItems],
-                counts: counts(),
-                message: "AI ảnh chưa sẵn sàng — đang dùng ảnh chung để tiếp tục dựng video",
+                counts: currentCounts,
+                message:
+                  "AI ảnh chưa sẵn sàng — đang dùng ảnh chung để tiếp tục dựng video",
               });
               continue;
             }
 
             if (
               type === "audio" &&
-              ["modal-vieneu", "vieneu-local", "edge-online"].includes(s.ttsProvider || "") &&
+              [
+                "modal-vieneu",
+                "vieneu-local",
+                "edge-online",
+                "pollinations",
+                "cloud",
+              ].includes(s.ttsProvider || "") &&
               !completedItems.has(scene.id + ":audio") &&
               !(await valid(scene, "audio"))
             ) {
@@ -301,21 +415,61 @@ async function main() {
                 if (group.length >= 32) break;
                 if (
                   !completedItems.has(candidate.id + ":audio") &&
+                  !handledThisRun.has(candidate.id + ":audio") &&
                   !(await valid(candidate, "audio"))
                 )
                   group.push(candidate);
               }
               if (group.length) {
+                const engineName =
+                  s.ttsProvider === "modal-vieneu"
+                    ? "VieNeu Cloud"
+                    : s.ttsProvider === "edge-online"
+                      ? "Edge TTS Online"
+                      : s.ttsProvider === "pollinations"
+                        ? "Pollinations TTS"
+                        : s.ttsProvider === "cloud"
+                          ? "Cloud TTS"
+                          : "VieNeu Local";
+                const expectedConcurrency =
+                  s.ttsProvider === "modal-vieneu"
+                    ? Math.min(16, group.length)
+                    : s.ttsProvider === "edge-online"
+                      ? Math.min(6, group.length)
+                      : s.ttsProvider === "vieneu-local"
+                        ? Math.min(6, group.length)
+                        : s.ttsProvider === "pollinations"
+                          ? Math.min(3, group.length)
+                          : Math.min(2, group.length);
                 checkpoint(
                   "audio",
                   Math.floor(
                     (completed / Math.max(1, total)) *
                       (kind === "pipeline" ? 75 : 99),
                   ),
-                  `${s.ttsProvider === "modal-vieneu" ? "VieNeu Cloud" : s.ttsProvider === "edge-online" ? "Edge TTS Online" : "VieNeu Local"} đang tạo ${group.length} lời đọc song song`,
+                  `${engineName}: bắt đầu nhóm ${group.length} cảnh`,
+                );
+                const beforeCounts = counts();
+                reportStage(
+                  "audio",
+                  "Lời đọc",
+                  beforeCounts.audio,
+                  scenes.length,
+                  `${engineName}: đang xử lý nhóm ${group.length} cảnh · tối đa ${expectedConcurrency} luồng`,
+                  expectedConcurrency,
+                  Math.floor(
+                    (completed / Math.max(1, total)) *
+                      (kind === "pipeline" ? 75 : 99),
+                  ),
                 );
                 const files = group.map(() =>
                   path.join(assets, randomUUID() + ".mp3"),
+                );
+                const byId = new Map(
+                  group.map((item, index) => [
+                    item.id,
+                    { item, index },
+                  ]),
                 );
                 for (const item of group) {
                   item.audioStatus = "working";
@@ -330,32 +484,67 @@ async function main() {
                       file: files[index],
                     })),
                     s,
+                    {
+                      shouldStop: () => {
+                        const status = get<Job>(job.id, "job").status;
+                        return status === "paused" || status === "cancelled";
+                      },
+                      onProgress: (event) => {
+                        const found = byId.get(event.id);
+                        if (!found) return;
+                        const { item, index } = found;
+                        item.audio = path.basename(files[index]);
+                        item.audioSource = ttsSource(s);
+                        item.duration = event.seconds;
+                        item.audioStatus = "done";
+                        item.audioError = undefined;
+                        item.approved = !s.humanCheck;
+                        finishKey(item.id + ":audio");
+                        put("project", p);
+                        const chapter = p.chapters.find((candidate) =>
+                          candidate.scenes.some((x) => x.id === item.id),
+                        );
+                        const currentCounts = counts();
+                        const globalProgress = Math.floor(
+                          (completed / Math.max(1, total)) *
+                            (kind === "pipeline" ? 75 : 99),
+                        );
+                        reportStage(
+                          "audio",
+                          "Lời đọc",
+                          currentCounts.audio,
+                          scenes.length,
+                          `${engineName}: ${currentCounts.audio}/${scenes.length} cảnh · ${chapter?.title || "Chương"} · ${event.concurrency} luồng`,
+                          event.concurrency,
+                          globalProgress,
+                        );
+                        updateJob(job.id, {
+                          completedItems: [...completedItems],
+                          counts: currentCounts,
+                        });
+                      },
+                    },
                   );
-                  for (let index = 0; index < group.length; index++) {
-                    const item = group[index];
-                    const seconds = durations.get(item.id);
-                    if (!seconds) throw Error("Engine giọng đọc thiếu audio trong batch.");
-                    item.audio = path.basename(files[index]);
-                    item.audioSource = ttsSource(s);
-                    item.duration = seconds;
-                    item.audioStatus = "done";
-                    item.audioError = undefined;
-                    item.approved = !s.humanCheck;
-                    completedItems.add(item.id + ":audio");
+
+                  const status = get<Job>(job.id, "job").status;
+                  if (status === "paused") throw Error("PAUSED");
+                  if (status === "cancelled") throw Error("CANCELLED");
+
+                  for (const item of group) {
+                    if (!durations.has(item.id) && !completedItems.has(item.id + ":audio"))
+                      throw Error("Engine giọng đọc thiếu audio trong batch.");
                   }
-                  completed += group.length;
-                  put("project", p);
-                  updateJob(job.id, {
-                    completedItems: [...completedItems],
-                    counts: counts(),
-                  });
                   continue;
                 } catch (error) {
                   const message =
                     error instanceof Error ? error.message : String(error);
+                  if (message === "PAUSED" || message === "CANCELLED")
+                    throw error;
                   for (const item of group) {
+                    if (completedItems.has(item.id + ":audio")) continue;
                     item.audioStatus = "error";
                     item.audioError = message;
+                    handledThisRun.add(item.id + ":audio");
                     failed++;
                   }
                   put("project", p);
@@ -365,6 +554,145 @@ async function main() {
                   });
                   throw Error(message);
                 }
+              }
+            }
+
+            if (
+              type === "image" &&
+              ["aihorde", "pollinations"].includes(s.imageProvider || "") &&
+              !completedItems.has(scene.id + ":image") &&
+              !(await valid(scene, "image"))
+            ) {
+              const start = scenes.findIndex((item) => item.id === scene.id);
+              const group: typeof scenes = [];
+              for (const candidate of scenes.slice(Math.max(0, start))) {
+                if (group.length >= 12) break;
+                if (
+                  !completedItems.has(candidate.id + ":image") &&
+                  !handledThisRun.has(candidate.id + ":image") &&
+                  !(await valid(candidate, "image"))
+                )
+                  group.push(candidate);
+              }
+
+              if (group.length) {
+                const engineName =
+                  s.imageProvider === "aihorde"
+                    ? "AI Horde"
+                    : "Pollinations";
+                const concurrency =
+                  s.imageProvider === "aihorde" ? 3 : 4;
+                checkpoint(
+                  "images",
+                  Math.floor(
+                    (completed / Math.max(1, total)) *
+                      (kind === "pipeline" ? 75 : 99),
+                  ),
+                  `${engineName}: bắt đầu nhóm ${group.length} ảnh · ${concurrency} luồng`,
+                );
+                const beforeCounts = counts();
+                reportStage(
+                  "images",
+                  "Hình ảnh",
+                  beforeCounts.image,
+                  scenes.length,
+                  `${engineName}: đang xử lý nhóm ${group.length} ảnh · ${concurrency} luồng`,
+                  concurrency,
+                  Math.floor(
+                    (completed / Math.max(1, total)) *
+                      (kind === "pipeline" ? 75 : 99),
+                  ),
+                );
+
+                let cursor = 0;
+                const workers = Array.from(
+                  { length: Math.min(concurrency, group.length) },
+                  async () => {
+                    while (true) {
+                      const status = get<Job>(job.id, "job").status;
+                      if (status === "paused" || status === "cancelled") return;
+                      const index = cursor++;
+                      if (index >= group.length) return;
+                      const item = group[index];
+                      const key = item.id + ":image";
+                      const chapter = p.chapters.find((candidate) =>
+                        candidate.scenes.some((x) => x.id === item.id),
+                      )!;
+                      const file = randomUUID() + ".png";
+                      const visual = sceneVisual(chapter, item, s);
+                      item.finalImagePrompt = visual.prompt;
+                      item.imageSeed = visual.seed;
+                      item.imageStatus = "working";
+                      item.imageError = undefined;
+                      put("project", p);
+                      try {
+                        const generated = await makeImage(
+                          visual.prompt,
+                          path.join(assets, file),
+                          s,
+                          visual.seed,
+                        );
+                        item.imageEngine = generated.engine;
+                        item.imageModel = generated.model;
+                        item.image = file;
+                        item.imageSource = generated.engine;
+                        item.imageStatus = "done";
+                        item.imageError = undefined;
+                        item.motion = undefined;
+                        item.motionStatus = undefined;
+                        item.motionError = undefined;
+                        item.approved = !s.humanCheck;
+                        finishKey(key);
+                      } catch (error) {
+                        const message =
+                          error instanceof Error
+                            ? error.message
+                            : String(error);
+                        item.imageStatus = "error";
+                        item.imageError = message;
+                        if (
+                          s.fallbackOnImageError &&
+                          (await resolveSceneImage(
+                            { ...item, image: undefined },
+                            s,
+                          ))
+                        ) {
+                          finishKey(key);
+                          item.approved = !s.humanCheck;
+                        } else {
+                          handledThisRun.add(key);
+                          failed++;
+                        }
+                      }
+
+                      put("project", p);
+                      const currentCounts = counts();
+                      const globalProgress = Math.floor(
+                        (completed / Math.max(1, total)) *
+                          (kind === "pipeline" ? 75 : 99),
+                      );
+                      reportStage(
+                        "images",
+                        "Hình ảnh",
+                        currentCounts.image,
+                        scenes.length,
+                        `${engineName}: ${currentCounts.image}/${scenes.length} cảnh · ${chapter.title} · ${concurrency} luồng`,
+                        concurrency,
+                        globalProgress,
+                      );
+                      updateJob(job.id, {
+                        completedItems: [...completedItems],
+                        counts: currentCounts,
+                      });
+                    }
+                  },
+                );
+                await Promise.all(workers);
+
+                const status = get<Job>(job.id, "job").status;
+                if (status === "paused") throw Error("PAUSED");
+                if (status === "cancelled") throw Error("CANCELLED");
+                continue;
               }
             }
 
@@ -436,13 +764,25 @@ async function main() {
                     item.motionStatus = undefined;
                     item.motionError = undefined;
                     item.approved = !s.humanCheck;
-                    completedItems.add(item.id + ":image");
+                    finishKey(item.id + ":image");
                   }
-                  completed += group.length;
                   put("project", p);
+                  const imageCounts = counts();
+                  reportStage(
+                    "images",
+                    "Hình ảnh",
+                    imageCounts.image,
+                    scenes.length,
+                    `Story AI: ${imageCounts.image}/${scenes.length} cảnh · ${chapter.title}`,
+                    Math.min(10, group.length),
+                    Math.floor(
+                      (completed / Math.max(1, total)) *
+                        (kind === "pipeline" ? 75 : 99),
+                    ),
+                  );
                   updateJob(job.id, {
                     completedItems: [...completedItems],
-                    counts: counts(),
+                    counts: imageCounts,
                   });
                   continue;
                 } catch (error) {
@@ -459,13 +799,13 @@ async function main() {
                         s,
                       ))
                     ) {
-                      completedItems.add(item.id + ":image");
+                      finishKey(item.id + ":image");
                       usedFallback++;
                     } else {
+                      handledThisRun.add(item.id + ":image");
                       failed++;
                     }
                   }
-                  if (usedFallback === group.length) completed += group.length;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],
@@ -478,17 +818,14 @@ async function main() {
             }
             if (type === "motion" && !usesMotion(scene, s)) continue;
             const key = scene.id + ":" + type;
-            if(type==='image' && !job.regenerate && completedItems.has(key) && scene.imageError && s.fallbackOnImageError && await resolveSceneImage(scene,s)) {
-              completed++;updateJob(job.id,{counts:counts()});continue;
+            if (!job.regenerate && completedItems.has(key)) {
+              handledThisRun.add(key);
+              continue;
             }
-            if (
-              (!job.regenerate || completedItems.has(key)) &&
-              (await valid(scene, type))
-            ) {
-              completedItems.add(key);
+            if (await valid(scene, type)) {
+              finishKey(key);
               scene[(type + "Status") as "audioStatus"] = "done";
               scene[(type + "Error") as "audioError"] = undefined;
-              completed++;
               put("project", p);
               updateJob(job.id, {
                 completedItems: [...completedItems],
@@ -558,8 +895,7 @@ async function main() {
               scene[(type + "Status") as "audioStatus"] = "done";
               scene.approved = !s.humanCheck;
               put("project", p);
-              completed++;
-              completedItems.add(key);
+              finishKey(key);
             } catch (e) {
               if (
                 type === "image" &&
@@ -569,12 +905,12 @@ async function main() {
                 scene.imageError = e instanceof Error ? e.message : String(e);
                 scene.imageStatus = "error";
                 scene.approved = !s.humanCheck;
-                completed++;
-                completedItems.add(key);
+                finishKey(key);
                 put("project", p);
+                const fallbackCounts = reportResource(type, scene, 1);
                 updateJob(job.id, {
                   completedItems: [...completedItems],
-                  counts: counts(),
+                  counts: fallbackCounts,
                 });
                 continue;
               }
@@ -584,9 +920,10 @@ async function main() {
               put("project", p);
               failed++;
             }
+            const currentCounts = reportResource(type, scene, 1);
             updateJob(job.id, {
               completedItems: [...completedItems],
-              counts: counts(),
+              counts: currentCounts,
             });
           }
         }
@@ -649,15 +986,34 @@ async function main() {
             Math.floor(base),
             `Đang dựng video ${index + 1}/${chapters.length} — ${chapter.title}`,
           );
+          reportStage(
+            "rendering",
+            "Dựng video",
+            outputs.length,
+            chapters.length,
+            `Chuẩn bị video ${index + 1}/${chapters.length} · ${chapter.title}`,
+            1,
+            Math.floor(base),
+          );
           const result = await render(chapterScenes, s, (n) => {
             if (n >= 0.65 && s.burnSubtitles && !subtitlesReady) {
               updateJob(job.id, { subtitlesReady: true });
               subtitlesReady = true;
             }
+            const renderProgress = Math.floor(base + n * span);
             checkpoint(
               "rendering",
-              Math.floor(base + n * span),
+              renderProgress,
               `Đang dựng video ${index + 1}/${chapters.length} — ${chapter.title}`,
+            );
+            reportStage(
+              "rendering",
+              "Dựng video",
+              outputs.length,
+              chapters.length,
+              `Video ${index + 1}/${chapters.length} · FFmpeg ${Math.round(n * 100)}% · ${chapter.title}`,
+              1,
+              renderProgress,
             );
           });
           if (!assetExists(result.output))
@@ -686,6 +1042,15 @@ async function main() {
             vtt: result.vtt,
             verified: true,
           });
+          reportStage(
+            "rendering",
+            "Dựng video",
+            outputs.length,
+            chapters.length,
+            `Đã xong ${outputs.length}/${chapters.length} video · ${chapter.title}`,
+            1,
+            Math.floor(base + span),
+          );
           updateJob(job.id, {
             outputs,
             counts: {
@@ -716,19 +1081,38 @@ async function main() {
         kind === "pipeline" ? 75 : 0,
         "FFmpeg đang dựng video từ tài nguyên thật",
       );
+      reportStage(
+        "rendering",
+        "Dựng video",
+        0,
+        100,
+        "FFmpeg đang chuẩn bị luồng hình, tiếng và phụ đề",
+        1,
+        kind === "pipeline" ? 75 : 0,
+      );
       let subtitlesReady = false;
       const result = await render(scenes, s, (n) => {
         if (n >= 0.65 && s.burnSubtitles && !subtitlesReady) {
           updateJob(job.id, { subtitlesReady: true });
           subtitlesReady = true;
         }
+        const renderProgress = Math.floor(
+          (kind === "pipeline" ? 75 : 0) +
+            n * (kind === "pipeline" ? 24 : 99),
+        );
         checkpoint(
           "rendering",
-          Math.floor(
-            (kind === "pipeline" ? 75 : 0) +
-              n * (kind === "pipeline" ? 24 : 99),
-          ),
+          renderProgress,
           "FFmpeg đang mã hóa video",
+        );
+        reportStage(
+          "rendering",
+          "Dựng video",
+          Math.round(n * 100),
+          100,
+          `FFmpeg đang mã hóa video · ${Math.round(n * 100)}%`,
+          1,
+          renderProgress,
         );
       });
       if (!assetExists(result.output))

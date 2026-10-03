@@ -234,6 +234,7 @@ export async function POST(req: NextRequest) {
               ? "Tiếp tục tác vụ từ tài nguyên đã có"
               : "Đã xếp lại hàng đợi — tài nguyên hợp lệ sẽ được dùng lại",
           progress: 0,
+          stageProgress: undefined,
           verified: false,
           output: undefined,
           outputs: undefined,

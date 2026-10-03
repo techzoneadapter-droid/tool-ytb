@@ -554,13 +554,25 @@ async function main() {
                     item.motionStatus = undefined;
                     item.motionError = undefined;
                     item.approved = !s.humanCheck;
-                    completedItems.add(item.id + ":image");
+                    finishKey(item.id + ":image");
                   }
-                  completed += group.length;
                   put("project", p);
+                  const imageCounts = counts();
+                  reportStage(
+                    "images",
+                    "Hình ảnh",
+                    imageCounts.image,
+                    scenes.length,
+                    `Story AI: ${imageCounts.image}/${scenes.length} cảnh · ${chapter.title}`,
+                    Math.min(10, group.length),
+                    Math.floor(
+                      (completed / Math.max(1, total)) *
+                        (kind === "pipeline" ? 75 : 99),
+                    ),
+                  );
                   updateJob(job.id, {
                     completedItems: [...completedItems],
-                    counts: counts(),
+                    counts: imageCounts,
                   });
                   continue;
                 } catch (error) {

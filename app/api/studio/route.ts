@@ -31,6 +31,7 @@ import {
 import { isSameOrigin } from "@/modules/project/request";
 import { runtimeStatus } from "@/modules/providers/runtime-status";
 import { startService } from "@/modules/providers/services";
+import { modalConfigured } from "@/modules/providers/modal/client";
 const projectNameSchema = z
   .string({ error: "Vui lòng nhập tên dự án." })
   .trim()
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
           process.env.DEFAULT_VIETNAMESE_VOICE || "Ngọc Huyền",
         ),
         imageEnabled: true,
-        imageProvider: "flux2-local",
+        imageProvider: modalConfigured("image") ? "modal-story" : "flux2-local",
         motionMode: "off",
       };
       const settings = settingsSchema.parse({
@@ -516,15 +517,20 @@ export async function POST(req: NextRequest) {
         sceneIds?.some((id) => !scenes.some((s) => s.id === id))
       )
         throw Error("Không tìm thấy cảnh cần xử lý.");
-      if (kind === "audio" || kind === "prepare") assertTTS(p.settings);
+      if (kind === "audio" || kind === "prepare" || kind === "pipeline")
+        assertTTS(p.settings);
       if (kind === "image" && p.settings.imageEnabled === false)
         throw Error("Tạo ảnh đang tắt. Hãy bật tạo ảnh hoặc tải ảnh lên.");
       if (
         (kind === "image" ||
           (kind === "prepare" && p.settings.imageEnabled !== false)) &&
-        !["flux2-local", "local-fast", "auto-local"].includes(
-          p.settings.imageProvider || "",
-        )
+        ![
+          "modal-story",
+          "modal-reference",
+          "flux2-local",
+          "local-fast",
+          "auto-local",
+        ].includes(p.settings.imageProvider || "")
       )
         requireImage();
       if (kind === "motion") {

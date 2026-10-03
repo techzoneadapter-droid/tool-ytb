@@ -15,7 +15,7 @@ import {
   remove,
   updateJob,
 } from "../modules/project/store";
-import type { Job, Project } from "../modules/project/types";
+import type { Job, Project, Settings } from "../modules/project/types";
 import { speak, speakBatch } from "../modules/tts";
 import { makeImage, makeStoryImageBatch } from "../modules/imagePrompt";
 import {
@@ -37,6 +37,71 @@ import { assets, render } from "../modules/videoRender";
 import { makeMotion, usesMotion } from "../modules/providers/local-workers";
 import { createVideoRecord, mergeVideoRecords } from "../modules/videoLibrary";
 const lockPath = path.join(root, "worker.lock");
+
+async function imageEngineReady(settings: Settings) {
+  if (settings.imageEnabled === false) return true;
+  if (
+    settings.imageProvider === "modal-story" ||
+    settings.imageProvider === "modal-reference"
+  )
+    return (await modalHealth("image")).ready;
+  if (
+    settings.imageProvider === "flux2-local" ||
+    settings.imageProvider === "local-fast" ||
+    settings.imageProvider === "auto-local"
+  ) {
+    const runtime = await runtimeStatus();
+    return settings.imageProvider === "flux2-local"
+      ? runtime.flux
+      : runtime.fast;
+  }
+  if (settings.imageProvider === "openai") return !!imageConfig().key;
+  return false;
+}
+
+function sameSnapshot(a: Job, b: Job) {
+  return JSON.stringify(a.snapshot.settings) === JSON.stringify(b.snapshot.settings);
+}
+
+async function coalesceLegacyPipelineJobs() {
+  const queued = list<Job>("job").filter(
+    (job) =>
+      job.kind === "pipeline" &&
+      job.status === "queued" &&
+      !job.outputMode &&
+      !job.sceneIds?.length,
+  );
+  const groups = new Map<string, Job[]>();
+  for (const job of queued) {
+    const key = job.projectId;
+    const group = groups.get(key) || [];
+    group.push(job);
+    groups.set(key, group);
+  }
+  for (const jobs of groups.values()) {
+    if (jobs.length < 2) continue;
+    jobs.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    const compatible = jobs.filter((job) => sameSnapshot(job, jobs[0]));
+    if (compatible.length < 2) continue;
+    const project = get<Project>(jobs[0].projectId, "project");
+    const wanted = new Set(compatible.flatMap((job) => job.chapterIds));
+    const chapterIds = project.chapters
+      .filter((chapter) => wanted.has(chapter.id))
+      .map((chapter) => chapter.id);
+    const completedItems = [
+      ...new Set(compatible.flatMap((job) => job.completedItems || [])),
+    ];
+    updateJob(compatible[0].id, {
+      chapterIds,
+      outputMode: "separate",
+      completedItems,
+      progress: 0,
+      error: undefined,
+      message: `Đã gộp ${chapterIds.length} chương vào một lô xử lý`,
+    });
+    for (const extra of compatible.slice(1)) remove("job", extra.id);
+  }
+}
 async function main() {
   await acquireLock(lockPath);
   const heartbeat = () =>

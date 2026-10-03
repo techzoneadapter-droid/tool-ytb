@@ -6,6 +6,7 @@ import { request } from "../studio-api";
 
 const providerNames: Record<string, string> = {
   "modal-vieneu": "VieNeu Cloud · GPU",
+  "edge-online": "Edge TTS · Online miễn phí",
   pollinations: "Pollinations TTS · Cloud",
   "vieneu-local": "VieNeu-TTS v3 Turbo · Local",
   "korva-local": "KorvaTTS · Local",
@@ -36,6 +37,7 @@ export function VoiceSelector({
     ...(providers?.modal?.tts?.configured
       ? [{ id: "modal-vieneu", label: providerNames["modal-vieneu"] }]
       : []),
+    { id: "edge-online", label: providerNames["edge-online"] },
     ...(providers?.freeCloud?.pollinations?.configured
       ? [{ id: "pollinations", label: providerNames.pollinations }]
       : []),
@@ -86,9 +88,11 @@ export function VoiceSelector({
         <span className="badge">
           {s.ttsProvider === "modal-vieneu"
             ? "Cloud GPU"
-            : s.ttsProvider === "pollinations"
-              ? "Cloud API"
-              : "Local miễn phí"}
+            : s.ttsProvider === "edge-online"
+              ? "Online miễn phí"
+              : s.ttsProvider === "pollinations"
+                ? "Cloud API"
+                : "Local miễn phí"}
         </span>
       </div>
       <div className="fields">
@@ -167,6 +171,7 @@ export function VoiceSelector({
             busy ||
             ![
               "modal-vieneu",
+              "edge-online",
               "pollinations",
               "vieneu-local",
               "korva-local",
@@ -183,7 +188,9 @@ export function VoiceSelector({
           ? `● Sẵn sàng · ${voices.length} giọng`
           : s.ttsProvider === "modal-vieneu"
             ? "VieNeu Cloud chưa kết nối hoặc chưa deploy."
-            : s.ttsProvider === "pollinations"
+            : s.ttsProvider === "edge-online"
+              ? "Edge TTS đang dùng dịch vụ Read Aloud online; không cần API key."
+              : s.ttsProvider === "pollinations"
               ? "Pollinations chưa có key hoặc chưa trả danh sách giọng."
               : "Chưa kết nối engine để lấy danh sách giọng"}
       </p>

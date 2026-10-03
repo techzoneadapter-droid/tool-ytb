@@ -183,10 +183,10 @@ export async function POST(req: NextRequest) {
       put("preset", p);
       return NextResponse.json(p);
     }
-    if (b.action === "pause" || b.action === "resume" || b.action === "retry") {
+    if (["pause", "resume", "retry", "restart", "cancel"].includes(b.action)) {
       const j = get<Job>(z.string().uuid().parse(b.id), "job");
       if (
-        b.action !== "pause" &&
+        !["pause", "cancel"].includes(b.action) &&
         list<Job>("job").some(
           (other) =>
             other.id !== j.id &&
@@ -195,21 +195,42 @@ export async function POST(req: NextRequest) {
         )
       )
         throw Error(
-          "Dự án đang có tác vụ khác. Hoàn tất tác vụ đó trước khi thử lại.",
+          "Dự án đang có tác vụ khác. Hoàn tất hoặc hủy tác vụ đó trước khi chạy lại.",
         );
       if (
         b.action === "pause" &&
-        !["done", "ready", "error"].includes(j.status)
-      )
+        ["queued", "audio", "images", "rendering"].includes(j.status)
+      ) {
         updateJob(j.id, {
           status: "paused",
-          message: "Tạm dừng sau công đoạn hiện tại",
+          message: "Đã yêu cầu tạm dừng — sẽ dừng sau bước đang xử lý",
         });
-      else if (b.action !== "pause" && ["paused", "error"].includes(j.status))
+        return NextResponse.json({ ok: true });
+      }
+
+      if (
+        b.action === "cancel" &&
+        !["done", "ready", "cancelled"].includes(j.status)
+      ) {
+        updateJob(j.id, {
+          status: "cancelled",
+          finishedAt: new Date().toISOString(),
+          message: "Đã hủy tác vụ. Tài nguyên hợp lệ đã tạo vẫn được giữ lại.",
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      if (
+        ["resume", "retry", "restart"].includes(b.action) &&
+        ["paused", "error", "cancelled"].includes(j.status)
+      ) {
         updateJob(j.id, {
           status: "queued",
           error: undefined,
-          message: "Đã xếp lại hàng đợi",
+          message:
+            b.action === "resume"
+              ? "Tiếp tục tác vụ từ tài nguyên đã có"
+              : "Đã xếp lại hàng đợi — tài nguyên hợp lệ sẽ được dùng lại",
           progress: 0,
           verified: false,
           output: undefined,
@@ -221,7 +242,8 @@ export async function POST(req: NextRequest) {
             ),
           },
         });
-      if (b.action !== "pause") await startService("worker");
+        await startService("worker");
+      }
       return NextResponse.json({ ok: true });
     }
     const p = get<Project>(z.string().uuid().parse(b.projectId), "project");

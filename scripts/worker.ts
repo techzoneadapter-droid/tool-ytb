@@ -3,7 +3,7 @@ dotenv.config({ path: ".env.local", quiet: true });
 dotenv.config({ quiet: true });
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { acquireLock, startService } from "../modules/providers/services";
+import { acquireLock, startService, WORKER_PROTOCOL } from "../modules/providers/services";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -107,7 +107,11 @@ async function main() {
   const heartbeat = () =>
     writeFile(
       path.join(root, "worker.health.json"),
-      JSON.stringify({ pid: process.pid, time: Date.now() }),
+      JSON.stringify({
+        pid: process.pid,
+        time: Date.now(),
+        protocol: WORKER_PROTOCOL,
+      }),
     ).catch(() => {});
   await heartbeat();
   setInterval(heartbeat, 3000);

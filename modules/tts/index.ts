@@ -184,66 +184,97 @@ export async function speak(
   }
 }
 
+type SpeakBatchOptions = {
+  onProgress?: (event: {
+    id: string;
+    seconds: number;
+    completed: number;
+    total: number;
+    concurrency: number;
+  }) => void | Promise<void>;
+  shouldStop?: () => boolean | Promise<boolean>;
+};
+
 export async function speakBatch(
   items: { id: string; text: string; file: string }[],
   settings: Settings,
+  options: SpeakBatchOptions = {},
 ) {
   const s = resolveTTS(settings);
   assertTTS(s);
-  if (s.ttsProvider === "edge-online") {
-    const output = new Map<string, number>();
+  const output = new Map<string, number>();
+  let completed = 0;
+
+  const stopped = async () => !!(await options.shouldStop?.());
+  const report = async (
+    item: { id: string },
+    seconds: number,
+    concurrency: number,
+  ) => {
+    completed++;
+    await options.onProgress?.({
+      id: item.id,
+      seconds,
+      completed,
+      total: items.length,
+      concurrency,
+    });
+  };
+
+  const runConcurrent = async (requestedLimit: number) => {
     let cursor = 0;
-    const limit = Math.min(6, Math.max(1, items.length));
-    const workers = Array.from({ length: limit }, async () => {
+    const concurrency = Math.max(
+      1,
+      Math.min(requestedLimit, Math.max(1, items.length)),
+    );
+    const workers = Array.from({ length: concurrency }, async () => {
       while (true) {
+        if (await stopped()) return;
         const index = cursor++;
         if (index >= items.length) return;
         const item = items[index];
-        output.set(item.id, await speak(item.text, item.file, s));
+        const seconds = await speak(item.text, item.file, s);
+        output.set(item.id, seconds);
+        await report(item, seconds, concurrency);
       }
     });
     await Promise.all(workers);
     return output;
+  };
+
+  if (s.ttsProvider === "edge-online") {
+    const configured = Number(process.env.EDGE_TTS_PARALLEL || 0);
+    const limit =
+      Number.isFinite(configured) && configured > 0
+        ? Math.min(10, Math.max(1, configured))
+        : 6;
+    return runConcurrent(limit);
   }
 
   if (s.ttsProvider === "vieneu-local") {
-    const output = new Map<string, number>();
     const health = await vieneuHealth().catch(() => ({
       backend: "unknown",
       maxStreams: 1,
       active: 0,
       waiting: 0,
     }));
-    // VieNeu's server already implements continuous batching on GPU and a
-    // bounded queue on CPU. Keep a conservative ceiling for older 4 GB GPUs.
-    const limit = Math.max(
-      1,
-      Math.min(4, health.maxStreams, Math.max(1, health.maxStreams - health.active)),
-    );
-    let cursor = 0;
-    const workers = Array.from(
-      { length: Math.min(limit, items.length) },
-      async () => {
-        while (true) {
-          const index = cursor++;
-          if (index >= items.length) return;
-          const item = items[index];
-          output.set(item.id, await speak(item.text, item.file, s));
-        }
-      },
-    );
-    await Promise.all(workers);
-    return output;
+    const configured = Number(process.env.VIENEU_PARALLEL || 0);
+    const gpuLike = /cuda|gpu/i.test(health.backend);
+    const target =
+      Number.isFinite(configured) && configured > 0
+        ? Math.min(8, Math.max(1, configured))
+        : gpuLike
+          ? 6
+          : 2;
+    const available = Math.max(1, health.maxStreams - health.active);
+    return runConcurrent(Math.min(target, health.maxStreams, available));
   }
 
   if (s.ttsProvider !== "modal-vieneu") {
-    const output = new Map<string, number>();
-    for (const item of items)
-      output.set(item.id, await speak(item.text, item.file, s));
-    return output;
+    const limit = s.ttsProvider === "pollinations" ? 3 : 2;
+    return runConcurrent(limit);
   }
 
-  const output = new Map<string, number>();
   const missing: {
     id: string;
     text: string;
@@ -253,6 +284,7 @@ export async function speakBatch(
   }[] = [];
 
   for (const item of items) {
+    if (await stopped()) return output;
     const cache = cacheFile(item.text, item.file, s);
     const cached = await validDuration(cache);
     if (cached) {
@@ -260,6 +292,7 @@ export async function speakBatch(
         await copyFile(cache, item.file);
       await publishGenerated(item.file, "audio");
       output.set(item.id, cached);
+      await report(item, cached, 16);
       continue;
     }
     missing.push({
@@ -273,6 +306,7 @@ export async function speakBatch(
   }
 
   for (let offset = 0; offset < missing.length; offset += 16) {
+    if (await stopped()) return output;
     const batch = missing.slice(offset, offset + 16);
     const durations = await speakModalBatch(
       batch.map((item) => ({
@@ -290,6 +324,7 @@ export async function speakBatch(
         await copyFile(item.cache, item.file);
       await publishGenerated(item.file, "audio");
       output.set(item.id, seconds);
+      await report(item, seconds, Math.min(16, batch.length));
     }
   }
   return output;

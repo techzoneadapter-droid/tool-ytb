@@ -597,8 +597,10 @@ async function main() {
                   s.imageProvider === "aihorde"
                     ? "AI Horde"
                     : "Pollinations";
-                const concurrency =
-                  s.imageProvider === "aihorde" ? 3 : 4;
+                // Each video owns one image lane. Parallelism comes from
+                // independent video jobs, which avoids hammering free APIs
+                // (AI Horde anonymous commonly rate-limits bursts).
+                const concurrency = 1;
                 checkpoint(
                   "images",
                   Math.floor(

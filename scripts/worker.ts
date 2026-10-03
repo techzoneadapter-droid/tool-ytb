@@ -385,13 +385,14 @@ async function main() {
               scene.imageStatus = "done";
               scene.imageError = undefined;
               scene.approved = !s.humanCheck;
-              completedItems.add(key);
-              completed++;
+              finishKey(key);
               put("project", p);
+              const currentCounts = reportResource("image", scene, 1);
               updateJob(job.id, {
                 completedItems: [...completedItems],
-                counts: counts(),
-                message: "AI ảnh chưa sẵn sàng — đang dùng ảnh chung để tiếp tục dựng video",
+                counts: currentCounts,
+                message:
+                  "AI ảnh chưa sẵn sàng — đang dùng ảnh chung để tiếp tục dựng video",
               });
               continue;
             }
@@ -906,9 +907,10 @@ async function main() {
                 scene.approved = !s.humanCheck;
                 finishKey(key);
                 put("project", p);
+                const fallbackCounts = reportResource(type, scene, 1);
                 updateJob(job.id, {
                   completedItems: [...completedItems],
-                  counts: counts(),
+                  counts: fallbackCounts,
                 });
                 continue;
               }
@@ -918,9 +920,10 @@ async function main() {
               put("project", p);
               failed++;
             }
+            const currentCounts = reportResource(type, scene, 1);
             updateJob(job.id, {
               completedItems: [...completedItems],
-              counts: counts(),
+              counts: currentCounts,
             });
           }
         }

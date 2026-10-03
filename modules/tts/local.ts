@@ -103,7 +103,7 @@ export async function vieneuVoices() {
         cache: "no-store",
       }),
     ]);
-    if (!health.ok || !voices.ok) throw Error(vieneuMissing);
+    if (!voices.ok) throw Error(vieneuMissing);
     const h = health;
     const v = await voices.json();
     if (!h || !Array.isArray(v.data)) throw Error(vieneuMissing);

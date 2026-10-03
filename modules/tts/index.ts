@@ -3,6 +3,7 @@ import { mkdir, copyFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { speak as speakCloud } from "./cloud";
 import { speakLocal, vieneuURL } from "./local";
+import { speakModal } from "./modal";
 import {
   localProviderIds,
   localVoiceId,
@@ -10,22 +11,35 @@ import {
   type TTSProvider,
 } from "./local-voices";
 import { requireTTS, ttsConfig } from "../providers/config";
+import { modalConfigured } from "../providers/modal/client";
 import { duration } from "../videoRender/process";
 import type { Settings } from "../project/types";
 import { publishGenerated } from "../providers/local-workers";
 
 export function defaultTTSProvider(): TTSProvider {
-  const p = process.env.DEFAULT_TTS_PROVIDER || "vieneu-local";
-  if (p !== "cloud" && !localProviderIds.includes(p as never))
+  const fallback = modalConfigured("tts") ? "modal-vieneu" : "vieneu-local";
+  const p = process.env.DEFAULT_TTS_PROVIDER || fallback;
+  if (
+    p !== "modal-vieneu" &&
+    p !== "cloud" &&
+    !localProviderIds.includes(p as never)
+  )
     throw Error("DEFAULT_TTS_PROVIDER không hợp lệ.");
   return p as TTSProvider;
 }
+
 export function resolveTTS(s: Settings): Settings {
-  // Existing projects retain their cloud voice until the user chooses a local engine.
   return { ...s, ttsProvider: s.ttsProvider || "cloud" };
 }
+
 export function assertTTS(s: Settings) {
   const p = resolveTTS(s).ttsProvider!;
+  if (p === "modal-vieneu") {
+    if (!modalConfigured("tts"))
+      throw Error("Chưa cấu hình VieNeu Cloud. Thiết lập MODAL_TTS_URL trước.");
+    if (!s.voice.trim()) throw Error("Chưa chọn giọng VieNeu Cloud.");
+    return;
+  }
   if (p === "cloud") {
     requireTTS(s.voice);
     return;
@@ -40,12 +54,14 @@ export function assertTTS(s: Settings) {
   )
     throw Error("Giọng không thuộc engine local đã chọn.");
 }
+
 export function ttsSource(s: Settings) {
-  return resolveTTS(s).ttsProvider === "cloud"
-    ? ttsConfig().provider
-    : s.ttsProvider!;
+  const provider = resolveTTS(s).ttsProvider;
+  return provider === "cloud" ? ttsConfig().provider : provider!;
 }
+
 const pending = new Map<string, Promise<number>>();
+
 export async function speak(
   text: string,
   file: string,
@@ -57,16 +73,18 @@ export async function speak(
   if (!text.trim()) throw Error("Nội dung lời đọc đang trống.");
   const c = s.ttsProvider === "cloud" ? requireTTS(s.voice) : undefined;
   const identity =
-    s.ttsProvider === "vieneu-local"
-      ? vieneuURL()
-      : s.ttsProvider === "korva-local"
-        ? process.env.KORVATTS_BIN || "korvatts"
-        : [c?.provider, c?.voiceId, c?.region, process.env.TTS_MODEL];
+    s.ttsProvider === "modal-vieneu"
+      ? process.env.MODAL_TTS_URL
+      : s.ttsProvider === "vieneu-local"
+        ? vieneuURL()
+        : s.ttsProvider === "korva-local"
+          ? process.env.KORVATTS_BIN || "korvatts"
+          : [c?.provider, c?.voiceId, c?.region, process.env.TTS_MODEL];
   const hash = createHash("sha256")
     .update(
       JSON.stringify([
-        "tts-cache-v2",
-        ...(options.preview ? ["preview-12-steps"] : []),
+        "tts-cache-v3",
+        ...(options.preview ? ["preview-short"] : []),
         identity,
         s.ttsProvider,
         s.voice,
@@ -96,9 +114,11 @@ export async function speak(
       );
       try {
         const seconds =
-          s.ttsProvider === "cloud"
-            ? await speakCloud(text, temporary, s)
-            : await speakLocal(text, temporary, s, options);
+          s.ttsProvider === "modal-vieneu"
+            ? await speakModal(text, temporary, s, options)
+            : s.ttsProvider === "cloud"
+              ? await speakCloud(text, temporary, s)
+              : await speakLocal(text, temporary, s, options);
         await rename(temporary, cache);
         return seconds;
       } finally {

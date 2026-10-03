@@ -17,6 +17,7 @@ import { modalConfigured } from "../providers/modal/client";
 import { duration } from "../videoRender/process";
 import type { Settings } from "../project/types";
 import { publishGenerated } from "../providers/local-workers";
+import { cleanNarrationText } from "../project/parser";
 
 export function defaultTTSProvider(): TTSProvider {
   const fallback = modalConfigured("tts") ? "modal-vieneu" : "vieneu-local";
@@ -131,9 +132,10 @@ export async function speak(
 ): Promise<number> {
   const s = resolveTTS(settings);
   assertTTS(s);
-  if (!text.trim()) throw Error("Nội dung lời đọc đang trống.");
+  const narration = cleanNarrationText(text);
+  if (!narration) throw Error("Nội dung lời đọc đang trống sau khi làm sạch.");
 
-  const cache = cacheFile(text, file, s, options);
+  const cache = cacheFile(narration, file, s, options);
   await mkdir(path.dirname(file), { recursive: true });
   let task = pending.get(cache);
   if (!task) {
@@ -147,12 +149,12 @@ export async function speak(
       try {
         const seconds =
           s.ttsProvider === "modal-vieneu"
-            ? await speakModal(text, temporary, s, options)
+            ? await speakModal(narration, temporary, s, options)
             : s.ttsProvider === "pollinations"
-              ? await speakPollinations(text, temporary, s)
+              ? await speakPollinations(narration, temporary, s)
               : s.ttsProvider === "cloud"
-                ? await speakCloud(text, temporary, s)
-                : await speakLocal(text, temporary, s, options);
+                ? await speakCloud(narration, temporary, s)
+                : await speakLocal(narration, temporary, s, options);
         await rename(temporary, cache);
         return seconds;
       } finally {

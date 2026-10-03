@@ -1,9 +1,61 @@
 import { randomUUID } from "node:crypto";
 import type { Chapter, Scene } from "./types";
+
+const BASIC_NARRATION_PUNCTUATION = new Set([
+  ".", ",", "!", "?", ":", ";", "…", "-", "–", "—", "(", ")", '"', "'",
+]);
+
+export function cleanNarrationText(input: string): string {
+  let text = input
+    .replace(/^\uFEFF/u, "")
+    .replace(/\r\n?/g, "\n")
+    .normalize("NFC")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/gu, "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/giu, " ")
+    .replace(/<[^>]+>/gu, " ")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/gu, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
+    .replace(/https?:\/\/\S+|www\.\S+/giu, " ")
+    .replace(/[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/giu, " ")
+    .replace(/^\s{0,3}#{1,6}\s+/gmu, "")
+    .replace(/^\s*>+\s?/gmu, "")
+    .replace(/^\s*[-+*•▪◦‣⁃]+\s+/gmu, "")
+    .replace(/^\s*\d+[.)]\s+/gmu, "")
+    .replace(/(\*\*|__|~~|\*|_|[\x60]{1,3})/gu, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, " ");
+
+  let out = "";
+  for (const char of text) {
+    if (
+      /[\p{L}\p{M}\p{N}]/u.test(char) ||
+      /\s/u.test(char) ||
+      BASIC_NARRATION_PUNCTUATION.has(char)
+    ) out += char;
+    else out += " ";
+  }
+
+  return out
+    .replace(/[ \t]+/gu, " ")
+    .replace(/ *\n */gu, "\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .replace(/\.{4,}/gu, "…")
+    .replace(/…{2,}/gu, "…")
+    .replace(/!{2,}/gu, "!")
+    .replace(/\?{2,}/gu, "?")
+    .replace(/,{2,}/gu, ",")
+    .replace(/;{2,}/gu, ";")
+    .replace(/:{2,}/gu, ":")
+    .replace(/\s+([.,!?:;…])/gu, "$1")
+    .replace(/([.,!?:;…])(?=[\p{L}\p{N}])/gu, "$1 ")
+    .trim();
+}
+
 export function chunks(text: string, max = 550): string[] {
+  const cleaned = cleanNarrationText(text);
   const sentences =
-    text.replace(/\r/g, "").match(/[^.!?\n]+[.!?]*/g) ||
-    (text.trim() ? [text.trim()] : []);
+    cleaned.match(/[^.!?\n]+[.!?]*/gu) ||
+    (cleaned.trim() ? [cleaned.trim()] : []);
   const out: string[] = [];
   let current = "";
   for (const sentence of sentences) {
@@ -57,7 +109,8 @@ export function parseChapters(input: string): Chapter[] {
   const groups: { title?: string; text: string[] }[] = [];
   let group: { title?: string; text: string[] } = { text: [] };
   const flush = () => {
-    if (group.text.join("\n").trim()) groups.push(group);
+    const cleaned = cleanNarrationText(group.text.join("\n"));
+    if (cleaned) groups.push({ ...group, text: [cleaned] });
     group = { text: [] };
   };
   for (const line of text.split("\n")) {
@@ -78,11 +131,15 @@ export function parseChapters(input: string): Chapter[] {
   }
   flush();
   // Even a document made solely of headings must not produce a zero-chapter project.
-  if (!groups.length) groups.push({ title: "Chương 1", text: [text] });
-  return groups.map((g, i) => ({
-    id: randomUUID(),
-    title: g.title || `Chương ${i + 1}`,
-    text: g.text.join("\n").trim(),
-    scenes: plan(g.text.join("\n")),
-  }));
+  if (!groups.length)
+    groups.push({ title: "Chương 1", text: [cleanNarrationText(text) || text] });
+  return groups.map((g, i) => {
+    const chapterText = cleanNarrationText(g.text.join("\n"));
+    return {
+      id: randomUUID(),
+      title: cleanNarrationText(g.title || `Chương ${i + 1}`),
+      text: chapterText,
+      scenes: plan(chapterText),
+    };
+  });
 }

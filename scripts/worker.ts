@@ -119,6 +119,7 @@ async function main() {
   for (const j of list<Job>("job"))
     if (["audio", "images", "rendering"].includes(j.status))
       updateJob(j.id, { status: "queued", message: "Khôi phục xử lý" });
+  await coalesceLegacyPipelineJobs();
   console.log("StoryFlow: chỉ xử lý API và tài nguyên thật.");
   while (true) {
     const job = claim();
@@ -210,16 +211,19 @@ async function main() {
           scene: (typeof scenes)[number],
           type: "audio" | "image" | "motion",
         ) => {
-          if (!assetExists(scene[type])) return false;
           try {
+            if (type === "image") {
+              const effective = await resolveSceneImage(scene, s);
+              if (!effective) return false;
+              await sharp(path.join(assets, effective)).stats();
+              return true;
+            }
+            if (!assetExists(scene[type])) return false;
             if (type === "audio") {
               if (!scene.audioSource) return false;
               const seconds = await duration(path.join(assets, scene.audio!));
               if (!(seconds > 0)) return false;
               scene.duration = seconds;
-            } else if (type === "image") {
-              if (!scene.imageSource) return false;
-              await sharp(path.join(assets, scene.image!)).stats();
             } else await verifyVideo(path.join(assets, scene.motion!), false);
             return true;
           } catch {
@@ -243,14 +247,14 @@ async function main() {
           for (const scene of scenes) {
             if (
               type === "audio" &&
-              s.ttsProvider === "modal-vieneu" &&
+              ["modal-vieneu", "vieneu-local"].includes(s.ttsProvider || "") &&
               !completedItems.has(scene.id + ":audio") &&
               !(await valid(scene, "audio"))
             ) {
               const start = scenes.findIndex((item) => item.id === scene.id);
               const group: typeof scenes = [];
               for (const candidate of scenes.slice(Math.max(0, start))) {
-                if (group.length >= 16) break;
+                if (group.length >= 32) break;
                 if (
                   !completedItems.has(candidate.id + ":audio") &&
                   !(await valid(candidate, "audio"))
@@ -264,7 +268,7 @@ async function main() {
                     (completed / Math.max(1, total)) *
                       (kind === "pipeline" ? 75 : 99),
                   ),
-                  `VieNeu Cloud đang tạo ${group.length} lời đọc trong một batch`,
+                  `${s.ttsProvider === "modal-vieneu" ? "VieNeu Cloud" : "VieNeu Local"} đang tạo ${group.length} lời đọc song song`,
                 );
                 const files = group.map(() =>
                   path.join(assets, randomUUID() + ".mp3"),
@@ -295,7 +299,7 @@ async function main() {
                     item.approved = !s.humanCheck;
                     completedItems.add(item.id + ":audio");
                   }
-                  completed++;
+                  completed += group.length;
                   put("project", p);
                   updateJob(job.id, {
                     completedItems: [...completedItems],

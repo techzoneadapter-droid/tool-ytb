@@ -15,7 +15,7 @@ import {
   updateJob,
 } from "../modules/project/store";
 import type { Job, Project } from "../modules/project/types";
-import { speak } from "../modules/tts";
+import { speak, speakBatch } from "../modules/tts";
 import { makeImage, makeStoryImageBatch } from "../modules/imagePrompt";
 import {
   sceneVisual,
@@ -172,6 +172,85 @@ async function main() {
         });
         for (const type of tasks as ("audio" | "image" | "motion")[]) {
           for (const scene of scenes) {
+            if (
+              type === "audio" &&
+              s.ttsProvider === "modal-vieneu" &&
+              !completedItems.has(scene.id + ":audio") &&
+              !(await valid(scene, "audio"))
+            ) {
+              const start = scenes.findIndex((item) => item.id === scene.id);
+              const group: typeof scenes = [];
+              for (const candidate of scenes.slice(Math.max(0, start))) {
+                if (group.length >= 16) break;
+                if (
+                  !completedItems.has(candidate.id + ":audio") &&
+                  !(await valid(candidate, "audio"))
+                )
+                  group.push(candidate);
+              }
+              if (group.length) {
+                checkpoint(
+                  "audio",
+                  Math.floor(
+                    (completed / Math.max(1, total)) *
+                      (kind === "pipeline" ? 75 : 99),
+                  ),
+                  `VieNeu Cloud đang tạo ${group.length} lời đọc trong một batch`,
+                );
+                const files = group.map(() =>
+                  path.join(assets, randomUUID() + ".mp3"),
+                );
+                for (const item of group) {
+                  item.audioStatus = "working";
+                  item.audioError = undefined;
+                }
+                put("project", p);
+                try {
+                  const durations = await speakBatch(
+                    group.map((item, index) => ({
+                      id: item.id,
+                      text: item.text,
+                      file: files[index],
+                    })),
+                    s,
+                  );
+                  for (let index = 0; index < group.length; index++) {
+                    const item = group[index];
+                    const seconds = durations.get(item.id);
+                    if (!seconds) throw Error("VieNeu Cloud thiếu audio trong batch.");
+                    item.audio = path.basename(files[index]);
+                    item.audioSource = ttsSource(s);
+                    item.duration = seconds;
+                    item.audioStatus = "done";
+                    item.audioError = undefined;
+                    item.approved = !s.humanCheck;
+                    completedItems.add(item.id + ":audio");
+                    completed++;
+                  }
+                  put("project", p);
+                  updateJob(job.id, {
+                    completedItems: [...completedItems],
+                    counts: counts(),
+                  });
+                  continue;
+                } catch (error) {
+                  const message =
+                    error instanceof Error ? error.message : String(error);
+                  for (const item of group) {
+                    item.audioStatus = "error";
+                    item.audioError = message;
+                    failed++;
+                  }
+                  put("project", p);
+                  updateJob(job.id, {
+                    completedItems: [...completedItems],
+                    counts: counts(),
+                  });
+                  continue;
+                }
+              }
+            }
+
             if (
               type === "image" &&
               s.imageProvider === "modal-story" &&

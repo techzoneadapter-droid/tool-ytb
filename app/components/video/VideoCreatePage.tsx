@@ -158,7 +158,7 @@ export function VideoCreatePage({
     try {
       const d = await upload(file);
       if (!d.asset) throw Error("Chọn tệp ảnh PNG, JPG hoặc WebP.");
-      change({ fallbackImage: d.asset });
+      change({ fallbackImage: d.asset, fallbackOnImageError: true });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -172,6 +172,7 @@ export function VideoCreatePage({
         <h1>Tạo video</h1>
         <p>Chọn dự án và cấu hình video. StoryFlow lo phần còn lại.</p>
       </header>
+      {project && <PipelineProgress project={project} jobs={jobs} />}
       <div className="video-grid">
         <div className="video-form">
           <section className="card">
@@ -655,15 +656,11 @@ export function VideoCreatePage({
           )}
         </div>
         <aside className="video-side">
-          <ProviderStatus providers={data.providers} refresh={refresh} />
-          {project && (
-            <PipelineProgress
-              project={project}
-              jobs={jobs}
-              busy={busy}
-              act={act}
-            />
-          )}
+          <ProviderStatus
+            providers={data.providers}
+            settings={settings}
+            refresh={refresh}
+          />
           <div className="quiet-tip">
             <Clapperboard size={23} />
             <h3>Từ câu chữ đến video</h3>

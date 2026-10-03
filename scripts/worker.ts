@@ -131,14 +131,23 @@ async function main() {
     if (["audio", "images", "rendering"].includes(j.status))
       updateJob(j.id, { status: "queued", message: "Khôi phục xử lý" });
   await splitLegacyPipelineJobs();
-  console.log("StoryFlow: chỉ xử lý API và tài nguyên thật.");
+  const configuredParallel = Number(process.env.MAX_PARALLEL_VIDEOS || 2);
+  const maxParallelVideos = Number.isFinite(configuredParallel)
+    ? Math.max(1, Math.min(4, Math.floor(configuredParallel)))
+    : 2;
+  const running = new Set<Promise<void>>();
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+  console.log(
+    `StoryFlow: pipeline độc lập theo video · tối đa ${maxParallelVideos} video chạy song song.`,
+  );
   while (true) {
-    const job = claim();
-    if (!job) {
-      await new Promise((r) => setTimeout(r, 1200));
-      continue;
-    }
-    try {
+    while (running.size < maxParallelVideos) {
+      const job = claim();
+      if (!job) break;
+      let task!: Promise<void>;
+      task = (async () => {
+        try {
       const p = get<Project>(job.projectId, "project");
       const saveProject = () => {
         mergeProjectChapters(p, job.chapterIds);
@@ -168,7 +177,7 @@ async function main() {
         job.message = "Video ghép đã xuất và kiểm tra thành công";
         put("job", job);
         await createVideoRecord(job, p);
-        continue;
+        return;
       }
 
       if (kind === "motion")
@@ -952,7 +961,7 @@ async function main() {
             "Tài nguyên thật đã lưu. Có thể nghe, xem và duyệt cảnh.",
           );
           updateJob(job.id, { status: "ready", progress: 0 });
-          continue;
+          return;
         }
       }
       for (const scene of scenes) {
@@ -971,7 +980,7 @@ async function main() {
           status: "paused",
           message: "Tài nguyên đã lưu. Duyệt cảnh bên dưới rồi nhấn Tiếp tục.",
         });
-        continue;
+        return;
       }
       if (kind === "pipeline" && job.outputMode === "separate") {
         const chapters = p.chapters.filter((chapter) =>
@@ -1081,7 +1090,7 @@ async function main() {
           finishedAt: new Date().toISOString(),
           message: `Đã tạo xong ${outputs.length}/${chapters.length} video`,
         });
-        continue;
+        return;
       }
 
       checkpoint(
@@ -1136,16 +1145,22 @@ async function main() {
         message: "MP4 đã xuất và kiểm tra thành công",
       });
       await createVideoRecord(finished, p);
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      if (error !== "PAUSED" && error !== "CANCELLED")
-        updateJob(job.id, {
-          status: "error",
-          finishedAt: new Date().toISOString(),
-          error,
-          message: "Xử lý thất bại — xem chi tiết lỗi",
-        });
+        } catch (e) {
+          const error = e instanceof Error ? e.message : String(e);
+          if (error !== "PAUSED" && error !== "CANCELLED")
+            updateJob(job.id, {
+              status: "error",
+              finishedAt: new Date().toISOString(),
+              error,
+              message: "Video này xử lý thất bại — các video khác vẫn tiếp tục",
+            });
+        }
+      })().finally(() => running.delete(task));
+      running.add(task);
     }
+
+    if (!running.size) await sleep(600);
+    else await Promise.race([...running, sleep(250)]);
   }
 }
 main().catch((e) => {

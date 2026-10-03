@@ -119,12 +119,14 @@ export async function providerStatus() {
       pollinations: {
         configured: pollinationsConfigured(),
         ready: pollinations.ready,
+        ttsReady: pollinations.ready,
+        imageReady: true,
         model: pollinations.model,
         message: pollinationsConfigured()
           ? pollinations.ready
-            ? "Sẵn sàng"
-            : "Đã có key nhưng chưa tìm thấy model TTS"
-          : "Cần POLLINATIONS_API_KEY",
+            ? "TTS và ảnh cloud sẵn sàng"
+            : "Ảnh dùng được; TTS chưa tìm thấy model"
+          : "Ảnh anonymous dùng được; TTS cần POLLINATIONS_API_KEY",
       },
     },
     voices: [

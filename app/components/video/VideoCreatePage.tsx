@@ -65,11 +65,11 @@ export function VideoCreatePage({
     setError("");
     try {
       if (
-        !["modal-vieneu", "pollinations", "vieneu-local", "korva-local"].includes(
+        !["modal-vieneu", "edge-online", "pollinations", "vieneu-local", "korva-local"].includes(
           settings.ttsProvider || "",
         )
       )
-        throw Error("Chọn VieNeu Cloud, VieNeu Local hoặc Korva để tạo video.");
+        throw Error("Chọn một engine giọng đọc hợp lệ để tạo video.");
       if (
         settings.motionMode === "selected" &&
         !project.chapters
@@ -107,7 +107,7 @@ export function VideoCreatePage({
     try {
       if (["retry", "restart"].includes(action) && project && !active) {
         if (
-          !["modal-vieneu", "pollinations", "vieneu-local", "korva-local"].includes(
+          !["modal-vieneu", "edge-online", "pollinations", "vieneu-local", "korva-local"].includes(
             settings.ttsProvider || "",
           )
         )

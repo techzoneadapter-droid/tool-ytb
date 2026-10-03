@@ -105,7 +105,7 @@ export function VideoCreatePage({
     setBusy(true);
     setError("");
     try {
-      if (action === "retry" && project && !active) {
+      if (["retry", "restart"].includes(action) && project && !active) {
         if (
           !["modal-vieneu", "pollinations", "vieneu-local", "korva-local"].includes(
             settings.ttsProvider || "",

@@ -333,6 +333,8 @@ async function main() {
 
         for (const type of tasks as ("audio" | "image" | "motion")[]) {
           for (const scene of scenes) {
+            const loopKey = scene.id + ":" + type;
+            if (handledThisRun.has(loopKey)) continue;
             if (
               type === "image" &&
               bypassUnavailableImageAI &&

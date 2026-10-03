@@ -9,3 +9,5 @@ test-results/
 public/generated/
 .ai-venv/
 workers/__pycache__/
+
+.flow-venv/

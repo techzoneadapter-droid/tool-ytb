@@ -5,6 +5,7 @@ import { modalVoices } from "../tts/modal";
 import { modalConfigured, modalHealth } from "./modal/client";
 import { runtimeStatus } from "./runtime-status";
 import { pollinationsAudioCatalog, pollinationsConfigured } from "./free-cloud";
+import { edgeVoices } from "../tts/edge";
 
 export function ttsConfig() {
   const provider = process.env.TTS_PROVIDER || "openai";
@@ -127,6 +128,14 @@ export async function providerStatus() {
       },
     },
     voices: [
+      ...edgeVoices.map((voice) => ({
+        ...voice,
+        provider: "edge-online" as TTSProvider,
+        key: "edge-online:" + voice.id,
+        configured: true,
+        voiceId: voice.id,
+        status: "Miễn phí · không cần API key · dùng Microsoft Edge Read Aloud",
+      })),
       ...pollinations.voices.map((voice) => ({
         id: voice,
         name: "Pollinations · " + voice,
@@ -199,13 +208,15 @@ export async function providerStatus() {
       const order = (provider: string) =>
         provider === "modal-vieneu"
           ? 0
-          : provider === "pollinations"
+          : provider === "edge-online"
             ? 1
-            : provider === "vieneu-local"
+            : provider === "pollinations"
               ? 2
-              : provider === "korva-local"
+              : provider === "vieneu-local"
                 ? 3
-                : 4;
+                : provider === "korva-local"
+                  ? 4
+                  : 5;
       return order(a.provider) - order(b.provider);
     }),
   };

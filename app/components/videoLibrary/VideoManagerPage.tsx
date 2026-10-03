@@ -388,8 +388,12 @@ export function VideoManagerPage({
                 <HistoryList
                   jobs={history}
                   busy={busy}
-                  onRetry={(job) =>
-                    void request({ action: "retry", id: job.id }, "/api/studio")
+                  onRetry={(retryJobs) =>
+                    void Promise.all(
+                      retryJobs.map((job) =>
+                        request({ action: "retry", id: job.id }, "/api/studio"),
+                      ),
+                    )
                       .then(refresh)
                       .catch((e) => setError((e as Error).message))
                   }
@@ -455,7 +459,7 @@ function HistoryList({
 }: {
   jobs: Job[];
   busy: string;
-  onRetry: (job: Job) => void;
+  onRetry: (jobs: Job[]) => void;
   onClear: () => void;
 }) {
   const labels: Record<string, string> = {
@@ -467,40 +471,128 @@ function HistoryList({
     motion: "Ảnh động",
     prepare: "Chuẩn bị",
   };
+
+  const groups = useMemo(() => {
+    const map = new Map<string, Job[]>();
+    for (const job of jobs) {
+      const key = job.batchId ? "batch:" + job.batchId : "job:" + job.id;
+      const group = map.get(key) || [];
+      group.push(job);
+      map.set(key, group);
+    }
+    return [...map.entries()]
+      .map(([id, batchJobs]) => {
+        batchJobs.sort(
+          (a, b) => (a.batchIndex ?? 0) - (b.batchIndex ?? 0),
+        );
+        const total = Math.max(
+          batchJobs[0]?.batchTotal || 0,
+          batchJobs.length,
+        );
+        const done = batchJobs.filter((job) => job.status === "done").length;
+        const errors = batchJobs.filter((job) => job.status === "error");
+        const cancelled = batchJobs.filter(
+          (job) => job.status === "cancelled",
+        );
+        const running = batchJobs.filter((job) =>
+          ["audio", "images", "rendering"].includes(job.status),
+        ).length;
+        const queued = batchJobs.filter((job) => job.status === "queued").length;
+        const paused = batchJobs.filter((job) => job.status === "paused").length;
+        return {
+          id,
+          jobs: batchJobs,
+          first: batchJobs[0],
+          total,
+          done,
+          errors,
+          cancelled,
+          running,
+          queued,
+          paused,
+          createdAt: batchJobs
+            .map((job) => job.createdAt)
+            .sort()[0],
+        };
+      })
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }, [jobs]);
+
   return (
     <div className="history-panel">
       <div className="row between">
-        <p className="muted">Tối đa 50 tác vụ gần nhất.</p>
+        <p className="muted">Tối đa 50 lô gần nhất.</p>
         <button disabled={busy === "history"} onClick={onClear}>
           Dọn lịch sử
         </button>
       </div>
       <div className="history-list">
-        {jobs.slice(0, 50).map((job) => (
-          <article className="history-row" key={job.id}>
-            <time>{new Date(job.createdAt).toLocaleString("vi-VN")}</time>
-            <span>{job.chapterIds.length === 1 ? "1 chương" : job.chapterIds.length + " chương"}</span>
-            <strong>{labels[job.kind || "render"] || job.kind}</strong>
-            <span className={"history-status " + job.status}>
-              {job.status === "done"
-                ? "✓ Hoàn thành"
-                : job.status === "error"
-                  ? "✕ Lỗi"
-                  : job.status === "paused"
-                    ? "Tạm dừng"
-                    : "Đang xử lý"}
-            </span>
-            {job.error && (
-              <details>
-                <summary>Chi tiết</summary>
-                <pre>{job.error}</pre>
-              </details>
-            )}
-            {job.status === "error" && (
-              <button onClick={() => onRetry(job)}>Thử lại</button>
-            )}
-          </article>
-        ))}
+        {groups.slice(0, 50).map((group) => {
+          const retryable = [...group.errors, ...group.cancelled];
+          const finished = group.done === group.total;
+          return (
+            <article className="history-row" key={group.id}>
+              <time>{new Date(group.createdAt).toLocaleString("vi-VN")}</time>
+              <span>
+                {group.total === 1
+                  ? "1 video"
+                  : `${group.done}/${group.total} video`}
+              </span>
+              <strong>
+                {labels[group.first?.kind || "render"] ||
+                  group.first?.kind ||
+                  "Tác vụ"}
+              </strong>
+              <span
+                className={
+                  "history-status " +
+                  (finished
+                    ? "done"
+                    : group.errors.length
+                      ? "error"
+                      : group.paused
+                        ? "paused"
+                        : "running")
+                }
+              >
+                {finished
+                  ? "✓ Hoàn thành"
+                  : group.errors.length
+                    ? `✕ ${group.errors.length} video lỗi`
+                    : group.running
+                      ? `${group.running} đang chạy · ${group.queued} chờ`
+                      : group.paused
+                        ? `${group.paused} tạm dừng`
+                        : "Đang xử lý"}
+              </span>
+              {group.errors.length > 0 && (
+                <details>
+                  <summary>Chi tiết lỗi</summary>
+                  {group.errors.slice(0, 8).map((job) => (
+                    <pre key={job.id}>
+                      {job.batchIndex !== undefined
+                        ? `Video ${job.batchIndex + 1}: `
+                        : ""}
+                      {job.error || job.message}
+                    </pre>
+                  ))}
+                  {group.errors.length > 8 && (
+                    <p className="muted">
+                      + {group.errors.length - 8} lỗi khác
+                    </p>
+                  )}
+                </details>
+              )}
+              {retryable.length > 0 &&
+                !group.running &&
+                !group.queued && (
+                  <button onClick={() => onRetry(retryable)}>
+                    Thử lại {retryable.length} video
+                  </button>
+                )}
+            </article>
+          );
+        })}
       </div>
     </div>
   );

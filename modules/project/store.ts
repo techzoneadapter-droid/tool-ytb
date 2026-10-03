@@ -31,6 +31,9 @@ export function put(
   ).run(item.id, kind, JSON.stringify(item));
   return item;
 }
+export function remove(kind: string, id: string) {
+  db.prepare("DELETE FROM records WHERE id=? AND kind=?").run(id, kind);
+}
 export function updateJob(id: string, patch: Partial<Job>) {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -65,7 +68,7 @@ export function claim(): Job | undefined {
   }
 }
 
-// Delete records only. Assets may be shared by caches and other projects.
+// Delete project/job records only. Media files can be shared by caches and are not removed here.
 export function removeProject(id: string) {
   db.exec("BEGIN IMMEDIATE");
   try {

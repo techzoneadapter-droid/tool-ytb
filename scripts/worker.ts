@@ -1039,7 +1039,7 @@ async function main() {
 
           const child: Job = {
             ...job,
-            id: `${job.id}:${chapter.id}`,
+            id: chapters.length === 1 ? job.id : `${job.id}:${chapter.id}`,
             chapterIds: [chapter.id],
             outputTitle: chapter.title,
             outputMode: undefined,
@@ -1070,6 +1070,14 @@ async function main() {
           );
           updateJob(job.id, {
             outputs,
+            ...(chapters.length === 1
+              ? {
+                  output: result.output,
+                  srt: result.srt,
+                  vtt: result.vtt,
+                  verified: true,
+                }
+              : {}),
             counts: {
               ...(get<Job>(job.id, "job").counts || {
                 audio: scenes.length,

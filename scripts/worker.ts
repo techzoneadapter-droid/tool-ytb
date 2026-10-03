@@ -73,7 +73,7 @@ async function main() {
       const kind = job.kind || (job.prepare ? "prepare" : "render");
 
       if (kind === "merge-video") {
-        checkpoint("rendering", 10, "Đang ghép các video đã chọn");
+        updateJob(job.id, { status: "rendering", progress: 10, message: "Đang ghép các video đã chọn" });
         const merged = await mergeVideoRecords(job, p);
         job.chapterIds = merged.chapterIds;
         job.output = merged.output;

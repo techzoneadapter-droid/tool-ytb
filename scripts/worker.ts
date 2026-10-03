@@ -140,12 +140,15 @@ async function main() {
     }
     try {
       const p = get<Project>(job.projectId, "project");
+      const saveProject = () => {
+        mergeProjectChapters(p, job.chapterIds);
+      };
       const s = job.snapshot.settings;
       for (const chapter of p.chapters.filter((c) =>
         job.chapterIds.includes(c.id),
       ))
         ensureVisualProfile(chapter, s);
-      put("project", p);
+      saveProject();
       // Project order is authoritative even if the request selected IDs in reverse order.
       let scenes = p.chapters
         .filter((c) => job.chapterIds.includes(c.id))
@@ -391,7 +394,7 @@ async function main() {
               scene.imageError = undefined;
               scene.approved = !s.humanCheck;
               finishKey(key);
-              put("project", p);
+              saveProject();
               const currentCounts = reportResource("image", scene, 1);
               updateJob(job.id, {
                 completedItems: [...completedItems],
@@ -480,7 +483,7 @@ async function main() {
                   item.audioStatus = "working";
                   item.audioError = undefined;
                 }
-                put("project", p);
+                saveProject();
                 try {
                   const durations = await speakBatch(
                     group.map((item, index) => ({
@@ -505,7 +508,7 @@ async function main() {
                         item.audioError = undefined;
                         item.approved = !s.humanCheck;
                         finishKey(item.id + ":audio");
-                        put("project", p);
+                        saveProject();
                         const chapter = p.chapters.find((candidate) =>
                           candidate.scenes.some((x) => x.id === item.id),
                         );
@@ -552,7 +555,7 @@ async function main() {
                     handledThisRun.add(item.id + ":audio");
                     failed++;
                   }
-                  put("project", p);
+                  saveProject();
                   updateJob(job.id, {
                     completedItems: [...completedItems],
                     counts: counts(),
@@ -629,7 +632,7 @@ async function main() {
                       item.imageSeed = visual.seed;
                       item.imageStatus = "working";
                       item.imageError = undefined;
-                      put("project", p);
+                      saveProject();
                       try {
                         const generated = await makeImage(
                           visual.prompt,
@@ -670,7 +673,7 @@ async function main() {
                         }
                       }
 
-                      put("project", p);
+                      saveProject();
                       const currentCounts = counts();
                       const globalProgress = Math.floor(
                         (completed / Math.max(1, total)) *
@@ -744,7 +747,7 @@ async function main() {
                   files.push(path.join(assets, randomUUID() + ".png"));
                   prompts.push(visual.prompt);
                 }
-                put("project", p);
+                saveProject();
                 try {
                   const characterDescription =
                     chapter.visualProfile?.characters?.[0]?.descriptor ||
@@ -771,7 +774,7 @@ async function main() {
                     item.approved = !s.humanCheck;
                     finishKey(item.id + ":image");
                   }
-                  put("project", p);
+                  saveProject();
                   const imageCounts = counts();
                   reportStage(
                     "images",
@@ -811,7 +814,7 @@ async function main() {
                       failed++;
                     }
                   }
-                  put("project", p);
+                  saveProject();
                   updateJob(job.id, {
                     completedItems: [...completedItems],
                     counts: counts(),
@@ -831,7 +834,7 @@ async function main() {
               finishKey(key);
               scene[(type + "Status") as "audioStatus"] = "done";
               scene[(type + "Error") as "audioError"] = undefined;
-              put("project", p);
+              saveProject();
               updateJob(job.id, {
                 completedItems: [...completedItems],
                 counts: counts(),
@@ -859,7 +862,7 @@ async function main() {
             );
             scene[(type + "Status") as "audioStatus"] = "working";
             scene[(type + "Error") as "audioError"] = undefined;
-            put("project", p);
+            saveProject();
             try {
               if (type === "audio") {
                 const file = randomUUID() + ".mp3";
@@ -882,7 +885,7 @@ async function main() {
                 const visual = sceneVisual(chapter, scene, s);
                 scene.finalImagePrompt = visual.prompt;
                 scene.imageSeed = visual.seed;
-                put("project", p);
+                saveProject();
                 const generated = await makeImage(
                   visual.prompt,
                   path.join(assets, file),
@@ -899,7 +902,7 @@ async function main() {
               }
               scene[(type + "Status") as "audioStatus"] = "done";
               scene.approved = !s.humanCheck;
-              put("project", p);
+              saveProject();
               finishKey(key);
             } catch (e) {
               if (
@@ -911,7 +914,7 @@ async function main() {
                 scene.imageStatus = "error";
                 scene.approved = !s.humanCheck;
                 finishKey(key);
-                put("project", p);
+                saveProject();
                 const fallbackCounts = reportResource(type, scene, 1);
                 updateJob(job.id, {
                   completedItems: [...completedItems],
@@ -922,7 +925,7 @@ async function main() {
               scene[(type + "Status") as "audioStatus"] = "error";
               scene[(type + "Error") as "audioError"] =
                 e instanceof Error ? e.message : String(e);
-              put("project", p);
+              saveProject();
               failed++;
             }
             const currentCounts = reportResource(type, scene, 1);

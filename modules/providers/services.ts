@@ -4,7 +4,7 @@ import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu";
-export const WORKER_PROTOCOL = 3;
+export const WORKER_PROTOCOL = 4;
 export async function alive(file: string) {
   try {
     const pid = Number(

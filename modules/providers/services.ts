@@ -4,8 +4,8 @@ import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu" | "flow";
-export const WORKER_PROTOCOL = 6;
-export const FLOW_PROTOCOL = 5;
+export const WORKER_PROTOCOL = 8;
+export const FLOW_PROTOCOL = 16;
 export async function alive(file: string) {
   try {
     const pid = Number(
@@ -97,7 +97,7 @@ async function ready(service: Service) {
       response.ok &&
       health.status === "ok" &&
       (service === "vieneu" || health.engine === service) &&
-      (service !== "flow" || health.protocol === FLOW_PROTOCOL)
+      (service !== "flow" || (health.protocol === FLOW_PROTOCOL && health.connectionMode === "python-headless-cookies"))
     );
   } catch {
     return false;
@@ -130,7 +130,8 @@ async function start(service: Service) {
           response.ok &&
           health.status === "ok" &&
           health.engine === "flow" &&
-          health.protocol === FLOW_PROTOCOL;
+          health.protocol === FLOW_PROTOCOL &&
+          health.connectionMode === "python-headless-cookies";
       } catch {}
       if (!protocolOk && Number.isInteger(pid) && pid > 0) {
         if (process.platform === "win32") {
@@ -210,8 +211,10 @@ async function start(service: Service) {
       command = process.execPath;
       args = ["--import", "tsx", path.resolve("scripts/worker.ts")];
     } else if (service === "flow") {
-      command = process.execPath;
-      args = ["--import", "tsx", path.resolve("scripts/flow-cdp-worker.ts")];
+      command = process.env.FLOW_PYTHON || path.resolve(".flow-venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+      if (!existsSync(/* turbopackIgnore: true */ command))
+        throw Error("Chưa cài backend Flow Python. Cài workers/flow-requirements.txt vào .flow-venv.");
+      args = [path.resolve("workers/flow_server.py")];
     } else if (service === "vieneu") {
       cwd =
         process.env.VIENEU_REPO_DIR ||

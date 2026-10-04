@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Clapperboard, ImagePlus } from "lucide-react";
 import type { Settings } from "@/modules/project/types";
 import { imageStyles } from "@/modules/imagePrompt/styles";
@@ -56,11 +56,14 @@ export function VideoCreatePage({
   }, [project?.id]);
   const jobs = data.jobs.filter((j) => j.projectId === project?.id);
   const active = jobs.some(isActive);
+  const creating = useRef(false);
+  const progressPanel = useRef<HTMLDivElement>(null);
   function change(patch: Partial<Settings>) {
     setSettings((s) => ({ ...s, ...patch }));
   }
   async function start() {
-    if (!project) return;
+    if (!project || creating.current || active) return;
+    creating.current = true;
     setBusy(true);
     setError("");
     try {
@@ -98,6 +101,7 @@ export function VideoCreatePage({
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      creating.current = false;
       setBusy(false);
     }
   }
@@ -190,13 +194,13 @@ export function VideoCreatePage({
         <p>Chọn dự án và cấu hình video. StoryFlow lo phần còn lại.</p>
       </header>
       {project && (
-        <PipelineProgress
+        <div ref={progressPanel}><PipelineProgress
           project={project}
           jobs={jobs}
           busy={busy}
           act={(action, id) => void act(action, id)}
           actMany={(action, ids) => void actMany(action, ids)}
-        />
+        /></div>
       )}
       <div className="video-grid">
         <div className="video-form">
@@ -239,7 +243,7 @@ export function VideoCreatePage({
                 <div className="row between">
                   <button
                     className="text-button"
-                    disabled={active}
+                    disabled={busy}
                     onClick={() =>
                       setSelected(project.chapters.map((c) => c.id))
                     }
@@ -248,7 +252,7 @@ export function VideoCreatePage({
                   </button>
                   <button
                     className="text-button"
-                    disabled={active}
+                    disabled={busy}
                     onClick={() => setSelected([])}
                   >
                     Bỏ chọn tất cả
@@ -273,7 +277,7 @@ export function VideoCreatePage({
                       <label className="check" key={c.id}>
                         <input
                           type="checkbox"
-                          disabled={active}
+                          disabled={busy}
                           checked={selected.includes(c.id)}
                           onChange={(e) =>
                             setSelected((ids) =>
@@ -292,7 +296,13 @@ export function VideoCreatePage({
           </section>
           {project && (
             <>
-              <fieldset disabled={active || busy} className="config-fields">
+              {active && (
+                <div className="notice" role="status">
+                  Dự án đang có tác vụ đang chạy, chờ hoặc tạm dừng. Bạn vẫn có thể chỉnh cấu hình và chọn chương cho lần chạy sau; tác vụ hiện tại dùng cấu hình đã lưu.
+                  <button className="text-button" onClick={() => progressPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>Xem tác vụ / tạm dừng / hủy</button>
+                </div>
+              )}
+              <fieldset disabled={busy} className="config-fields">
                 <VoiceSelector
                   settings={settings}
                   change={change}
@@ -655,7 +665,9 @@ export function VideoCreatePage({
                   change={change}
                   onError={setError}
                 />
-                <VisualProfiles project={project} refresh={refresh} />
+                <fieldset disabled={active} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+                  <VisualProfiles project={project} refresh={refresh} />
+                </fieldset>
               </fieldset>
               {error && (
                 <div className="notice error" role="alert">
@@ -689,6 +701,7 @@ export function VideoCreatePage({
                       ? "Đang có tác vụ"
                       : "Bắt đầu tạo video"}
                 </button>
+                {active && <button className="text-button" onClick={() => progressPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>Quản lý tác vụ hiện tại</button>}
               </div>
               {jobs.some((job) => job.status === "done" && job.verified) && (
                 <div className="completed-summary">

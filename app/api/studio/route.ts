@@ -31,7 +31,7 @@ import {
 import { isSameOrigin } from "@/modules/project/request";
 import { runtimeStatus } from "@/modules/providers/runtime-status";
 import { startService } from "@/modules/providers/services";
-import { openFlowBrowser } from "@/modules/providers/flow-browser";
+import { initializeFlowSession } from "@/modules/providers/flow-browser";
 import { modalConfigured } from "@/modules/providers/modal/client";
 const projectNameSchema = z
   .string({ error: "Vui lòng nhập tên dự án." })
@@ -84,9 +84,11 @@ export async function POST(req: NextRequest) {
       );
       return NextResponse.json({ ok: true });
     }
-    if (b.action === "openFlow") {
+    if (b.action === "initializeFlowSession") {
+      const cookieJson = z.string().min(1).max(1048576).parse(b.cookieJson);
+      const projectUrl = z.string().max(2000).parse(b.projectUrl || "");
       await startService("flow");
-      const status = await openFlowBrowser();
+      const status = await initializeFlowSession(cookieJson, projectUrl);
       return NextResponse.json({ ok: true, status });
     }
     if (b.action === "create" || b.action === "createVideo") {
@@ -575,6 +577,7 @@ export async function POST(req: NextRequest) {
           "flux2-local",
           "local-fast",
           "auto-local",
+          "flow-browser",
         ].includes(p.settings.imageProvider || "")
       )
         requireImage();

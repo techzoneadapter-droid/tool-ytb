@@ -1,3 +1,5 @@
+import { startService } from "./services";
+
 function bridgeURL() {
   const raw = process.env.FLOW_BRIDGE_URL || "http://127.0.0.1:7865";
   const url = new URL(raw);
@@ -45,6 +47,8 @@ export type FlowHealth = {
   bridgeReady: boolean;
   browserOpen: boolean;
   connected: boolean;
+  state?: "disconnected" | "connecting" | "login_required" | "project_required" | "ready" | "generating" | "error";
+  background?: boolean;
   projectConfigured: boolean;
   currentUrl?: string;
   title?: string;
@@ -67,28 +71,20 @@ export async function flowHealth(): Promise<FlowHealth> {
       projectConfigured: !!process.env.FLOW_PROJECT_URL,
       model: process.env.FLOW_MODEL_LABEL || "Nano Banana Pro",
       message:
-        "Flow Worker chưa chạy. Bấm Kết nối Flow để gắn vào Chrome đang mở.",
+        "Dán JSON Cookie EditThisCookie và URL dự án để kết nối Flow chạy ẩn.",
     };
   }
 }
 
-export async function openFlowBrowser() {
-  return call<FlowHealth>(
-    "/open",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        projectUrl: process.env.FLOW_PROJECT_URL || "",
-      }),
-    },
-    30000,
-  );
+export async function initializeFlowSession(cookieJson: string, projectUrl: string) {
+  return call<FlowHealth>("/session", { method: "POST", body: JSON.stringify({ cookieJson, projectUrl }) }, 160000);
 }
 
 export async function generateWithFlow(
   prompt: string,
   aspect: "16:9" | "9:16",
 ) {
+  await startService("flow");
   const response = await fetch(new URL("/generate", bridgeURL()), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -97,10 +93,10 @@ export async function generateWithFlow(
       aspect,
       projectUrl: process.env.FLOW_PROJECT_URL || "",
       model: process.env.FLOW_MODEL_LABEL || "Nano Banana Pro",
-      cdpUrl: process.env.FLOW_CDP_URL || "http://127.0.0.1:9222",
     }),
     signal: AbortSignal.timeout(
-      Number(process.env.FLOW_GENERATION_TIMEOUT_MS || 420000) + 30000,
+      // Up to four video jobs can share one serialized Flow session.
+      (Number(process.env.FLOW_GENERATION_TIMEOUT_MS || 420000) + 60000) * 4,
     ),
   });
   if (!response.ok) {

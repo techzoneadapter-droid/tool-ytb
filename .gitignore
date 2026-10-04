@@ -9,5 +9,8 @@ test-results/
 public/generated/
 .ai-venv/
 workers/__pycache__/
+__pycache__/
+*.pyc
+build-error.txt
 
 .flow-venv/

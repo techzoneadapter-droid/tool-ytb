@@ -14,6 +14,16 @@ npm run dev
 
 Mở http://127.0.0.1:3000. Chạy bản tối ưu: `npm run build`, `npm start` (worker tự chạy). Chỉ chạy một worker. Mặc định ứng dụng chỉ lắng nghe localhost, chưa có đăng nhập; không triển khai nguyên trạng ra Internet.
 
+## Desktop and background Flow
+
+Run `npm run build`, then `npm run desktop`. If the development server is already running on port 3000, desktop reuses it. Closing the desktop window hides it to the system tray; workers continue processing. The tray menu reopens the window or exits the interface. This is a desktop runtime in the repository, not a packaged installer.
+
+Flow now uses the Python backend in `workers/flow_automation.py` and `workers/flow_server.py`. Install it with `python -m venv .flow-venv`, then `.flow-venv\Scripts\python.exe -m pip install -r workers/flow-requirements.txt`. The service starts automatically from the app. `FLOW_PYTHON` can select another Python environment.
+
+In the Flow panel, paste the JSON array exported by EditThisCookie and the URL of an existing Flow project, then connect. Cookies stay in browser memory and are not saved in files, environment variables, logs or localStorage. The frontend clears the cookie field after successful import. Restarting the worker requires importing again. The browser uses `headless=True` with the installed Chrome channel by default, without accessing the personal profile or CDP. Cookie import does not guarantee Google accepts the new session; login redirects, unconfirmed authentication and missing projects produce distinct errors.
+
+`await initialize_session(cookie_json)` normalizes EditThisCookie fields, starts the browser, imports cookies, opens Flow and verifies readiness. `await generate_image(prompt)` confirms image mode/model/aspect/x1, fills the ProseMirror editor, clicks `Bắt đầu tạo`, waits for a new image and returns `(bytes, mime)` for the video pipeline. `await close()` releases all browser resources. The saved HTML does not contain the closed settings menu, so live menu variations still need verification. `npm run test:flow:python` checks cookie handling, session cleanup and a local simulated composer without spending Flow credits.
+
 ## Giọng đọc local miễn phí
 
 Nâng cấp local AI: xem [LOCAL_AI_WORKERS.md](docs/LOCAL_AI_WORKERS.md) để dùng VieNeu làm giọng chính, FLUX.2 tạo ảnh và Wan2.2 tạo clip tùy chọn. Ảnh động mặc định tắt; video ảnh tĩnh vẫn chạy như cũ.

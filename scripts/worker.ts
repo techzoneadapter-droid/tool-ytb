@@ -273,8 +273,11 @@ async function main() {
         const tasks =
           kind === "prepare" || kind === "pipeline"
             ? [
+                ...(s.imageProvider === "flow-browser" && s.imageEnabled !== false
+                  ? ["image"]
+                  : []),
                 ...(s.audioEnabled === false ? [] : ["audio"]),
-                ...(s.imageEnabled === false ? [] : ["image"]),
+                ...(s.imageEnabled === false || s.imageProvider === "flow-browser" ? [] : ["image"]),
                 ...(kind === "pipeline" &&
                 s.motionMode &&
                 s.motionMode !== "off"

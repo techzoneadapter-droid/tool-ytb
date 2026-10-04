@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Settings } from "@/modules/project/types";
 import type { StudioData } from "../studio-api";
 import { request } from "../studio-api";
@@ -7,10 +7,12 @@ export function ProviderStatus({
   providers: p,
   settings,
   refresh,
+  onFlowConnected,
 }: {
   providers: StudioData["providers"];
   settings: Settings;
   refresh: () => Promise<void>;
+  onFlowConnected?: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState("");
   const [detail, setDetail] = useState("");
@@ -21,6 +23,31 @@ export function ProviderStatus({
     hardware?: { gpu: string; vram_gb: number; bf16: boolean };
   }>();
   const [consent, setConsent] = useState(false);
+  const pendingFlow = useRef(false);
+  const [waitingFlow, setWaitingFlow] = useState(false);
+  const [cookieJson, setCookieJson] = useState("");
+  const [flowProjectUrl, setFlowProjectUrl] = useState("");
+  const afterFlow = useRef(onFlowConnected);
+  afterFlow.current = onFlowConnected;
+
+  useEffect(() => {
+    if (!waitingFlow) return;
+    const timer = setInterval(() => void refresh().catch(() => {}), 2500);
+    return () => clearInterval(timer);
+  }, [waitingFlow, refresh]);
+
+  useEffect(() => {
+    if (!pendingFlow.current) return;
+    if (p?.flow?.state === "error" || p?.flow?.state === "disconnected") {
+      pendingFlow.current = false;
+      setWaitingFlow(false);
+      if (p.flow.lastError) setDetail(p.flow.lastError);
+    } else if (p?.flow?.connected) {
+      pendingFlow.current = false;
+      setWaitingFlow(false);
+      void afterFlow.current?.().catch(error => setDetail((error as Error).message));
+    }
+  }, [p?.flow?.connected, p?.flow?.state, p?.flow?.lastError]);
 
   useEffect(() => {
     if (!setup) return;
@@ -70,9 +97,20 @@ export function ProviderStatus({
     setBusy("flow");
     setDetail("");
     try {
-      await request({ action: "openFlow" });
+      pendingFlow.current = true;
+      const result = await request<{ status: NonNullable<StudioData["providers"]>["flow"] }>({ action: "initializeFlowSession", cookieJson, projectUrl: flowProjectUrl });
+      setCookieJson("");
+      if (result.status.connected) {
+        pendingFlow.current = false;
+        await afterFlow.current?.();
+      } else {
+        pendingFlow.current = false;
+        setDetail(result.status.message || "Flow project required");
+      }
       await refresh();
     } catch (error) {
+      pendingFlow.current = false;
+      setWaitingFlow(false);
       setDetail((error as Error).message);
     } finally {
       setBusy("");
@@ -261,7 +299,7 @@ export function ProviderStatus({
             {!row.ready && row.service && (
               <button
                 className="text-button"
-                disabled={!!busy || !p}
+                disabled={!!busy || !p || (row.service === "flow" && !cookieJson.trim())}
                 onClick={() =>
                   row.service === "flow"
                     ? void openFlow()
@@ -302,23 +340,24 @@ export function ProviderStatus({
       )}
       {settings.imageProvider === "flow-browser" && !p?.flow?.connected && (
         <p className="notice">
-          StoryFlow sẽ gắn trực tiếp vào Chrome đang mở bằng Chrome DevTools
-          Auto Connect. Lần đầu, Chrome sẽ yêu cầu bật Remote Debugging và xác
-          nhận quyền; sau đó StoryFlow dùng chính phiên Flow Plus hiện tại.
+          {p?.flow?.message || "Dán JSON Cookie và URL dự án Flow để kết nối chạy ẩn."}
+          {onFlowConnected && " Kết nối xong sẽ tự tạo ảnh và dựng video cho các chương đang chọn."}
         </p>
       )}
       {settings.imageProvider === "flow-browser" && (
-        <button
-          className="text-button"
-          disabled={!!busy}
-          onClick={() => void openFlow()}
-        >
-          {busy === "flow"
-            ? "Đang kết nối…"
-            : p?.flow?.connected
-              ? "Kết nối lại Flow"
-              : "Kết nối Chrome đang mở"}
-        </button>
+        <div className="field">
+          <label htmlFor="flow-cookie-json">JSON Cookie (EditThisCookie)</label>
+          <textarea id="flow-cookie-json" value={cookieJson} autoComplete="off" spellCheck={false}
+            disabled={!!busy} onChange={event => setCookieJson(event.target.value)} rows={5} />
+          <label htmlFor="flow-project-url">URL project Flow</label>
+          <input id="flow-project-url" type="url" value={flowProjectUrl} disabled={!!busy}
+            placeholder="https://labs.google/fx/vi/tools/flow/project/..."
+            onChange={event => setFlowProjectUrl(event.target.value)} />
+          <button className="text-button" disabled={!!busy || !cookieJson.trim()} onClick={() => void openFlow()}>
+            {busy === "flow" ? "Đang kết nối chạy ẩn…" : "Kết nối bằng cookie"}
+          </button>
+          <p className="notice">Cookie chỉ giữ trong bộ nhớ phiên, không lưu vào file. Trình duyệt chạy headless, không hiện cửa sổ. Khi phiên hết hạn, xuất lại cookie từ tài khoản Flow của bạn.</p>
+        </div>
       )}
 
       <details className="local-services">

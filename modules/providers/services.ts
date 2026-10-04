@@ -5,7 +5,7 @@ import path from "node:path";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu" | "flow";
 export const WORKER_PROTOCOL = 6;
-export const FLOW_PROTOCOL = 3;
+export const FLOW_PROTOCOL = 4;
 export async function alive(file: string) {
   try {
     const pid = Number(
@@ -105,58 +105,6 @@ async function ready(service: Service) {
 }
 const starts = new Map<Service, Promise<void>>();
 
-async function runSetupCommand(
-  command: string,
-  args: string[],
-  cwd?: string,
-): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(/* turbopackIgnore: true */ command, args, {
-      cwd,
-      env: process.env,
-      shell: false,
-      windowsHide: true,
-      stdio: "ignore",
-    });
-    child.on("error", reject);
-    child.on("exit", (code) =>
-      code === 0
-        ? resolve()
-        : reject(
-            Error(
-              `Lệnh cài môi trường thất bại (${command}, mã ${code ?? "?"}).`,
-            ),
-          ),
-    );
-  });
-}
-
-async function ensureFlowPython() {
-  const environment = path.resolve(".flow-venv");
-  const python = path.join(
-    environment,
-    process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
-  );
-  if (existsSync(/* turbopackIgnore: true */ python)) return python;
-
-  const launcher = process.env.PYTHON || (process.platform === "win32" ? "py" : "python3");
-  const launcherArgs =
-    process.platform === "win32" && launcher === "py"
-      ? ["-3", "-m", "venv", environment]
-      : ["-m", "venv", environment];
-  await runSetupCommand(launcher, launcherArgs);
-
-  const pipArgs = [
-    "-m",
-    "pip",
-    "install",
-    "--disable-pip-version-check",
-    "-r",
-    path.resolve("workers/flow_requirements.txt"),
-  ];
-  await runSetupCommand(python, pipArgs);
-  return python;
-}
 export function startService(service: Service): Promise<void> {
   const pending = starts.get(service);
   if (pending) return pending;
@@ -262,8 +210,8 @@ async function start(service: Service) {
       command = process.execPath;
       args = ["--import", "tsx", path.resolve("scripts/worker.ts")];
     } else if (service === "flow") {
-      command = process.env.FLOW_PYTHON || (await ensureFlowPython());
-      args = [path.resolve("workers/flow_selenium.py")];
+      command = process.execPath;
+      args = ["--import", "tsx", path.resolve("scripts/flow-cdp-worker.ts")];
     } else if (service === "vieneu") {
       cwd =
         process.env.VIENEU_REPO_DIR ||

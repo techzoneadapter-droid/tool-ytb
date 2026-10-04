@@ -49,8 +49,8 @@ export type FlowHealth = {
   currentUrl?: string;
   title?: string;
   model?: string;
-  cdpUrl?: string;
-  pages?: number;
+  connectionMode?: string;
+  lastError?: string;
   message: string;
 };
 
@@ -66,7 +66,6 @@ export async function flowHealth(): Promise<FlowHealth> {
       connected: false,
       projectConfigured: !!process.env.FLOW_PROJECT_URL,
       model: process.env.FLOW_MODEL_LABEL || "Nano Banana Pro",
-      cdpUrl: process.env.FLOW_CDP_URL || "http://127.0.0.1:9222",
       message:
         "Flow Worker chưa chạy. Bấm Kết nối Flow để gắn vào Chrome đang mở.",
     };
@@ -80,7 +79,6 @@ export async function openFlowBrowser() {
       method: "POST",
       body: JSON.stringify({
         projectUrl: process.env.FLOW_PROJECT_URL || "",
-        cdpUrl: process.env.FLOW_CDP_URL || "http://127.0.0.1:9222",
       }),
     },
     30000,

@@ -1,4 +1,4 @@
-"""Headless Flow session. Cookies remain in memory and are never logged."""
+"""Headless Flow session with local cookie persistence; credentials are never logged."""
 import json
 import math
 import os
@@ -10,6 +10,8 @@ from uuid import uuid4
 from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+
+COMPOSER_SCRIPT = Path(__file__).with_name("flow_composer.js").read_text(encoding="utf-8")
 
 
 class FlowError(Exception):
@@ -82,9 +84,10 @@ class FlowAutomation:
         self.model = model or os.getenv("FLOW_MODEL_LABEL", "Nano Banana Pro")
         self.state = "disconnected"
         self.last_error = ""
+        self.cookie_file = Path(os.getenv("FLOW_COOKIES_FILE", "cookies.json")).resolve()
 
     def health(self):
-        return {"status": "ok", "engine": "flow", "protocol": 17, "bridgeReady": True,
+        return {"status": "ok", "engine": "flow", "protocol": 18, "bridgeReady": True,
                 "browserOpen": self.browser is not None, "connected": self.state in ("ready", "generating"),
                 "state": self.state, "background": True, "connectionMode": "python-headless-cookies",
                 "projectConfigured": bool(self.project_url), "model": self.model,
@@ -108,11 +111,34 @@ class FlowAutomation:
     def _editor(self):
         return self.page.locator('.ProseMirror[contenteditable="true"], textarea, [contenteditable="true"][role="textbox"]').filter(visible=True).last
 
-    async def initialize_session(self, cookie_json):
+    async def restore_session(self):
+        if not self.cookie_file.is_file():
+            return self.health()
+        try:
+            if self.cookie_file.stat().st_size > 1048576:
+                raise FlowError("INVALID_COOKIES", "Saved cookie file exceeds 1 MB.")
+            raw = self.cookie_file.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError):
+            raise FlowError("COOKIE_FILE_READ", "Cannot read the saved Flow cookie file.") from None
+        return await self.initialize_session(raw, persist=False)
+
+    def _save_cookies(self, cookies):
+        self.cookie_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.cookie_file.with_name(self.cookie_file.name + ".tmp")
+        try:
+            temporary.write_text(json.dumps(cookies, ensure_ascii=False), encoding="utf-8")
+            temporary.chmod(0o600)
+            temporary.replace(self.cookie_file)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    async def initialize_session(self, cookie_json, persist=True):
         # A failed replacement must not leave an old account silently active.
         await self.close()
         self.state = "connecting"
         try:
+            if persist:
+                self.cookie_file.unlink(missing_ok=True)
             cookies = normalize_cookies(cookie_json)
             if self.project_url and not is_flow_url(self.project_url):
                 raise FlowError("INVALID_PROJECT", "URL dự án phải thuộc Google Flow.")
@@ -135,10 +161,14 @@ class FlowAutomation:
                 projects = self.page.locator('a[href*="/flow/project/"], a[href*="/project/"]').filter(visible=True)
                 if not self.project_url and await projects.count():
                     self.state = "project_required"
+                    if persist:
+                        self._save_cookies(cookies)
                     return self.health()
                 raise FlowError("AUTH_UNCONFIRMED", "Chưa xác nhận được phiên Flow. Cookie có thể thiếu, Google yêu cầu xác minh, hoặc trang chưa có ô tạo ảnh.") from None
             self.state = "ready"
             await self._auth_check()
+            if persist:
+                self._save_cookies(cookies)
             self.last_error = ""
             return self.health()
         except FlowError as error:
@@ -156,8 +186,12 @@ class FlowAutomation:
         target = locator.filter(visible=True).first
         if not await target.count():
             return False
-        await target.click(timeout=10000)
-        return True
+        handle = await target.element_handle(timeout=10000)
+        try:
+            return await self.page.evaluate("node => { if (!node || !node.isConnected || node.disabled || node.getAttribute('aria-disabled') === 'true') return false; node.click(); return true; }", handle)
+        finally:
+            if handle:
+                await handle.dispose()
 
     async def _configure(self, aspect):
         self.config_stage = "FLOW_CONFIG_AGENT"
@@ -204,10 +238,10 @@ class FlowAutomation:
     async def _configure_controls(self, aspect):
         agent = self.page.get_by_role("button", name=re.compile(r"^(agent|tác nhân)$", re.I)).filter(visible=True).first
         if await agent.count() and await agent.get_attribute("aria-pressed") == "true":
-            await agent.click()
+            await self._click(agent)
         agent_switch = self.page.get_by_role("switch", name=re.compile(r"^(agent|tác nhân)$", re.I)).filter(visible=True).first
         if await agent_switch.count() and await agent_switch.is_checked():
-            await agent_switch.uncheck()
+            await self._click(agent_switch)
         self.config_stage = "FLOW_CONFIG_PICKER"
         picker = self.page.locator("button.settings-trigger-button").or_(self.page.get_by_role("button", name=re.compile(r"nano banana|imagen|veo|Điều kiện kích hoạt cài đặt", re.I)))
         if not await self._click(picker):
@@ -260,7 +294,7 @@ class FlowAutomation:
                 models = self.page.get_by_text(exact_model).filter(visible=True)
             if not await models.count():
                 raise FlowError("MODEL_UNAVAILABLE", "Model ảnh được yêu cầu không có trong tài khoản Flow.")
-            await models.last.click()
+            await self._click(models.last)
         self.config_stage = "FLOW_CONFIG_RATIO"
         ratio = re.compile(re.escape(aspect) + (r"|crop_16_9|landscape|ngang" if aspect == "16:9" else r"|crop_9_16|portrait|dọc"), re.I)
         choices = self.page.get_by_role("button", name=ratio).or_(self.page.get_by_role("radio", name=ratio)).or_(self.page.get_by_role("option", name=ratio)).or_(self.page.get_by_role("menuitem", name=ratio))
@@ -273,7 +307,26 @@ class FlowAutomation:
         if not await self._click(self.page.get_by_role("button", name=re.compile(r"^(x1|1x|1)$", re.I)).or_(self.page.get_by_role("radio", name=re.compile(r"^(x1|1x|1)$", re.I)))):
             raise FlowError("UI_CHANGED", "Không xác nhận được số ảnh x1; chưa gửi prompt.")
         self.config_stage = "FLOW_CONFIG_CLOSE"
-        await self.page.keyboard.press("Escape")
+        await self.page.evaluate("() => { const target = document.activeElement || document.body; target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true })); target.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true })); }")
+
+    async def _submit_prompt(self, prompt):
+        stage = "FLOW_PROMPT_INPUT"
+        try:
+            result = await self.page.evaluate(COMPOSER_SCRIPT, {"action": "fill", "prompt": prompt})
+            if result.get("error"):
+                raise FlowError(stage, result["error"])
+            stage = "FLOW_PROMPT_SUBMIT"
+            deadline = time.monotonic() + 10
+            while True:
+                result = await self.page.evaluate(COMPOSER_SCRIPT, {"action": "submit", "prompt": prompt})
+                if result.get("ok"):
+                    return result
+                if result.get("error") or time.monotonic() >= deadline:
+                    raise FlowError(stage, result.get("error", "Generation control remained disabled after input/change."))
+                await self.page.wait_for_timeout(100)
+        except Exception as cause:
+            diagnostics = await self._capture_config_failure(stage, cause, None)
+            raise FlowError(stage, str(cause), stage=stage, diagnostics=diagnostics) from cause
 
     async def generate_image(self, prompt, aspect="16:9"):
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 50000:
@@ -288,9 +341,7 @@ class FlowAutomation:
             await self._configure(aspect)
             images = "() => Array.from(document.images).filter(i => i.complete && i.naturalWidth >= 256 && i.naturalHeight >= 256 && i.naturalWidth*i.naturalHeight >= 262144).map(i => i.currentSrc || i.src)"
             before = set(await self.page.evaluate(images))
-            await self._editor().fill(prompt.strip())
-            submit = self.page.get_by_role("button", name=re.compile(r"^(bắt đầu tạo|tạo ảnh|tạo|generate(?: images?)?|start generating|arrow_forward)$", re.I)).filter(visible=True).last
-            await submit.click(timeout=10000)
+            await self._submit_prompt(prompt.strip())
             deadline = time.monotonic() + int(os.getenv("FLOW_GENERATION_TIMEOUT_MS", "420000")) / 1000
             while time.monotonic() < deadline:
                 await self._auth_check()

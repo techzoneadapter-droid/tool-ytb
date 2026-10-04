@@ -15,6 +15,10 @@ lock = asyncio.Lock()
 
 @asynccontextmanager
 async def lifespan(app):
+    try:
+        await session.restore_session()
+    except FlowError as error:
+        session.last_error = f"[{error.code}] {error}"
     yield
     async with lock:
         await session.close()
@@ -70,6 +74,9 @@ async def initialize(request: Request):
 async def generate(request: Request):
     data = await payload(request)
     async with lock:
+        if session.state == "disconnected":
+            session.project_url = str(data.get("projectUrl") or session.project_url)
+            await session.restore_session()
         content, mime = await session.generate_image(data.get("prompt"), data.get("aspect", "16:9"))
     return Response(content, media_type=mime, headers={"Cache-Control": "no-store", "X-StoryFlow-Model": session.model})
 
@@ -77,6 +84,10 @@ async def generate(request: Request):
 @app.post("/disconnect")
 async def disconnect():
     async with lock:
+        try:
+            session.cookie_file.unlink(missing_ok=True)
+        except OSError:
+            raise FlowError("COOKIE_FILE_DELETE", "Cannot remove the saved cookie file; disconnect was not completed.") from None
         await session.close()
     return session.health()
 

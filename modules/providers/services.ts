@@ -5,7 +5,7 @@ import path from "node:path";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu" | "flow";
 export const WORKER_PROTOCOL = 8;
-export const FLOW_PROTOCOL = 17;
+export const FLOW_PROTOCOL = 18;
 export async function alive(file: string) {
   try {
     const pid = Number(

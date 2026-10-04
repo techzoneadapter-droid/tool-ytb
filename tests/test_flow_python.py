@@ -22,7 +22,7 @@ class ServerTests(unittest.TestCase):
             port = sock.getsockname()[1]
         base = f"http://127.0.0.1:{port}"
         process = subprocess.Popen([sys.executable, "workers/flow_server.py"],
-            env={**os.environ, "FLOW_BRIDGE_URL": base, "FLOW_PROJECT_URL": ""},
+            env={**os.environ, "FLOW_BRIDGE_URL": base, "FLOW_PROJECT_URL": "", "FLOW_COOKIES_FILE": str(Path("data") / "test-absent-cookies.json")},
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         try:
@@ -36,7 +36,7 @@ class ServerTests(unittest.TestCase):
                     if time.monotonic() > deadline:
                         self.fail("Flow Python HTTP server did not start")
                     time.sleep(0.1)
-            self.assertEqual(health["protocol"], 17)
+            self.assertEqual(health["protocol"], 18)
             self.assertFalse(health["connected"])
             self.assertTrue(health["background"])
             for endpoint, data, headers, expected, code in (
@@ -94,6 +94,7 @@ class CookieTests(unittest.TestCase):
 class SessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_launch_is_headless_and_cookies_imported(self):
         session = FlowAutomation(project_url="https://flow.google.com/project/demo")
+        session.cookie_file = MagicMock()
         browser, context, page = AsyncMock(), AsyncMock(), AsyncMock()
         page.goto.return_value = None
         context.new_page.return_value = page
@@ -102,18 +103,65 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         pw.chromium.launch.return_value = browser
         starter = MagicMock(start=AsyncMock(return_value=pw))
         editor = MagicMock(wait_for=AsyncMock())
-        with patch("flow_automation.async_playwright", return_value=starter), patch.object(session, "_auth_check", AsyncMock()), patch.object(session, "_editor", return_value=editor):
+        with patch("flow_automation.async_playwright", return_value=starter), patch.object(session, "_auth_check", AsyncMock()), patch.object(session, "_editor", return_value=editor), patch.object(session, "_save_cookies") as save:
             result = await session.initialize_session('[{"name":"SID","value":"test-only","domain":".google.com"}]')
             self.assertTrue(result["connected"])
             self.assertTrue(pw.chromium.launch.call_args.kwargs["headless"])
             context.add_cookies.assert_awaited_once()
+            save.assert_called_once()
             self.assertEqual(page.goto.call_args_list[0].args[0], "https://flow.google.com")
             await session.close()
             browser.close.assert_awaited_once()
             context.close.assert_awaited_once()
 
+    async def test_cookie_file_restore_is_validated_and_not_rewritten(self):
+        session = FlowAutomation()
+        with tempfile.TemporaryDirectory() as directory:
+            session.cookie_file = Path(directory) / "cookies.json"
+            cookies = [{"name": "SID", "value": "test-only", "domain": ".google.com"}]
+            session._save_cookies(cookies)
+            self.assertEqual(json.loads(session.cookie_file.read_text()), cookies)
+            with patch.object(session, "initialize_session", AsyncMock(return_value={"connected": True})) as initialize:
+                result = await session.restore_session()
+                self.assertTrue(result["connected"])
+                initialize.assert_awaited_once_with(session.cookie_file.read_text(), persist=False)
+
+    async def test_evaluate_composer_calls_handler_once_and_rejects_ambiguity(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel="chrome", headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content('<textarea></textarea><button aria-label="Generate" disabled></button>')
+                await page.evaluate("""() => {
+                    window.submissions = 0;
+                    const button = document.querySelector('button');
+                    document.querySelector('textarea').addEventListener('input', () => button.disabled = false);
+                    button.__reactProps$test = { onClick(event) {
+                        event.preventDefault();
+                        window.submissions++;
+                        window.submitted = document.querySelector('textarea').value;
+                    }};
+                    button.onclick = () => { throw Error('DOM click must not also run'); };
+                }""")
+                session = FlowAutomation()
+                session.page = page
+                result = await session._submit_prompt('A forest')
+                self.assertEqual(result['method'], 'react-handler')
+                self.assertEqual(await page.evaluate('window.submissions'), 1)
+                self.assertEqual(await page.evaluate('window.submitted'), 'A forest')
+                await page.evaluate("document.body.appendChild(document.createElement('textarea'))")
+                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"FLOW_DIAGNOSTICS_DIR": directory}):
+                    with self.assertRaises(FlowError) as caught:
+                        await session._submit_prompt('Do not submit')
+                    self.assertEqual(caught.exception.code, 'FLOW_PROMPT_INPUT')
+                    self.assertEqual(await page.evaluate('window.submissions'), 1)
+            finally:
+                await browser.close()
+
     async def test_invalid_replacement_clears_old_session(self):
         session = FlowAutomation()
+        session.cookie_file = MagicMock()
         session.context, session.browser = AsyncMock(), AsyncMock()
         context = session.context
         with self.assertRaises(FlowError):

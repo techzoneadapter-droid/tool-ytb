@@ -36,7 +36,7 @@ class ServerTests(unittest.TestCase):
                     if time.monotonic() > deadline:
                         self.fail("Flow Python HTTP server did not start")
                     time.sleep(0.1)
-            self.assertEqual(health["protocol"], 16)
+            self.assertEqual(health["protocol"], 17)
             self.assertFalse(health["connected"])
             self.assertTrue(health["background"])
             for endpoint, data, headers, expected, code in (
@@ -172,6 +172,37 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(caught.exception.code, "FLOW_CONFIG_MODEL")
             self.assertIn("MODEL_UNAVAILABLE: requested model missing", str(caught.exception))
             self.assertEqual(len(caught.exception.diagnostics["captureErrors"]), 2)
+
+    async def test_already_selected_image_mode_without_mode_button(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel="chrome", headless=True)
+            try:
+                context = await browser.new_context()
+                page = await context.new_page()
+                await page.route("https://flow.google.com/**", lambda route: route.fulfill(content_type="text/html", body="<body></body>"))
+                await page.goto("https://flow.google.com/project/test")
+                await page.set_content('''<div class="ProseMirror" contenteditable="true"></div>
+                  <button class="settings-trigger-button" aria-label="Nano Banana Pro">Nano Banana Pro</button>
+                  <section id="menu" hidden><button>16:9</button><button>x1</button></section>
+                  <button aria-label="Bắt đầu tạo" disabled>arrow_forward</button>
+                  <script>
+                  document.querySelector('.settings-trigger-button').onclick=()=>document.querySelector('#menu').hidden=false;
+                  document.querySelector('.ProseMirror').oninput=()=>document.querySelector('[aria-label="Bắt đầu tạo"]').disabled=false;
+                  document.querySelector('[aria-label="Bắt đầu tạo"]').onclick=()=>{
+                    const c=document.createElement('canvas');c.width=768;c.height=432;
+                    const ctx=c.getContext('2d');const d=ctx.createImageData(768,432);
+                    for(let i=0;i<d.data.length;i++)d.data[i]=Math.random()*255;
+                    ctx.putImageData(d,0,0);const img=new Image();img.src=c.toDataURL();document.body.append(img);
+                  };
+                  </script>''')
+                session = FlowAutomation()
+                session.page, session.context, session.browser, session.state = page, context, browser, "ready"
+                content, mime = await session.generate_image("A forest")
+                self.assertEqual(mime, "image/png")
+                self.assertGreater(len(content), 10000)
+            finally:
+                await browser.close()
 
     async def test_synthetic_composer_smoke_only(self):
         from playwright.async_api import async_playwright

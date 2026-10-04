@@ -84,7 +84,7 @@ class FlowAutomation:
         self.last_error = ""
 
     def health(self):
-        return {"status": "ok", "engine": "flow", "protocol": 16, "bridgeReady": True,
+        return {"status": "ok", "engine": "flow", "protocol": 17, "bridgeReady": True,
                 "browserOpen": self.browser is not None, "connected": self.state in ("ready", "generating"),
                 "state": self.state, "background": True, "connectionMode": "python-headless-cookies",
                 "projectConfigured": bool(self.project_url), "model": self.model,
@@ -212,17 +212,55 @@ class FlowAutomation:
         picker = self.page.locator("button.settings-trigger-button").or_(self.page.get_by_role("button", name=re.compile(r"nano banana|imagen|veo|Điều kiện kích hoạt cài đặt", re.I)))
         if not await self._click(picker):
             raise FlowError("UI_CHANGED", "Không tìm thấy bộ chọn model Flow.")
+
+        # Flow changes the Image/Video segmented control frequently. When the
+        # composer is already in Image mode, some builds do not expose a
+        # separate clickable "Image/Hình ảnh" item inside the settings popover.
         self.config_stage = "FLOW_CONFIG_MODE"
         modes = re.compile(r"^(image|images|create images|tạo ảnh|hình ảnh|ảnh)$", re.I)
-        if not await self._click(self.page.get_by_role("tab", name=modes).or_(self.page.get_by_role("button", name=modes)).or_(self.page.get_by_role("menuitem", name=modes))):
-            raise FlowError("UI_CHANGED", "Không xác nhận được chế độ tạo ảnh; chưa gửi prompt.")
+        mode_controls = (
+            self.page.get_by_role("tab", name=modes)
+            .or_(self.page.get_by_role("button", name=modes))
+            .or_(self.page.get_by_role("menuitem", name=modes))
+            .or_(self.page.get_by_role("radio", name=modes))
+            .or_(self.page.get_by_role("option", name=modes))
+        )
+        mode_clicked = await self._click(mode_controls)
+
+        image_model_pattern = re.compile(r"nano banana|imagen", re.I)
+        image_model_controls = (
+            self.page.get_by_role("button", name=image_model_pattern)
+            .or_(self.page.get_by_role("combobox", name=image_model_pattern))
+            .or_(self.page.get_by_role("option", name=image_model_pattern))
+            .filter(visible=True)
+        )
+        visible_image_model_text = self.page.get_by_text(image_model_pattern).filter(visible=True)
+
+        if not mode_clicked and not (await image_model_controls.count() or await visible_image_model_text.count()):
+            raise FlowError(
+                "UI_CHANGED",
+                "Không xác nhận được chế độ tạo ảnh; Flow không hiển thị nút Hình ảnh và cũng không thấy model ảnh đang được chọn. Chưa gửi prompt.",
+            )
+
         self.config_stage = "FLOW_CONFIG_MODEL"
-        models = self.page.get_by_text(re.compile(r"^(?:🍌\s*)?" + re.escape(self.model) + "$", re.I)).filter(visible=True)
-        if not await models.count():
-            await self._click(self.page.get_by_role("combobox").filter(has_text=re.compile(r"nano banana|imagen", re.I)).or_(self.page.get_by_role("button", name=re.compile(r"nano banana|imagen", re.I))))
-        if not await models.count():
-            raise FlowError("MODEL_UNAVAILABLE", "Model ảnh được yêu cầu không có trong tài khoản Flow.")
-        await models.last.click()
+        exact_model = re.compile(r"^(?:🍌\s*)?" + re.escape(self.model) + "$", re.I)
+        selected_model = (
+            self.page.get_by_role("button", name=exact_model)
+            .or_(self.page.get_by_role("combobox", name=exact_model))
+            .filter(visible=True)
+        )
+        if not await selected_model.count():
+            models = self.page.get_by_text(exact_model).filter(visible=True)
+            if not await models.count():
+                await self._click(
+                    self.page.get_by_role("combobox")
+                    .filter(has_text=image_model_pattern)
+                    .or_(self.page.get_by_role("button", name=image_model_pattern))
+                )
+                models = self.page.get_by_text(exact_model).filter(visible=True)
+            if not await models.count():
+                raise FlowError("MODEL_UNAVAILABLE", "Model ảnh được yêu cầu không có trong tài khoản Flow.")
+            await models.last.click()
         self.config_stage = "FLOW_CONFIG_RATIO"
         ratio = re.compile(re.escape(aspect) + (r"|crop_16_9|landscape|ngang" if aspect == "16:9" else r"|crop_9_16|portrait|dọc"), re.I)
         choices = self.page.get_by_role("button", name=ratio).or_(self.page.get_by_role("radio", name=ratio)).or_(self.page.get_by_role("option", name=ratio)).or_(self.page.get_by_role("menuitem", name=ratio))

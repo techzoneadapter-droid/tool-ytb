@@ -5,46 +5,80 @@ import { generationScript } from "../modules/providers/flow-generation";
 import { configureFlowImages } from "../modules/providers/flow-controls";
 import { navigateFlow } from "../modules/providers/flow-navigation";
 
-test("Vietnamese saved Flow composer uses settings label, ProseMirror and Bắt đầu tạo", async () => {
+test("Synthetic Vietnamese composer smoke test (not live Flow selector evidence)", async () => {
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   try {
     const page = await browser.newPage();
-    // Structural controls read from the supplied saved HTML. The closed
-    // settings overlay is simulated; its contents are absent from the snapshot.
+    // Synthetic menu only checks plumbing; selectors must be validated on live Flow.
     await page.setContent(`<div contenteditable="true" translate="no" class="ProseMirror"><p><br></p></div>
       <button class="agent-mode-chip" aria-pressed="true">Tác nhân</button>
       <button class="settings-trigger-button" aria-label="Điều kiện kích hoạt cài đặt">🍌 Nano Banana Pro <span aria-hidden="true">crop_16_9</span> x1</button>
       <section hidden id="menu"><button>Ảnh</button><button>🍌 Nano Banana Pro</button><button>16:9</button><button>x1</button></section>
       <button type="submit" aria-label="Bắt đầu tạo" disabled>arrow_forward</button>`);
     await page.evaluate(() => {
-      document.querySelector<HTMLButtonElement>(".agent-mode-chip")!.onclick = event => (event.currentTarget as HTMLElement).setAttribute("aria-pressed", "false");
-      document.querySelector<HTMLButtonElement>(".settings-trigger-button")!.onclick = () => { document.querySelector<HTMLElement>("#menu")!.hidden = false; };
-      document.querySelector(".ProseMirror")!.addEventListener("input", () => { document.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled = false; });
-      document.querySelector<HTMLButtonElement>('button[type="submit"]')!.onclick = () => {
-        const canvas = document.createElement("canvas"); canvas.width = 768; canvas.height = 432;
-        const image = new Image(); image.src = canvas.toDataURL(); document.body.append(image);
+      document.querySelector<HTMLButtonElement>(".agent-mode-chip")!.onclick = (
+        event,
+      ) =>
+        (event.currentTarget as HTMLElement).setAttribute(
+          "aria-pressed",
+          "false",
+        );
+      document.querySelector<HTMLButtonElement>(
+        ".settings-trigger-button",
+      )!.onclick = () => {
+        document.querySelector<HTMLElement>("#menu")!.hidden = false;
+      };
+      document.querySelector(".ProseMirror")!.addEventListener("input", () => {
+        document.querySelector<HTMLButtonElement>(
+          'button[type="submit"]',
+        )!.disabled = false;
+      });
+      document.querySelector<HTMLButtonElement>(
+        'button[type="submit"]',
+      )!.onclick = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 768;
+        canvas.height = 432;
+        const image = new Image();
+        image.src = canvas.toDataURL();
+        document.body.append(image);
       };
     });
     await configureFlowImages(page, "Nano Banana Pro", "16:9");
-    assert.equal(await page.locator(".agent-mode-chip").getAttribute("aria-pressed"), "false");
+    assert.equal(
+      await page.locator(".agent-mode-chip").getAttribute("aria-pressed"),
+      "false",
+    );
     await page.locator(".ProseMirror").fill("A forest");
-    const result = await page.evaluate(`(${generationScript("A forest", "16:9")})()`) as { dataUrl: string };
+    const result = (await page.evaluate(
+      `(${generationScript("A forest", "16:9")})()`,
+    )) as { dataUrl: string };
     assert.match(result.dataUrl, /^data:image\/png;base64,/);
-  } finally { await browser.close(); }
+  } finally {
+    await browser.close();
+  }
 });
 
 test("Flow navigation does not wait for a stalled DOMContentLoaded event", async () => {
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   try {
     const page = await browser.newPage();
-    await page.route("https://flow.google.com/**", async route => {
+    await page.route("https://flow.google.com/**", async (route) => {
       if (route.request().url().endsWith("slow.js")) return;
-      await route.fulfill({ contentType: "text/html", body: '<textarea></textarea><script src="/slow.js"></script>' });
+      await route.fulfill({
+        contentType: "text/html",
+        body: '<textarea></textarea><script src="/slow.js"></script>',
+      });
     });
-    assert.equal(await navigateFlow(page, "https://flow.google.com/project/demo", 2000), true);
+    assert.equal(
+      await navigateFlow(page, "https://flow.google.com/project/demo", 2000),
+      true,
+    );
     assert.equal(await page.locator("textarea").isVisible(), true);
     assert.equal(await page.evaluate(() => document.readyState), "loading");
-  } finally { await browser.close(); }
+  } finally {
+    await browser.close();
+  }
 });
 
 test("Flow navigation timeout keeps the page open for recovery", async () => {
@@ -52,18 +86,30 @@ test("Flow navigation timeout keeps the page open for recovery", async () => {
   try {
     const page = await browser.newPage();
     await page.route("https://flow.google.com/**", () => {});
-    assert.equal(await navigateFlow(page, "https://flow.google.com/project/demo", 100), false);
+    assert.equal(
+      await navigateFlow(page, "https://flow.google.com/project/demo", 100),
+      false,
+    );
     assert.equal(page.isClosed(), false);
-  } finally { await browser.close(); }
+  } finally {
+    await browser.close();
+  }
 });
 
 test("Flow navigation reports HTTP errors instead of claiming readiness", async () => {
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   try {
     const page = await browser.newPage();
-    await page.route("https://flow.google.com/**", route => route.fulfill({ status: 403, body: "Forbidden" }));
-    await assert.rejects(navigateFlow(page, "https://flow.google.com/project/demo"), /HTTP 403/);
-  } finally { await browser.close(); }
+    await page.route("https://flow.google.com/**", (route) =>
+      route.fulfill({ status: 403, body: "Forbidden" }),
+    );
+    await assert.rejects(
+      navigateFlow(page, "https://flow.google.com/project/demo"),
+      /HTTP 403/,
+    );
+  } finally {
+    await browser.close();
+  }
 });
 
 test("Flow switches from video to Image and chooses the requested model and ratio", async () => {
@@ -86,7 +132,10 @@ test("Flow switches from video to Image and chooses the requested model and rati
       }
     });
     await configureFlowImages(page, "Nano Banana Pro", "9:16");
-    assert.equal(await page.getByRole("switch", { name: "Agent" }).isChecked(), false);
+    assert.equal(
+      await page.getByRole("switch", { name: "Agent" }).isChecked(),
+      false,
+    );
     for (const id of ["mode", "model", "ratio", "count"])
       assert.equal(
         await page.locator("#" + id).getAttribute("data-selected"),
@@ -227,4 +276,21 @@ test("Flow never submits through an unrelated button or synthetic Enter", async 
   } finally {
     await browser.close();
   }
+});
+
+import { flowFailure } from "../modules/providers/flow-browser";
+
+test("Flow errors preserve stage, original detail and diagnostic paths", () => {
+  const error = flowFailure(
+    {
+      code: "FLOW_CONFIG_RATIO",
+      stage: "FLOW_CONFIG_RATIO",
+      error: "TimeoutError: exact locator failure",
+      diagnostics: { html: "data/flow-diagnostics/failure.html" },
+    },
+    "fallback",
+  );
+  assert.equal(error.message.split("FLOW_CONFIG_RATIO").length, 2);
+  assert.match(error.message, /TimeoutError: exact locator failure/);
+  assert.match(error.message, /failure\.html/);
 });

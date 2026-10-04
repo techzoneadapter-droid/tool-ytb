@@ -33,7 +33,7 @@ async def local_only(request: Request, call_next):
 @app.exception_handler(FlowError)
 async def flow_error(request, error):
     status = 401 if error.code == "COOKIE_EXPIRED" else 400 if error.code.startswith("INVALID_") else 409
-    return JSONResponse({"error": str(error), "code": error.code}, status_code=status)
+    return JSONResponse({"error": str(error), "code": error.code, "stage": error.stage, "diagnostics": error.diagnostics}, status_code=status)
 
 
 async def payload(request):

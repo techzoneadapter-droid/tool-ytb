@@ -4,15 +4,20 @@ import math
 import os
 import re
 import time
+import traceback
+from pathlib import Path
+from uuid import uuid4
 from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 
 class FlowError(Exception):
-    def __init__(self, code, message):
+    def __init__(self, code, message, stage=None, diagnostics=None):
         super().__init__(message)
         self.code = code
+        self.stage = stage
+        self.diagnostics = diagnostics
 
 
 def normalize_cookies(cookie_json, now=None):
@@ -139,7 +144,7 @@ class FlowAutomation:
         except FlowError as error:
             await self.close()
             self.state = "login_required" if error.code in ("COOKIE_EXPIRED", "AUTH_UNCONFIRMED") else "error"
-            self.last_error = str(error)
+            self.last_error = f"[{error.code}] {error}"
             raise
         except Exception:
             await self.close()
@@ -155,24 +160,70 @@ class FlowAutomation:
         return True
 
     async def _configure(self, aspect):
+        self.config_stage = "FLOW_CONFIG_AGENT"
+        try:
+            await self._configure_controls(aspect)
+        except Exception as cause:
+            stage = self.config_stage
+            diagnostics = await self._capture_config_failure(stage, cause, aspect)
+            original = cause.code if isinstance(cause, FlowError) else type(cause).__name__
+            raise FlowError(stage, f"{original}: {cause}", stage=stage, diagnostics=diagnostics) from cause
+
+    async def _capture_config_failure(self, stage, cause, aspect):
+        directory = Path(os.getenv("FLOW_DIAGNOSTICS_DIR", "data/flow-diagnostics")).resolve()
+        prefix = directory / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}-{stage}"
+        result = {}
+        failures = []
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except Exception as error:
+            return {"captureErrors": [f"directory: {error}"]}
+        for kind in ("screenshot", "html"):
+            target = str(prefix) + (".png" if kind == "screenshot" else ".html")
+            try:
+                if kind == "screenshot":
+                    await self.page.screenshot(path=target, full_page=True, timeout=10000)
+                else:
+                    Path(target).write_text(await self.page.content(), encoding="utf-8")
+                result[kind] = target
+            except Exception as error:
+                failures.append(f"{kind}: {error}")
+        metadata = {"stage": stage, "error": str(cause), "errorType": type(cause).__name__,
+                    "model": self.model, "aspect": aspect, "url": self.page.url,
+                    "traceback": traceback.format_exc(), "artifacts": dict(result), "captureErrors": failures}
+        try:
+            target = str(prefix) + ".json"
+            Path(target).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            result["metadata"] = target
+        except Exception as error:
+            failures.append(f"metadata: {error}")
+        if failures:
+            result["captureErrors"] = failures
+        return result
+
+    async def _configure_controls(self, aspect):
         agent = self.page.get_by_role("button", name=re.compile(r"^(agent|tác nhân)$", re.I)).filter(visible=True).first
         if await agent.count() and await agent.get_attribute("aria-pressed") == "true":
             await agent.click()
         agent_switch = self.page.get_by_role("switch", name=re.compile(r"^(agent|tác nhân)$", re.I)).filter(visible=True).first
         if await agent_switch.count() and await agent_switch.is_checked():
             await agent_switch.uncheck()
+        self.config_stage = "FLOW_CONFIG_PICKER"
         picker = self.page.locator("button.settings-trigger-button").or_(self.page.get_by_role("button", name=re.compile(r"nano banana|imagen|veo|Điều kiện kích hoạt cài đặt", re.I)))
         if not await self._click(picker):
             raise FlowError("UI_CHANGED", "Không tìm thấy bộ chọn model Flow.")
+        self.config_stage = "FLOW_CONFIG_MODE"
         modes = re.compile(r"^(image|images|create images|tạo ảnh|hình ảnh|ảnh)$", re.I)
         if not await self._click(self.page.get_by_role("tab", name=modes).or_(self.page.get_by_role("button", name=modes)).or_(self.page.get_by_role("menuitem", name=modes))):
             raise FlowError("UI_CHANGED", "Không xác nhận được chế độ tạo ảnh; chưa gửi prompt.")
+        self.config_stage = "FLOW_CONFIG_MODEL"
         models = self.page.get_by_text(re.compile(r"^(?:🍌\s*)?" + re.escape(self.model) + "$", re.I)).filter(visible=True)
         if not await models.count():
             await self._click(self.page.get_by_role("combobox").filter(has_text=re.compile(r"nano banana|imagen", re.I)).or_(self.page.get_by_role("button", name=re.compile(r"nano banana|imagen", re.I))))
         if not await models.count():
             raise FlowError("MODEL_UNAVAILABLE", "Model ảnh được yêu cầu không có trong tài khoản Flow.")
         await models.last.click()
+        self.config_stage = "FLOW_CONFIG_RATIO"
         ratio = re.compile(re.escape(aspect) + (r"|crop_16_9|landscape|ngang" if aspect == "16:9" else r"|crop_9_16|portrait|dọc"), re.I)
         choices = self.page.get_by_role("button", name=ratio).or_(self.page.get_by_role("radio", name=ratio)).or_(self.page.get_by_role("option", name=ratio)).or_(self.page.get_by_role("menuitem", name=ratio))
         if not await self._click(choices):
@@ -180,8 +231,10 @@ class FlowAutomation:
             await self._click(self.page.get_by_role("combobox").filter(has_text=re.compile(r"16:9|9:16|landscape|portrait", re.I)))
             if not await self._click(choices):
                 raise FlowError("UI_CHANGED", "Không chọn được tỷ lệ ảnh Flow.")
+        self.config_stage = "FLOW_CONFIG_COUNT"
         if not await self._click(self.page.get_by_role("button", name=re.compile(r"^(x1|1x|1)$", re.I)).or_(self.page.get_by_role("radio", name=re.compile(r"^(x1|1x|1)$", re.I)))):
             raise FlowError("UI_CHANGED", "Không xác nhận được số ảnh x1; chưa gửi prompt.")
+        self.config_stage = "FLOW_CONFIG_CLOSE"
         await self.page.keyboard.press("Escape")
 
     async def generate_image(self, prompt, aspect="16:9"):
@@ -234,7 +287,7 @@ class FlowAutomation:
             raise FlowError("GENERATION_TIMEOUT", "Flow chưa trả ảnh trong thời gian chờ. Kiểm tra trước khi thử lại để tránh tạo trùng.")
         except FlowError as error:
             self.state = "login_required" if error.code in ("COOKIE_EXPIRED", "AUTH_UNCONFIRMED") else "ready"
-            self.last_error = str(error)
+            self.last_error = f"[{error.code}] {error}"
             raise
         except Exception:
             self.state = "error"

@@ -15,6 +15,26 @@ function bridgeURL() {
   return url;
 }
 
+export function flowFailure(
+  body: {
+    error?: string;
+    code?: string;
+    stage?: string;
+    diagnostics?: Record<string, unknown>;
+  } | null,
+  fallback: string,
+) {
+  const label = [body?.code, body?.stage]
+    .filter((value, index, values) => value && values.indexOf(value) === index)
+    .join(" | ");
+  const artifacts = body?.diagnostics
+    ? "\nDiagnostic: " + JSON.stringify(body.diagnostics)
+    : "";
+  return new Error(
+    (label ? `[${label}] ` : "") + (body?.error || fallback) + artifacts,
+  );
+}
+
 async function call<T>(
   path: string,
   init: RequestInit = {},
@@ -32,10 +52,10 @@ async function call<T>(
   });
   const type = response.headers.get("content-type") || "";
   if (!response.ok) {
-    const message = type.includes("application/json")
-      ? (await response.json().catch(() => null))?.error
-      : await response.text().catch(() => "");
-    throw Error(message || `Flow Worker lỗi HTTP ${response.status}.`);
+    const body = type.includes("application/json")
+      ? await response.json().catch(() => null)
+      : { error: await response.text().catch(() => "") };
+    throw flowFailure(body, `Flow Worker lỗi HTTP ${response.status}.`);
   }
   if (type.includes("application/json")) return response.json() as Promise<T>;
   return (await response.arrayBuffer()) as T;
@@ -47,7 +67,14 @@ export type FlowHealth = {
   bridgeReady: boolean;
   browserOpen: boolean;
   connected: boolean;
-  state?: "disconnected" | "connecting" | "login_required" | "project_required" | "ready" | "generating" | "error";
+  state?:
+    | "disconnected"
+    | "connecting"
+    | "login_required"
+    | "project_required"
+    | "ready"
+    | "generating"
+    | "error";
   background?: boolean;
   projectConfigured: boolean;
   currentUrl?: string;
@@ -76,8 +103,15 @@ export async function flowHealth(): Promise<FlowHealth> {
   }
 }
 
-export async function initializeFlowSession(cookieJson: string, projectUrl: string) {
-  return call<FlowHealth>("/session", { method: "POST", body: JSON.stringify({ cookieJson, projectUrl }) }, 160000);
+export async function initializeFlowSession(
+  cookieJson: string,
+  projectUrl: string,
+) {
+  return call<FlowHealth>(
+    "/session",
+    { method: "POST", body: JSON.stringify({ cookieJson, projectUrl }) },
+    160000,
+  );
 }
 
 export async function generateWithFlow(
@@ -101,9 +135,9 @@ export async function generateWithFlow(
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw Error(
-      body?.error ||
-        `Google Flow không tạo được ảnh (HTTP ${response.status}).`,
+    throw flowFailure(
+      body,
+      `Google Flow không tạo được ảnh (HTTP ${response.status}).`,
     );
   }
   const mime = response.headers.get("content-type") || "image/png";

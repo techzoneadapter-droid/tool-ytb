@@ -191,6 +191,26 @@ export function PipelineProgress({
         </div>
       )}
 
+      {data.failedJobs.map(
+        (job) =>
+          job.error && (
+            <pre
+              key={job.id}
+              role="alert"
+              style={{
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                fontFamily: "inherit",
+              }}
+            >
+              {job.batchIndex !== undefined
+                ? `Video ${job.batchIndex + 1}: `
+                : ""}
+              {job.error}
+            </pre>
+          ),
+      )}
+
       <div className="batch-progress-footer">
         <div className="batch-progress-meta">
           <span>

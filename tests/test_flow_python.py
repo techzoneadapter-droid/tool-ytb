@@ -7,6 +7,7 @@ import time
 import urllib.request
 import urllib.error
 import unittest
+import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -135,7 +136,44 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
             await FlowAutomation().generate_image("forest")
         self.assertEqual(caught.exception.code, "SESSION_REQUIRED")
 
-    async def test_real_headless_vietnamese_composer(self):
+    async def test_configuration_failure_keeps_stage_and_artifacts(self):
+        session = FlowAutomation()
+        session.page = AsyncMock()
+        session.page.url = "https://flow.google.com/project/test"
+        session.page.content.return_value = "<html>actual failure state</html>"
+        async def fail(aspect):
+            session.config_stage = "FLOW_CONFIG_RATIO"
+            raise RuntimeError("locator click timeout: original detail")
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"FLOW_DIAGNOSTICS_DIR": directory}), patch.object(session, "_configure_controls", fail):
+            with self.assertRaises(FlowError) as caught:
+                await session._configure("16:9")
+            error = caught.exception
+            self.assertEqual(error.code, "FLOW_CONFIG_RATIO")
+            self.assertEqual(error.stage, "FLOW_CONFIG_RATIO")
+            self.assertIn("locator click timeout: original detail", str(error))
+            self.assertEqual(Path(error.diagnostics["html"]).read_text(encoding="utf-8"), "<html>actual failure state</html>")
+            metadata = json.loads(Path(error.diagnostics["metadata"]).read_text(encoding="utf-8"))
+            self.assertEqual(metadata["aspect"], "16:9")
+            self.assertIn("RuntimeError", metadata["traceback"])
+            session.page.screenshot.assert_awaited_once()
+
+    async def test_diagnostic_failure_does_not_replace_configuration_error(self):
+        session = FlowAutomation()
+        session.page = AsyncMock()
+        session.page.url = "https://flow.google.com/project/test"
+        session.page.screenshot.side_effect = RuntimeError("browser closed")
+        session.page.content.side_effect = RuntimeError("browser closed")
+        async def fail(aspect):
+            session.config_stage = "FLOW_CONFIG_MODEL"
+            raise FlowError("MODEL_UNAVAILABLE", "requested model missing")
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"FLOW_DIAGNOSTICS_DIR": directory}), patch.object(session, "_configure_controls", fail):
+            with self.assertRaises(FlowError) as caught:
+                await session._configure("16:9")
+            self.assertEqual(caught.exception.code, "FLOW_CONFIG_MODEL")
+            self.assertIn("MODEL_UNAVAILABLE: requested model missing", str(caught.exception))
+            self.assertEqual(len(caught.exception.diagnostics["captureErrors"]), 2)
+
+    async def test_synthetic_composer_smoke_only(self):
         from playwright.async_api import async_playwright
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(channel="chrome", headless=True)

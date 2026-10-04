@@ -49,27 +49,9 @@ export type FlowHealth = {
   currentUrl?: string;
   title?: string;
   model?: string;
-  profileMode?: "storyflow" | "chrome";
-  profileDirectory?: string;
+  cdpUrl?: string;
+  pages?: number;
   message: string;
-};
-
-export type FlowProfile = {
-  id: string;
-  mode: "storyflow" | "chrome";
-  directory: string;
-  name: string;
-  email?: string;
-  recommended?: boolean;
-};
-
-export type FlowProfiles = {
-  profiles: FlowProfile[];
-  selection: {
-    mode: "storyflow" | "chrome";
-    profileDirectory: string;
-  };
-  chromeUserDataDir?: string;
 };
 
 export async function flowHealth(): Promise<FlowHealth> {
@@ -84,31 +66,24 @@ export async function flowHealth(): Promise<FlowHealth> {
       connected: false,
       projectConfigured: !!process.env.FLOW_PROJECT_URL,
       model: process.env.FLOW_MODEL_LABEL || "Nano Banana Pro",
+      cdpUrl: process.env.FLOW_CDP_URL || "http://127.0.0.1:9222",
       message:
-        "Flow Worker chưa chạy. Bấm Kết nối Flow để StoryFlow tự khởi động.",
+        "Flow Worker chưa chạy. Bấm Kết nối Flow để gắn vào Chrome đang mở.",
     };
   }
 }
 
-export async function flowProfiles() {
-  return call<FlowProfiles>("/profiles", {}, 5000);
-}
-
-export async function openFlowBrowser(options?: {
-  profileMode?: "storyflow" | "chrome";
-  profileDirectory?: string;
-}) {
+export async function openFlowBrowser() {
   return call<FlowHealth>(
     "/open",
     {
       method: "POST",
       body: JSON.stringify({
         projectUrl: process.env.FLOW_PROJECT_URL || "",
-        profileMode: options?.profileMode,
-        profileDirectory: options?.profileDirectory,
+        cdpUrl: process.env.FLOW_CDP_URL || "http://127.0.0.1:9222",
       }),
     },
-    120000,
+    30000,
   );
 }
 
@@ -124,6 +99,7 @@ export async function generateWithFlow(
       aspect,
       projectUrl: process.env.FLOW_PROJECT_URL || "",
       model: process.env.FLOW_MODEL_LABEL || "Nano Banana Pro",
+      cdpUrl: process.env.FLOW_CDP_URL || "http://127.0.0.1:9222",
     }),
     signal: AbortSignal.timeout(
       Number(process.env.FLOW_GENERATION_TIMEOUT_MS || 420000) + 30000,

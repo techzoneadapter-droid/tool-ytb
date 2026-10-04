@@ -302,9 +302,9 @@ export function ProviderStatus({
       )}
       {settings.imageProvider === "flow-browser" && !p?.flow?.connected && (
         <p className="notice">
-          StoryFlow sẽ gắn trực tiếp vào Chrome đang mở qua DevTools. Hãy mở
-          đúng Chrome đã đăng nhập Flow Plus và tab Google Flow trước khi kết nối.
-          Mặc định StoryFlow dùng {p?.flow?.cdpUrl || "http://127.0.0.1:9222"}.
+          StoryFlow sẽ gắn trực tiếp vào Chrome đang mở bằng Chrome DevTools
+          Auto Connect. Lần đầu, Chrome sẽ yêu cầu bật Remote Debugging và xác
+          nhận quyền; sau đó StoryFlow dùng chính phiên Flow Plus hiện tại.
         </p>
       )}
       {settings.imageProvider === "flow-browser" && (

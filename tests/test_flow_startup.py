@@ -102,7 +102,10 @@ uvicorn.run(server.app, host='127.0.0.1', port=PORT, access_log=False)
                     self.assertEqual(current["restoreCalls"], 1)
                     self.assertEqual(current["maxConcurrentGeneration"], 1)
             finally:
-                process.terminate()
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+                else:
+                    process.terminate()
                 process.wait(timeout=10)
                 log.close()
 

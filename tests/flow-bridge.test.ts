@@ -11,6 +11,7 @@ test("bridge receives raw image bytes and preserves structured Flow errors", asy
   const saved = process.env.FLOW_BRIDGE_URL;
   const image = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   let fail = false;
+  let mappingHeaders = false;
   const server = createServer((request, response) => {
     request.resume();
     if (request.url === "/health") {
@@ -39,6 +40,7 @@ test("bridge receives raw image bytes and preserves structured Flow errors", asy
       response.writeHead(200, {
         "Content-Type": "image/png",
         "X-StoryFlow-Model": "project-current",
+        ...(mappingHeaders ? { "X-StoryFlow-Request": "flow_fixture", "X-StoryFlow-Chapter": "chapter-fixture" } : {}),
       });
       response.end(image);
     }
@@ -50,6 +52,10 @@ test("bridge receives raw image bytes and preserves structured Flow errors", asy
     const result = await generateWithFlow("fixture", "16:9");
     assert.ok(Buffer.isBuffer(result.bytes));
     assert.deepEqual(result.bytes, image);
+    const mapping = { requestId: "flow_fixture", projectId: "project-fixture", chapterId: "chapter-fixture" };
+    await assert.rejects(generateWithFlow("fixture", "16:9", undefined, mapping), (error: any) => error.code === "FLOW_RESULT_MAPPING_FAILED");
+    mappingHeaders = true;
+    assert.deepEqual((await generateWithFlow("fixture", "16:9", undefined, mapping)).bytes, image);
     fail = true;
     await assert.rejects(generateWithFlow("fixture", "16:9"), (error) => {
       assert.equal((error as { code: string }).code, "FLOW_SUBMIT_FAILED");

@@ -1,15 +1,15 @@
 import sharp from "sharp";
 import { mkdir, unlink, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Settings } from "../project/types";
+import type { Settings, ChapterImageJob } from "../project/types";
 import { requireImage } from "../providers/config";
 import { localGenerate, publishGenerated } from "../providers/local-workers";
 import { makeModalImage, makeModalStoryBatch } from "./modal";
 import { aiHordeImage, pollinationsImage } from "../providers/free-cloud";
 import { generateWithFlow, flowFailure } from "../providers/flow-browser";
 
-export async function makeFlowImageBuffer(prompt: string, settings: Settings, onStage?: (stage: string) => void) {
-  const generated = await generateWithFlow(prompt, settings.aspect, onStage);
+export async function makeFlowImageBuffer(prompt: string, settings: Settings, onStage?: (stage: string) => void, mapping?: ChapterImageJob) {
+  const generated = await generateWithFlow(prompt, settings.aspect, onStage, mapping);
   try {
     const metadata = await sharp(generated.bytes, { limitInputPixels: 40000000 }).metadata();
     if ((metadata.width || 0) < 512 || (metadata.height || 0) < 512) throw Error("Ảnh Flow phải có cả hai chiều tối thiểu 512px.");

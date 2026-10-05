@@ -36,7 +36,7 @@ class ServerTests(unittest.TestCase):
                     if time.monotonic() > deadline:
                         self.fail("Flow Python HTTP server did not start")
                     time.sleep(0.1)
-            self.assertEqual(health["protocol"], 22)
+            self.assertEqual(health["protocol"], 23)
             self.assertFalse(health["connected"])
             self.assertTrue(health["background"])
             for endpoint, data, headers, expected, code in (
@@ -54,7 +54,10 @@ class ServerTests(unittest.TestCase):
                 if code:
                     self.assertEqual(body["code"], code)
         finally:
-            process.terminate()
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                process.terminate()
             process.wait(timeout=10)
 
 
@@ -139,11 +142,11 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
                 await page.route('https://flow.google.com/**', lambda route: route.fulfill(body='<textarea></textarea><button>Generate</button>', content_type='text/html'))
                 await page.goto('https://flow.google.com/project/test')
                 session = FlowAutomation(); session.page = page; session.state = 'ready'
-                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'FLOW_GENERATION_START_TIMEOUT_MS': '150', 'FLOW_DEBUG': '0', 'FLOW_DIAGNOSTICS_DIR': directory}):
+                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'FLOW_GENERATION_START_TIMEOUT_MS': '150', 'FLOW_GENERATION_TIMEOUT_MS': '150', 'FLOW_DEBUG': '0', 'FLOW_DIAGNOSTICS_DIR': directory}):
                     with self.assertRaises(FlowError) as caught:
                         await session.generate_image('Do not claim success')
-                    self.assertEqual(caught.exception.code, 'FLOW_GENERATION_START_TIMEOUT')
-                    self.assertEqual(caught.exception.stage, 'FLOW_GENERATION_START_WAIT')
+                    self.assertEqual(caught.exception.code, 'FLOW_RESULT_NOT_FOUND')
+                    self.assertEqual(caught.exception.stage, 'FLOW_GENERATION_WAIT')
                     self.assertIsNone(caught.exception.diagnostics)
                     self.assertEqual(list(Path(directory).iterdir()), [])
             finally:

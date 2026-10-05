@@ -1,4 +1,7 @@
 export type Scene = {
+  chapterId?: string;
+  chapterMasterImage?: string;
+  chapterSceneIndex?: number;
   flow?: {
     sceneId: string;
     chapterId: string;
@@ -37,6 +40,8 @@ export type Scene = {
   approved: boolean;
 };
 export type Chapter = {
+  masterImage?: ChapterImageJob;
+  chapterImageGenerationCount?: number;
   visualProfile?: VisualProfile;
   id: string;
   title: string;
@@ -95,11 +100,57 @@ export type Settings = {
   brandColor: string;
 };
 export type Project = {
+  characterBible?: CharacterBible;
   id: string;
   name: string;
   createdAt: string;
   chapters: Chapter[];
   settings: Settings;
+};
+export type ChapterImageJob = {
+  generationCount?: number;
+  submitCount?: number;
+  imageCount?: number;
+  requestId: string;
+  projectId: string;
+  chapterId: string;
+  chapterIndex: number;
+  prompt: string;
+  status:
+    | "pending"
+    | "preparing"
+    | "submitting"
+    | "generating"
+    | "capturing"
+    | "ready"
+    | "error";
+  startedAt?: string;
+  completedAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  errorStage?: string;
+};
+export type ChapterRuntimeContext = {
+  chapterId: string;
+  masterImageBuffer?: Buffer;
+  masterImageMime?: string;
+};
+export type CharacterBible = {
+  version: 1;
+  referenceImageStatus: "NOT CURRENTLY VERIFIED";
+  characters: {
+    characterId: string;
+    name: string;
+    gender: string;
+    approximateAge: number | null;
+    faceDescription: string;
+    hair: string;
+    body: string;
+    clothing: string;
+    distinctiveFeatures: string;
+    role: string;
+    sourceDescription: string;
+  }[];
 };
 export type Job = {
   startedAt?: string;
@@ -127,6 +178,7 @@ export type Job = {
     motion?: number;
     audio: number;
     image: number;
+    imageTotal?: number;
     rendered?: number;
     total: number;
     failed: number;
@@ -169,7 +221,15 @@ export type Job = {
   srt?: string;
   vtt?: string;
   error?: string;
-  sceneErrors?: { sceneId: string; chapterId: string; sceneIndex: number; code: string; stage: string; message: string }[];
+  sceneErrors?: {
+    requestId?: string;
+    sceneId: string;
+    chapterId: string;
+    sceneIndex: number;
+    code: string;
+    stage: string;
+    message: string;
+  }[];
   createdAt: string;
   snapshot: Pick<Project, "settings">;
 };

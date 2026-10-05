@@ -271,47 +271,160 @@ async function main() {
         }
         updateJob(job.id, { message: "Đã kiểm tra ảnh cảnh / ảnh dùng chung" });
       }
-      const flowScenePipeline = s.imageProvider === "flow-browser" && s.imageEnabled !== false && ["pipeline", "prepare", "image", "render"].includes(kind);
-      if (flowScenePipeline) {
-        updateJob(job.id, { sceneErrors: [], error: undefined });
-        const started = new Map<string, number>();
-        const stageLabels: Record<string, string> = {
-          FLOW_SERVICE_START: "Khởi động Flow Worker...", FLOW_SESSION_RESTORE: "Đang khôi phục phiên Flow...",
-          FLOW_SESSION_CONNECT: "Đang khôi phục phiên Flow...", FLOW_PROJECT_OPEN: "Đang mở dự án Flow...",
-          FLOW_COMPOSER_WAIT: "Đang chờ trình tạo ảnh...", FLOW_READY: "Flow sẵn sàng",
-          FLOW_PROMPT_FIND: "Tìm composer", FLOW_PROMPT_INJECT: "Điền prompt", FLOW_PROMPT_SYNC: "Xác nhận state prompt",
-          FLOW_SUBMIT_DISCOVER: "Tìm nút Generate", FLOW_SUBMIT_ATTEMPT_1: "Gửi prompt lần 1", FLOW_SUBMIT_VERIFY_1: "Xác nhận submit",
-          FLOW_SUBMIT_ATTEMPT_2: "Gửi bằng phương pháp dự phòng", FLOW_GENERATION_START_WAIT: "Xác nhận generation",
-          FLOW_GENERATING: "Flow đang tạo ảnh", FLOW_RESULT_WAIT: "Chờ ảnh", FLOW_RESULT_READY: "Đã nhận ảnh",
-          FLOW_AUTH: "Kiểm tra phiên", FLOW_COMPOSER_READY: "Composer sẵn sàng",
-          FLOW_PROMPT_INPUT: "Điền prompt", FLOW_PROMPT_SENT: "Đã gửi prompt",
-          FLOW_GENERATION_START: "Xác nhận generation", FLOW_GENERATION_STARTED: "Generation đã bắt đầu",
-          FLOW_WAIT_IMAGE: "Đã gửi prompt · Đang chờ model của project", FLOW_RESULT_DOWNLOAD: "Nhận bytes trong RAM",
-        };
-        const errors = await processProjectFlowScenes(p, job, scenes, event => {
-            const done = scenes.filter(scene => scene.flow?.status === "done").length;
-            const failed = scenes.filter(scene => scene.flow?.status === "error").length;
-            const status = event.status === "tts" ? "audio" : event.status === "rendering" || event.status === "done" ? "rendering" : "images";
-            const label = event.status === "tts" ? "Lời đọc" : event.status === "rendering" || event.status === "done" ? "Dựng cảnh" : "Tạo ảnh";
-            started.set(event.scene.id, started.get(event.scene.id) || Date.now());
-            const detail = `Cảnh ${event.index + 1}/${scenes.length} · ${event.stage ? stageLabels[event.stage] || event.stage : event.detail}${event.fraction === undefined ? "" : ` · FFmpeg ${Math.round(event.fraction * 100)}%`}`;
-            reportStage(status, label, done, scenes.length, detail, configuredLimit("FLOW_CONCURRENCY", 1, 2), Math.floor((done / scenes.length) * 75));
-            const current = get<Job>(job.id, "job");
-            if (!["paused", "cancelled"].includes(current.status)) updateJob(job.id, {
-              counts: { audio: scenes.filter(scene => scene.audioStatus === "done" || s.audioEnabled === false).length, image: scenes.filter(scene => scene.flow?.imageGenerated).length, rendered: done, failed, total: scenes.length },
-              completedItems: scenes.filter(scene => scene.flow?.status === "done").flatMap(scene => [scene.id + ":audio", scene.id + ":image", scene.id + ":render"]),
-              stageProgress: current.stageProgress ? { ...current.stageProgress, elapsedSeconds: Math.floor((Date.now() - started.get(event.scene.id)!) / 1000) } : undefined,
-              sceneErrors: scenes.flatMap((scene, index) => scene.flow?.status === "error" ? [{ sceneId: scene.id, chapterId: scene.flow.chapterId, sceneIndex: index + 1, code: scene.flow.errorCode!, stage: scene.flow.errorStage!, message: scene.flow.errorMessage! }] : []),
-            });
-        });
-        updateJob(job.id, { sceneErrors: errors });
-        if (errors.length) throw Error(errors.map(error => `Cảnh ${error.sceneIndex}: [${error.code}] ${error.stage} · ${error.message}`).join("\n"));
-        if (["prepare", "image"].includes(kind)) {
-          updateJob(job.id, { status: "ready", progress: 100, message: `Đã lưu ${scenes.length} scene MP4 trong Quản lý video; ảnh đã giải phóng khỏi RAM.` });
-          return;
-        }
-      }
-      if (kind !== "render" && !flowScenePipeline) {
+      const flowScenePipeline =
+            s.imageProvider === "flow-browser" &&
+            s.imageEnabled !== false &&
+            ["pipeline", "prepare", "image", "render"].includes(kind);
+          if (flowScenePipeline) {
+            updateJob(job.id, { sceneErrors: [], error: undefined });
+            const started = new Map<string, number>();
+            const stageLabels: Record<string, string> = {
+              FLOW_SERVICE_START: "Khởi động Flow Worker...",
+              FLOW_SESSION_RESTORE: "Đang khôi phục phiên Flow...",
+              FLOW_SESSION_CONNECT: "Đang khôi phục phiên Flow...",
+              FLOW_PROJECT_OPEN: "Đang mở dự án Flow...",
+              FLOW_COMPOSER_WAIT: "Đang chờ trình tạo ảnh...",
+              FLOW_READY: "Flow sẵn sàng",
+              FLOW_PROMPT_FIND: "Tìm composer",
+              FLOW_PROMPT_INJECT: "Điền prompt",
+              FLOW_PROMPT_SYNC: "Xác nhận state prompt",
+              FLOW_SUBMIT_DISCOVER: "Tìm nút Generate",
+              FLOW_SUBMIT_ATTEMPT_1: "Gửi prompt lần 1",
+              FLOW_SUBMIT_VERIFY_1: "Xác nhận submit",
+              FLOW_SUBMIT_ATTEMPT_2: "Gửi bằng phương pháp dự phòng",
+              FLOW_GENERATION_START_WAIT: "Xác nhận generation",
+              FLOW_GENERATING: "Flow đang tạo ảnh",
+              FLOW_RESULT_WAIT: "Chờ ảnh",
+              FLOW_RESULT_READY: "Đã nhận ảnh",
+              FLOW_AUTH: "Kiểm tra phiên",
+              FLOW_COMPOSER_READY: "Composer sẵn sàng",
+              FLOW_PROMPT_INPUT: "Điền prompt",
+              FLOW_PROMPT_SENT: "Đã gửi prompt",
+              FLOW_GENERATION_START: "Xác nhận generation",
+              FLOW_GENERATION_STARTED: "Generation đã bắt đầu",
+              FLOW_WAIT_IMAGE: "Đã gửi prompt · Đang chờ model của project",
+              FLOW_RESULT_DOWNLOAD: "Nhận bytes trong RAM",
+            };
+            const errors = await processProjectFlowScenes(
+              p,
+              job,
+              scenes,
+              (event) => {
+                const done = scenes.filter(
+                  (scene) => scene.flow?.status === "done",
+                ).length;
+                const failed = scenes.filter(
+                  (scene) => scene.flow?.status === "error",
+                ).length;
+                const status =
+                  event.status === "tts"
+                    ? "audio"
+                    : event.status === "rendering" || event.status === "done"
+                      ? "rendering"
+                      : "images";
+                const label =
+                  event.status === "tts"
+                    ? "Lời đọc"
+                    : event.status === "rendering" || event.status === "done"
+                      ? "Dựng video"
+                      : "Tạo ảnh chương";
+                started.set(
+                  event.scene.id,
+                  started.get(event.scene.id) || Date.now(),
+                );
+                const chapter = p.chapters.find(
+                  (c) => c.id === event.chapterId,
+                );
+                const imageStage = event.status === "image";
+                const detail = `${chapter?.title || "Chương"} · ${imageStage ? "Ảnh master" : `Cảnh ${(event.scene.chapterSceneIndex || 0) + 1}/${chapter?.scenes.length || scenes.length}`} · ${event.stage ? stageLabels[event.stage] || event.stage : event.detail}${event.fraction === undefined ? "" : ` · FFmpeg ${Math.round(event.fraction * 100)}%`}`;
+                reportStage(
+                  status,
+                  label,
+                  imageStage
+                    ? p.chapters.filter(
+                        (c) =>
+                          job.chapterIds.includes(c.id) &&
+                          c.masterImage?.status === "ready",
+                      ).length
+                    : done,
+                  imageStage ? job.chapterIds.length : scenes.length,
+                  detail,
+                  imageStage
+                    ? 1
+                    : configuredLimit("FLOW_RENDER_CONCURRENCY", 2, 4),
+                  Math.floor((done / scenes.length) * 75),
+                );
+                const current = get<Job>(job.id, "job");
+                if (!["paused", "cancelled"].includes(current.status))
+                  updateJob(job.id, {
+                    counts: {
+                      audio: scenes.filter(
+                        (scene) =>
+                          scene.audioStatus === "done" ||
+                          s.audioEnabled === false,
+                      ).length,
+                      image: p.chapters.filter(
+                        (chapter) =>
+                          job.chapterIds.includes(chapter.id) &&
+                          chapter.masterImage?.status === "ready",
+                      ).length,
+                      imageTotal: job.chapterIds.length,
+                      rendered: done,
+                      failed,
+                      total: scenes.length,
+                    },
+                    completedItems: scenes
+                      .filter((scene) => scene.flow?.status === "done")
+                      .flatMap((scene) => [
+                        scene.id + ":audio",
+                        scene.id + ":image",
+                        scene.id + ":render",
+                      ]),
+                    stageProgress: current.stageProgress
+                      ? {
+                          ...current.stageProgress,
+                          elapsedSeconds: Math.floor(
+                            (Date.now() - started.get(event.scene.id)!) / 1000,
+                          ),
+                        }
+                      : undefined,
+                    sceneErrors: scenes.flatMap((scene, index) =>
+                      scene.flow?.status === "error"
+                        ? [
+                            {
+                              sceneId: scene.id,
+                              chapterId: scene.flow.chapterId,
+                              sceneIndex: index + 1,
+                              code: scene.flow.errorCode!,
+                              stage: scene.flow.errorStage!,
+                              message: scene.flow.errorMessage!,
+                            },
+                          ]
+                        : [],
+                    ),
+                  });
+              },
+            );
+            updateJob(job.id, { sceneErrors: errors });
+            if (errors.length)
+              throw Error(
+                errors
+                  .map(
+                    (error) =>
+                      `${p.chapters.find((c) => c.id === error.chapterId)?.masterImage?.status === "error" ? "Ảnh master chương" : "Cảnh " + error.sceneIndex}: [${error.code}] ${error.stage} · ${error.message}`,
+                  )
+                  .join("\n"),
+              );
+            if (["prepare", "image"].includes(kind)) {
+              updateJob(job.id, {
+                status: "ready",
+                progress: 100,
+                message: `Đã lưu ${scenes.length} scene MP4 trong Quản lý video; ảnh đã giải phóng khỏi RAM.`,
+              });
+              return;
+            }
+          }
+          if (kind !== "render" && !flowScenePipeline) {
         let completed = 0;
         let failed = 0;
         const completedItems = new Set(job.completedItems || []);

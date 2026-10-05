@@ -191,38 +191,84 @@ export function PipelineProgress({
         </div>
       )}
 
-      {data.batchJobs.some(job => job.sceneErrors?.length) && (
+      {project.settings.imageProvider === "flow-browser" &&
+        project.chapters
+          .filter((c) =>
+            data.batchJobs.some((j) => j.chapterIds.includes(c.id)),
+          )
+          .map((chapter) => (
+            <div className="batch-progress-live" key={chapter.id}>
+              <strong>{chapter.title}</strong>
+              <span>
+                Ảnh master:{" "}
+                {chapter.masterImage?.status === "ready"
+                  ? "✓ Sẵn sàng"
+                  : chapter.masterImage?.status === "error"
+                    ? "Lỗi · " + chapter.masterImage.errorCode
+                    : chapter.masterImage
+                      ? "Đang tạo ảnh master…"
+                      : "Đang chờ"}
+              </span>
+              <span>
+                Dựng video:{" "}
+                {chapter.scenes.filter((s) => s.flow?.status === "done").length}
+                /{chapter.scenes.length} cảnh
+              </span>
+              {chapter.masterImage?.status === "error" && (
+                <details>
+                  <summary>Chi tiết lỗi ảnh chương</summary>
+                  {chapter.masterImage.errorMessage}
+                </details>
+              )}
+            </div>
+          ))}
+
+      {data.batchJobs.some((job) => job.sceneErrors?.length) && (
         <details className="notice">
           <summary>Lỗi cảnh · các MP4 đã hoàn thành được giữ nguyên</summary>
-          {data.batchJobs.flatMap(job => (job.sceneErrors || []).map(error => (
-            <p key={job.id + error.sceneId} role="alert" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-              Cảnh {error.sceneIndex} · <strong>{error.code}</strong> · {error.stage}<br />{error.message}
-            </p>
-          )))}
+          {data.batchJobs.flatMap((job) =>
+            (job.sceneErrors || []).map((error) => (
+              <p
+                key={job.id + error.sceneId}
+                role="alert"
+                style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+              >
+                {project.chapters.find((c) => c.id === error.chapterId)
+                  ?.masterImage?.status === "error"
+                  ? "Ảnh master chương"
+                  : `Cảnh ${error.sceneIndex}`}{" "}
+                · <strong>{error.code}</strong> · {error.stage}
+                <br />
+                {error.message}
+              </p>
+            )),
+          )}
         </details>
       )}
-      {data.failedJobs.filter(job => !job.sceneErrors?.length).map(
-        (job) =>
-          job.error && (
-            <details
-              key={job.id}
-              role="alert"
-              style={{
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-                fontFamily: "inherit",
-              }}
-            >
-              <summary>Video chưa hoàn thành · Chi tiết</summary>
-              <pre>
-              {job.batchIndex !== undefined
-                ? `Video ${job.batchIndex + 1}: `
-                : ""}
-              {job.error}
-              </pre>
-            </details>
-          ),
-      )}
+      {data.failedJobs
+        .filter((job) => !job.sceneErrors?.length)
+        .map(
+          (job) =>
+            job.error && (
+              <details
+                key={job.id}
+                role="alert"
+                style={{
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  fontFamily: "inherit",
+                }}
+              >
+                <summary>Video chưa hoàn thành · Chi tiết</summary>
+                <pre>
+                  {job.batchIndex !== undefined
+                    ? `Video ${job.batchIndex + 1}: `
+                    : ""}
+                  {job.error}
+                </pre>
+              </details>
+            ),
+        )}
 
       <div className="batch-progress-footer">
         <div className="batch-progress-meta">

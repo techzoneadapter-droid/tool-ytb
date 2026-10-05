@@ -61,6 +61,7 @@ export function mergeProjectChapters(
         .filter((chapter) => wanted.has(chapter.id))
         .map((chapter) => [chapter.id, chapter]),
     );
+    current.characterBible ||= source.characterBible;
     current.chapters = current.chapters.map(
       (chapter) => replacements.get(chapter.id) || chapter,
     );

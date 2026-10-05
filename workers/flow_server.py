@@ -116,7 +116,7 @@ async def local_only(request: Request, call_next):
 @app.exception_handler(FlowError)
 async def flow_error(request, error):
     status = 401 if error.code in ("FLOW_COOKIE_EXPIRED", "FLOW_LOGIN_REQUIRED") else 400 if error.code.startswith("INVALID_") else 409
-    return JSONResponse({"error": str(error), "message": str(error), "code": error.code, "stage": error.stage, "diagnostics": error.diagnostics}, status_code=status)
+    return JSONResponse({"error": str(error), "message": str(error), "code": error.code, "stage": error.stage, "diagnostics": error.diagnostics, "requestId": getattr(request.state, "flow_request_id", None), "chapterId": getattr(request.state, "flow_chapter_id", None)}, status_code=status)
 
 
 async def payload(request):
@@ -139,6 +139,7 @@ async def payload(request):
 async def health():
     result = session.health()
     result["backgroundRestore"] = True
+    result["lastGeneration"] = {"requestId": getattr(session, "current_request_id", None), "networkGenerationCount": getattr(session, "generation_request_count", 0), "submitCount": len(session.flow_diagnostics.get("attempts", [])), "networkPosts": getattr(session, "network_posts", [])}
     result["lastErrorCode"] = restore_error.code if restore_error else (session.last_error.split("]", 1)[0][1:] if session.last_error.startswith("[") else None)
     return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
@@ -156,15 +157,19 @@ async def initialize(request: Request):
 @app.post("/generate")
 async def generate(request: Request):
     data = await payload(request)
+    request.state.flow_request_id = data.get("requestId")
+    request.state.flow_chapter_id = data.get("chapterId")
     if not session.project_url and restore_task is None:
         session.project_url = str(data.get("projectUrl") or "")
     await wait_until_generation_ready()
     async with lock:
         session.current_request_id = data.get("requestId")
+        session.current_project_id = data.get("projectId")
+        session.current_chapter_id = data.get("chapterId")
         if not session.generation_ready:
             raise FlowError("FLOW_LOGIN_REQUIRED", "Phiên Flow đã đóng trong lúc chờ generation.", stage=session.last_stage)
         content, mime = await session.generate_image(data.get("prompt"), data.get("aspect", "16:9"))
-    return Response(content, media_type=mime, headers={"Cache-Control": "no-store", "X-StoryFlow-Model": session.observed_model or "project-current"})
+    return Response(content, media_type=mime, headers={"Cache-Control": "no-store", "X-StoryFlow-Model": session.observed_model or "project-current", "X-StoryFlow-Request": str(data.get("requestId") or ""), "X-StoryFlow-Chapter": str(data.get("chapterId") or ""), "X-StoryFlow-Generation-Count": str(getattr(session, "generation_request_count", 0)), "X-StoryFlow-Image-Count": str(getattr(session, "image_count", 0)), "X-StoryFlow-Submit-Count": str(len(session.flow_diagnostics.get("attempts", [])))})
 
 
 @app.post("/disconnect")

@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 
 COMPOSER_SCRIPT = Path(__file__).with_name("flow_composer.js").read_text(encoding="utf-8")
 FLOW_COMPOSER_SCRIPT = COMPOSER_SCRIPT
+RESULT_SCRIPT = Path(__file__).with_name("flow_result.js").read_text(encoding="utf-8")
 MONITOR_SCRIPT = "async args => (" + COMPOSER_SCRIPT + ")({ ...args, action: 'snapshot' })"
 
 
@@ -22,6 +23,25 @@ class FlowError(Exception):
         self.code = code
         self.stage = stage or code
         self.diagnostics = diagnostics
+
+
+def payload_contains_prompt(value, prompt, depth=0):
+    """Flow's batchexecute form contains nested JSON strings, not plain JSON text."""
+    if depth > 12:
+        return False
+    if isinstance(value, str):
+        if re.sub(r"\s+", " ", value).strip() == prompt:
+            return True
+        try:
+            decoded = json.loads(value)
+        except (ValueError, TypeError):
+            return False
+        return decoded != value and payload_contains_prompt(decoded, prompt, depth + 1)
+    if isinstance(value, dict):
+        return any(payload_contains_prompt(item, prompt, depth + 1) for item in value.values())
+    if isinstance(value, list):
+        return any(payload_contains_prompt(item, prompt, depth + 1) for item in value)
+    return False
 
 
 def normalize_cookies(cookie_json, now=None):
@@ -99,7 +119,7 @@ class FlowAutomation:
 
     def health(self):
         current_url = self.page.url if self.page and isinstance(self.page.url, str) else None
-        return {"status": "ok", "engine": "flow", "protocol": 22, "bridgeReady": True,
+        return {"status": "ok", "engine": "flow", "protocol": 23, "bridgeReady": True,
                 "browserOpen": self.browser is not None, "connected": self.session_ready,
                 "sessionReady": self.session_ready, "composerReady": self.composer_ready,
                 "generationReady": self.generation_ready, "lastStage": self.last_stage,
@@ -178,7 +198,7 @@ class FlowAutomation:
                 raise FlowError("FLOW_PROJECT_INVALID", "URL dự án phải thuộc Google Flow.")
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(headless=True, channel=os.getenv("FLOW_BROWSER_CHANNEL", "chrome"))
-            self.context = await self.browser.new_context()
+            self.context = await self.browser.new_context(accept_downloads=False)
             await self.context.add_cookies(cookies)
             self.page = await self.context.new_page()
             response = await self.page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=60000)
@@ -234,7 +254,7 @@ class FlowAutomation:
                 if persist and self.session_ready:
                     self._save_cookies(cookies)
                 return self.health()
-            self.state = "ready"
+            self.state = "restoring"
             await self._auth_check()
             self.session_ready = True
             try:
@@ -246,8 +266,12 @@ class FlowAutomation:
             if persist:
                 self._save_cookies(cookies)
             if self.generation_ready:
+                self.state = "ready"
                 self.last_error = ""
                 self.last_stage = "FLOW_READY"
+            elif self.state != "error":
+                self.state = "error"
+                self.last_error = "[FLOW_COMPOSER_NOT_FOUND] Flow chưa có composer sẵn sàng."
             return self.health()
         except FlowError as error:
             await self.close()
@@ -428,11 +452,35 @@ class FlowAutomation:
             raise FlowError(result.get("code", "FLOW_SUBMIT_FAILED"), result["error"], stage=self.last_stage)
         return result
 
+    async def _ensure_single_image(self, probe):
+        labels = " ".join(probe.get("modelLabels", []))
+        count = re.search(r"\bx(\d+)\b", labels, re.I)
+        self.image_count = int(count[1]) if count else None
+        if self.image_count is None and getattr(self, "current_chapter_id", None):
+            raise FlowError("FLOW_IMAGE_COUNT_INVALID", "Không xác nhận được số ảnh x1 cho chương; chưa gửi prompt.", stage="FLOW_PREPARE")
+        if self.image_count in (None, 1):
+            return
+        self.last_stage = "FLOW_PREPARE"
+        picker = self.page.locator("button.settings-trigger-button").or_(
+            self.page.get_by_role("button", name=re.compile(r"nano banana|imagen", re.I)))
+        if not await self._click(picker):
+            raise FlowError("FLOW_IMAGE_COUNT_INVALID", "Không mở được bộ chọn số ảnh; chưa gửi prompt.", stage=self.last_stage)
+        one = re.compile(r"^(?:x1|1x|1)$", re.I)
+        choices = self.page.get_by_role("button", name=one).or_(self.page.get_by_role("radio", name=one)).or_(self.page.get_by_role("option", name=one)).or_(self.page.get_by_role("menuitem", name=one))
+        if not await self._click(choices):
+            raise FlowError("FLOW_IMAGE_COUNT_INVALID", "Không chọn được x1; chưa gửi prompt.", stage=self.last_stage)
+        await self.page.keyboard.press("Escape")
+        verified = await self.page.evaluate(COMPOSER_SCRIPT, {"action": "probe"})
+        verified_count = re.search(r"\bx(\d+)\b", " ".join(verified.get("modelLabels", [])), re.I)
+        if not verified_count or verified_count[1] != "1":
+            raise FlowError("FLOW_IMAGE_COUNT_INVALID", "Flow chưa xác nhận số ảnh x1; chưa gửi prompt.", stage=self.last_stage)
+        self.image_count = 1
+
     async def _debug_snapshot(self, name):
         if os.getenv("FLOW_DEBUG") != "1":
             return
         if not getattr(self, "debug_directory", None):
-            self.debug_directory = Path(os.getenv("FLOW_DIAGNOSTICS_DIR", "data/flow-debug")).resolve() / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+            self.debug_directory = Path(os.getenv("FLOW_DIAGNOSTICS_DIR", "data/flow-debug")).resolve() / (getattr(self, "current_request_id", None) if re.fullmatch(r"flow_[a-f0-9-]{36}", getattr(self, "current_request_id", None) or "") else f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}")
         try:
             self.debug_directory.mkdir(parents=True, exist_ok=True)
         except Exception as error:
@@ -478,7 +526,11 @@ class FlowAutomation:
             await self.page.wait_for_timeout(100)
         self.flow_diagnostics["promptSynced"] = True
         self.last_stage = "FLOW_SUBMIT_DISCOVER"
+        self.last_stage = "FLOW_SNAPSHOT"
         self.submit_before = await self._composer("observe")
+        baseline = await self.page.evaluate(RESULT_SCRIPT, {"action": "arm", "requestId": getattr(self, "current_request_id", None), "projectId": getattr(self, "current_project_id", None), "chapterId": getattr(self, "current_chapter_id", None)})
+        self.pending_generation = {"requestId": getattr(self, "current_request_id", None), "projectId": getattr(self, "current_project_id", None), "chapterId": getattr(self, "current_chapter_id", None), **baseline}
+        self.last_stage = "FLOW_OBSERVER_READY"
         await self._debug_snapshot("before")
         self.last_stage = "FLOW_SUBMIT_ATTEMPT_1"
         result = await self._composer("submit", prompt=prompt)
@@ -507,6 +559,10 @@ class FlowAutomation:
             await self._auth_check()
             current = await self.page.evaluate(FLOW_COMPOSER_SCRIPT, {"action": "snapshot", "before": baseline, "prompt": prompt})
             self.flow_diagnostics["latest"] = current
+            result = await self.page.evaluate(RESULT_SCRIPT, {})
+            if result.get("candidates"):
+                self.last_stage = "FLOW_RESULT_DETECTED"
+                return {**current, "resultDetected": True}
             self._check_alerts(current["alerts"])
             elapsed = time.monotonic() - started_at
             if sample_at is not None and elapsed >= sample_at:
@@ -531,20 +587,28 @@ class FlowAutomation:
         raise FlowError("FLOW_GENERATION_START_TIMEOUT", "Submit đã được thử nhưng chưa có tín hiệu generation; dừng để tránh tạo trùng.", stage=self.last_stage)
 
     async def _wait_new_image(self, before, prompt):
-        self.last_stage = "FLOW_RESULT_WAIT"
+        self.last_stage = "FLOW_GENERATION_WAIT"
         deadline = time.monotonic() + max(0.1, float(os.getenv("FLOW_GENERATION_TIMEOUT_MS", "420000")) / 1000)
         while time.monotonic() < deadline:
             await self._auth_check()
+            result = await self.page.evaluate(RESULT_SCRIPT, {})
+            if result.get("candidates"):
+                candidate = result["candidates"][0]  # ranked validated delta, never a gallery index
+                if candidate.get("requestId") != getattr(self, "current_request_id", None):
+                    raise FlowError("FLOW_RESULT_MAPPING_FAILED", "Ảnh không thuộc request hiện tại.", stage=self.last_stage)
+                self.last_stage = "FLOW_RESULT_VALIDATE"
+                if os.getenv("FLOW_DEBUG") == "1" and self.debug_directory:
+                    for name, data in (("snapshot", result.get("beforeSnapshot")), ("observer-events", result.get("events")), ("candidate-results", result.get("candidates"))):
+                        (self.debug_directory / (name + ".json")).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                return candidate
             current = await self.page.evaluate(MONITOR_SCRIPT, {"before": before, "prompt": prompt})
             self._check_alerts(current["alerts"])
-            if current["fresh"]:
-                return current["fresh"][-1]
-            await self.page.wait_for_timeout(500)
-        raise FlowError("FLOW_GENERATION_TIMEOUT", "Flow đã nhận prompt nhưng chưa có ảnh mới trong thời gian chờ.", stage=self.last_stage)
+            await self.page.wait_for_timeout(1000)
+        raise FlowError("FLOW_RESULT_NOT_FOUND", "Không có ảnh mới hợp lệ cho request chương trong thời gian chờ.", stage=self.last_stage)
 
     async def _download_image(self, image):
         import base64
-        self.last_stage = "FLOW_RESULT_DOWNLOAD"
+        self.last_stage = "FLOW_RESULT_FETCH"
         src = image["src"]
         if not src.startswith(("blob:", "data:image/")):
             asset = urlparse(src)
@@ -552,9 +616,9 @@ class FlowAutomation:
             if asset.scheme != "https" or not any(host == base or host.endswith("." + base) for base in ("googleusercontent.com", "googleapis.com", "labs.google", "flow.google.com", "flow-content.google")):
                 raise FlowError("FLOW_RESULT_DOWNLOAD_FAILED", "Máy chủ ảnh Flow không được hỗ trợ.", stage=self.last_stage)
         # Binary bytes stay in RAM; base64 is only transient Playwright transport, never state/DB.
-        result = await self.page.evaluate("""async src => {
+        fetch_script = """async src => {
             try {
-                const response = await fetch(src, { signal: AbortSignal.timeout(30000) });
+                const response = await fetch(src, { credentials: "include", signal: AbortSignal.timeout(30000) });
                 if (!response.ok) return { error: 'HTTP ' + response.status };
                 const blob = await response.blob();
                 if (!blob.type.startsWith('image/') || blob.size > 40000000) return { error: 'Invalid image MIME/size' };
@@ -564,18 +628,31 @@ class FlowAutomation:
                 });
                 return { data };
             } catch (error) { return { error: error.message }; }
-        }""", src)
+        }"""
+        result = await self.page.evaluate(fetch_script, src)
+        if not result.get("data") and src.startswith("https:"):
+            # Flow's CDN does not always permit a credentialed cross-origin fetch.
+            # An inline image document in the SAME authenticated browser context
+            # provides its own origin; fetch still executes in Chrome, never Python HTTP.
+            asset_page = None
+            try:
+                asset_page = await self.context.new_page()
+                await asset_page.goto(src, wait_until="domcontentloaded", timeout=30000)
+                if urlparse(asset_page.url).hostname != host:
+                    raise FlowError("FLOW_RESULT_DOWNLOAD_FAILED", "Máy chủ ảnh chuyển hướng không hợp lệ.", stage=self.last_stage)
+                result = await asset_page.evaluate(fetch_script, src)
+            except FlowError:
+                raise
+            except Exception:
+                raise FlowError("FLOW_RESULT_DOWNLOAD_FAILED", "Không fetch được ảnh trong browser session.", stage=self.last_stage) from None
+            finally:
+                if asset_page:
+                    await asset_page.close()
         if result.get("data"):
             match = re.fullmatch(r"data:(image/[\w.+-]+);base64,(.+)", result["data"], re.S)
             if not match:
                 raise FlowError("FLOW_RESULT_DOWNLOAD_FAILED", "Flow không trả dữ liệu ảnh hợp lệ.", stage=self.last_stage)
             mime, content = match[1], base64.b64decode(match[2], validate=True)
-        elif src.startswith("https:"):
-            response = await self.context.request.get(src, timeout=30000, max_redirects=0)
-            if not response.ok:
-                raise FlowError("FLOW_RESULT_DOWNLOAD_FAILED", f"Ảnh Flow trả HTTP {response.status}.", stage=self.last_stage)
-            mime = response.headers.get("content-type", "").split(";")[0]
-            content = await response.body()
         else:
             raise FlowError("FLOW_RESULT_DOWNLOAD_FAILED", result.get("error", "Không tải được ảnh Flow."), stage=self.last_stage)
         if not mime.startswith("image/") or not 10000 <= len(content) <= 40000000:
@@ -585,12 +662,18 @@ class FlowAutomation:
     async def generate_image(self, prompt, aspect="16:9"):
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 50000:
             raise FlowError("INVALID_PROMPT", "Prompt phải có nội dung và tối đa 50.000 ký tự.")
+        # ProseMirror represents line breaks as block nodes. Send a canonical
+        # single-line prompt so DOM text, React state and request matching agree.
+        prompt = re.sub(r"\s+", " ", prompt).strip()
         if aspect not in ("16:9", "9:16"):
             raise FlowError("INVALID_ASPECT", "Tỷ lệ ảnh không hợp lệ.")
         if self.state not in ("ready", "project_required") or self.page is None:
             raise FlowError("FLOW_LOGIN_REQUIRED", "Phiên Flow chưa sẵn sàng.")
         self.state = "generating"
+        self.last_error = ""
         self._generation_request_seen = False
+        self.generation_request_count = 0
+        self.network_posts = []
         self.flow_diagnostics = {}
         self.debug_directory = None
         def observe_request(request):
@@ -601,30 +684,34 @@ class FlowAutomation:
                 data = request.post_data_json
             except (ValueError, TypeError):
                 return
-            def contains_prompt(value):
-                if isinstance(value, str):
-                    return value == prompt.strip()
-                if isinstance(value, dict):
-                    return any(contains_prompt(item) for item in value.values())
-                if isinstance(value, list):
-                    return any(contains_prompt(item) for item in value)
-                return False
-            if re.search(r"generate|generation|batchGenerate|createImage", urlparse(request.url).path, re.I) and contains_prompt(data):
+            matched = payload_contains_prompt(data, prompt)
+            self.network_posts.append({"host": host, "path": urlparse(request.url).path, "promptMatched": matched})
+            self.network_posts = self.network_posts[-100:]
+            if matched:
                 self._generation_request_seen = True
+                self.generation_request_count += 1
         self.page.on("request", observe_request)
         try:
             self.last_stage = "FLOW_AUTH"
             await self._auth_check()
             self.session_ready = True
             await self._ensure_flow_project_ready()
-            await self._ensure_composer_ready()
+            probe = await self._ensure_composer_ready()
+            await self._ensure_single_image(probe)
             before = await self.page.evaluate(MONITOR_SCRIPT, {})
-            submitted = await self._submit_prompt(prompt.strip())
-            await self._wait_generation_started(before, prompt.strip())
+            try:
+                submitted = await self._submit_prompt(prompt.strip())
+                await self._wait_generation_started(before, prompt.strip())
+            except FlowError as error:
+                armed = bool(getattr(self, "pending_generation", None))
+                if not armed or error.code not in ("FLOW_GENERATION_START_TIMEOUT", "FLOW_SUBMIT_FAILED", "FLOW_SUBMIT_BUTTON_DISABLED"):
+                    raise
+                # Result is stronger evidence than an absent submit acknowledgement.
+                self.flow_diagnostics["startAckMissing"] = True
             image = await self._wait_new_image(before, prompt.strip())
             content, mime = await self._download_image(image)
             self.state, self.last_error, self.last_stage = "ready", "", "FLOW_RESULT_READY"
-            self.flow_diagnostics.update({"stage": self.last_stage, "imageBytes": len(content), "mime": mime})
+            self.flow_diagnostics.update({"stage": self.last_stage, "imageBytes": len(content), "mime": mime, "generationRequests": self.generation_request_count, "imageCount": self.image_count, "networkPosts": self.network_posts})
             if os.getenv("FLOW_DEBUG") == "1" and self.debug_directory:
                 try:
                     (self.debug_directory / "state.json").write_text(json.dumps(self.flow_diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -655,6 +742,11 @@ class FlowAutomation:
             self.last_error = f"[{code}] {cause}"
             raise FlowError(code, str(cause), stage=stage, diagnostics=diagnostics) from cause
         finally:
+            try:
+                await self.page.evaluate(RESULT_SCRIPT, {"action": "stop"})
+            except Exception:
+                pass
+            self.pending_generation = None
             self.page.remove_listener("request", observe_request)
             try:
                 await self.page.evaluate(FLOW_COMPOSER_SCRIPT, {"action": "stop"})

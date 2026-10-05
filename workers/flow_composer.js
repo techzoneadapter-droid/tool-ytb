@@ -2,7 +2,7 @@ async function flowComposer({ action = 'inspect', prompt = '', before = null, me
   window.__storyflowComposer = flowComposer;
   const visible = n => n.isConnected && n.getClientRects().length > 0 && !['hidden', 'collapse'].includes(getComputedStyle(n).visibility);
   const enabled = n => !!n && !n.disabled && !n.matches(':disabled') && n.getAttribute('aria-disabled') !== 'true';
-  const value = n => n ? ('value' in n ? n.value : n.textContent || '') : null;
+  const value = n => n ? ('value' in n ? n.value : n.innerText || n.textContent || '') : null;
   const label = n => [n.getAttribute('aria-label'), n.getAttribute('title'), n.textContent, n.value].filter(Boolean).join(' ').trim();
   let editors = [];
   for (const selector of ['textarea', '.ProseMirror[contenteditable="true"]', '[contenteditable="true"][role="textbox"]', '[contenteditable="true"]', 'input:not([type]),input[type="text"]', '[role="textbox"]']) {

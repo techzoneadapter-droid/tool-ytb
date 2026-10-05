@@ -52,7 +52,9 @@ async function main() {
   const targets = scenes.map((scene) => ({
     scene,
     chapterId,
-    prompt: scene.prompt,
+    chapter: project.chapters[0],
+    projectId: project.id,
+    prompt: "chapter-master",
   }));
   const deps = {
     assets: assetDirectory,
@@ -75,17 +77,6 @@ async function main() {
     },
     generate: async (prompt: string) => {
       generated.push(prompt);
-      if (prompt === "prompt-2" && failSecond)
-        throw Object.assign(Error("Credits test fixture"), {
-          code: "FLOW_LIMIT",
-          stage: "FLOW_WAIT_IMAGE",
-        });
-      if (prompt === "prompt-3")
-        assert.equal(
-          library.listVideos().length,
-          1,
-          "scene 1 must already be in the library before scene 3 generation",
-        );
       return { bytes: imageBuffer, model: "test-fixture" };
     },
     render: async (scene: Scene, buffer: Buffer, outputPath: string) => {
@@ -94,6 +85,11 @@ async function main() {
         imageBuffer,
         "Buffer must pass directly to the renderer without disk IO",
       );
+      if (scene === scenes[1] && failSecond)
+        throw Object.assign(Error("Encode fixture failure"), {
+          code: "SCENE_RENDER_FAILED",
+          stage: "SCENE_RENDER",
+        });
       await renderSceneBuffer({
         imageBuffer: buffer,
         scene,
@@ -122,7 +118,7 @@ async function main() {
   const errors = await processFlowScenes(targets, settings, deps);
   assert.equal(errors.length, 1);
   assert.equal(errors[0].sceneIndex, 2);
-  assert.equal(errors[0].code, "FLOW_LIMIT");
+  assert.equal(errors[0].code, "SCENE_RENDER_FAILED");
   assert.deepEqual(
     scenes.map((scene) => scene.flow!.status),
     ["done", "error", "done"],
@@ -141,11 +137,18 @@ async function main() {
         !snapshot.includes("data:image") && !snapshot.includes("base64"),
     ),
   );
+  assert.deepEqual(generated, ["chapter-master"]);
+  assert.equal(project.chapters[0].chapterImageGenerationCount, 1);
+  assert.equal(new Set(scenes.map((s) => s.chapterMasterImage)).size, 1);
   failSecond = false;
   generated.length = 0;
   const retry = await processFlowScenes(targets, settings, deps);
   assert.equal(retry.length, 0);
-  assert.deepEqual(generated, ["prompt-2"]);
+  assert.deepEqual(
+    generated,
+    [],
+    "retry in the same worker reuses the unfinished chapter's master Buffer",
+  );
   assert.deepEqual(
     [scenes[0].flow!.videoPath, scenes[2].flow!.videoPath],
     firstOutputs,

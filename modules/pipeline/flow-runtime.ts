@@ -1,12 +1,14 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import type { Job, Project, Scene } from "../project/types";
 import { get, mergeProjectChapters } from "../project/store";
-import { assetExists, resolveSceneImage } from "../project/media";
+import { assetExists } from "../project/media";
 import { speak, ttsSource } from "../tts";
 import { makeFlowImageBuffer } from "../imagePrompt";
-import { sceneVisual } from "../imagePrompt/profile";
+import {
+  buildChapterImagePrompt,
+  ensureCharacterBible,
+} from "../imagePrompt/chapter";
 import { assets } from "../videoRender";
 import { renderSceneBuffer } from "../videoRender/scene";
 import { duration, verifyVideo } from "../videoRender/process";
@@ -20,6 +22,7 @@ export function processProjectFlowScenes(
   onProgress?: (event: FlowSceneEvent) => void,
 ) {
   const settings = job.snapshot.settings;
+  ensureCharacterBible(project);
   const persist = () => {
     mergeProjectChapters(project, job.chapterIds);
   };
@@ -28,9 +31,14 @@ export function processProjectFlowScenes(
       const chapter = project.chapters.find((item) =>
         item.scenes.some((candidate) => candidate.id === scene.id),
       )!;
-      const visual = sceneVisual(chapter, scene, settings);
-      scene.imageSeed = visual.seed;
-      return { scene, chapterId: chapter.id, prompt: visual.prompt };
+      return {
+        scene,
+        chapter,
+        projectId: project.id,
+        chapterIndex: project.chapters.indexOf(chapter),
+        chapterId: chapter.id,
+        prompt: buildChapterImagePrompt(project, chapter, settings),
+      };
     }),
     settings,
     {
@@ -74,13 +82,8 @@ export function processProjectFlowScenes(
         scene.audioError = undefined;
         persist();
       },
-      generate: (prompt, aspect, onStage) =>
-        makeFlowImageBuffer(prompt, { ...settings, aspect }, onStage),
-      existingImage: async (scene) => {
-        if (scene.imageSource !== "upload") return undefined;
-        const image = await resolveSceneImage(scene);
-        return image ? readFile(path.join(assets, image)) : undefined;
-      },
+      generate: (prompt, aspect, onStage, mapping) =>
+        makeFlowImageBuffer(prompt, { ...settings, aspect }, onStage, mapping),
       render: async (scene, buffer, outputPath, onProgress) => {
         await renderSceneBuffer({
           imageBuffer: buffer,
@@ -99,15 +102,6 @@ export function processProjectFlowScenes(
       },
       publish: async (scene, chapterId) =>
         (await createSceneVideoRecord(scene, chapterId, project, job.id)).id,
-      fallback: settings.fallbackOnImageError
-        ? async (scene) => {
-            const image = await resolveSceneImage(
-              { ...scene, image: undefined },
-              settings,
-            );
-            return image ? readFile(path.join(assets, image)) : undefined;
-          }
-        : undefined,
     },
   );
 }

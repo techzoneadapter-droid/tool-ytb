@@ -22,6 +22,8 @@ export function flowFailure(
     code?: string;
     stage?: string;
     diagnostics?: Record<string, unknown>;
+    requestId?: string;
+    chapterId?: string;
   } | null,
   fallback: string,
 ) {
@@ -38,6 +40,8 @@ export function flowFailure(
     {
       code: body?.code || "FLOW_REQUEST_FAILED",
       stage: body?.stage || body?.code || "FLOW_GENERATE",
+      requestId: body?.requestId,
+      chapterId: body?.chapterId,
     },
   );
 }
@@ -131,34 +135,71 @@ export async function initializeFlowSession(
   );
 }
 
-export async function waitForFlowSession(onStage?: (stage: string) => void): Promise<FlowHealth> {
+export async function waitForFlowSession(
+  onStage?: (stage: string) => void,
+): Promise<FlowHealth> {
   const deadline = Date.now() + flowTimeout("FLOW_RESTORE_TIMEOUT_MS", 180000);
   let lastStage = "";
   while (Date.now() < deadline) {
     const health = await flowHealth();
-    if (health.generationReady) { onStage?.("FLOW_READY"); return health; }
-    if (["login_required", "project_required", "error", "disconnected"].includes(health.state || "") || (health.state === "ready" && !health.generationReady)) {
-      const code = health.lastErrorCode || health.lastError?.match(/^\[([^\]]+)\]/)?.[1] ||
-        (health.state === "login_required" || health.state === "disconnected" ? "FLOW_LOGIN_REQUIRED" : health.state === "project_required" ? "FLOW_PROJECT_INVALID" : health.state === "ready" ? "FLOW_COMPOSER_NOT_FOUND" : "FLOW_SESSION_RESTORE_FAILED");
-      throw flowFailure({ code, stage: health.lastStage || "FLOW_SESSION_RESTORE", error: health.lastError || health.message }, "");
+    if (health.generationReady) {
+      onStage?.("FLOW_READY");
+      return health;
+    }
+    if (
+      ["login_required", "project_required", "error", "disconnected"].includes(
+        health.state || "",
+      ) ||
+      (health.state === "ready" && !health.generationReady)
+    ) {
+      const code =
+        health.lastErrorCode ||
+        health.lastError?.match(/^\[([^\]]+)\]/)?.[1] ||
+        (health.state === "login_required" || health.state === "disconnected"
+          ? "FLOW_LOGIN_REQUIRED"
+          : health.state === "project_required"
+            ? "FLOW_PROJECT_INVALID"
+            : health.state === "ready"
+              ? "FLOW_COMPOSER_NOT_FOUND"
+              : "FLOW_SESSION_RESTORE_FAILED");
+      throw flowFailure(
+        {
+          code,
+          stage: health.lastStage || "FLOW_SESSION_RESTORE",
+          error: health.lastError || health.message,
+        },
+        "",
+      );
     }
     const stage = health.lastStage || "FLOW_SESSION_RESTORE";
-    if (stage !== lastStage) { onStage?.(stage); lastStage = stage; }
-    await new Promise(r => setTimeout(r, 200));
+    if (stage !== lastStage) {
+      onStage?.(stage);
+      lastStage = stage;
+    }
+    await new Promise((r) => setTimeout(r, 200));
   }
-  throw flowFailure({ code: "FLOW_SESSION_RESTORE_FAILED", stage: "FLOW_SESSION_RESTORE", error: "Hết thời gian chờ khôi phục phiên Flow." }, "");
+  throw flowFailure(
+    {
+      code: "FLOW_SESSION_RESTORE_FAILED",
+      stage: "FLOW_SESSION_RESTORE",
+      error: "Hết thời gian chờ khôi phục phiên Flow.",
+    },
+    "",
+  );
 }
 
 export async function generateWithFlow(
   prompt: string,
   aspect: "16:9" | "9:16",
   onStage?: (stage: string) => void,
+  mapping?: { requestId: string; projectId: string; chapterId: string },
 ) {
   onStage?.("FLOW_SERVICE_START");
   try {
     await startService("flow");
   } catch (error) {
-    if (error instanceof Error && "code" in error && "stage" in error) throw error;
+    if (error instanceof Error && "code" in error && "stage" in error)
+      throw error;
     throw flowFailure(
       {
         code: "FLOW_SERVICE_START_FAILED",
@@ -169,7 +210,7 @@ export async function generateWithFlow(
     );
   }
   await waitForFlowSession(onStage);
-  const requestId = randomUUID();
+  const requestId = mapping?.requestId || "flow_" + randomUUID();
   const progressController = new AbortController();
   let progressError: unknown;
   let active = true;
@@ -204,6 +245,8 @@ export async function generateWithFlow(
       body: JSON.stringify({
         prompt,
         requestId,
+        projectId: mapping?.projectId,
+        chapterId: mapping?.chapterId,
         aspect,
         projectUrl: process.env.FLOW_PROJECT_URL || "",
         model: process.env.FLOW_MODEL_LABEL || "Nano Banana Pro",
@@ -224,6 +267,19 @@ export async function generateWithFlow(
         `Google Flow không tạo được ảnh (HTTP ${response.status}).`,
       );
     }
+    if (
+      mapping &&
+      (response.headers.get("x-storyflow-request") !== requestId ||
+        response.headers.get("x-storyflow-chapter") !== mapping.chapterId)
+    )
+      throw flowFailure(
+        {
+          code: "FLOW_RESULT_MAPPING_FAILED",
+          stage: "FLOW_RESULT_VALIDATE",
+          error: "Worker trả ảnh không khớp request/chương.",
+        },
+        "",
+      );
     const mime = response.headers.get("content-type") || "image/png";
     if (
       !mime.startsWith("image/") &&
@@ -241,6 +297,9 @@ export async function generateWithFlow(
     if (!bytes.length) throw Error("Google Flow không trả ảnh về StoryFlow.");
     return {
       bytes,
+      generationCount: Number(response.headers.get("x-storyflow-generation-count") || 0),
+      submitCount: Number(response.headers.get("x-storyflow-submit-count") || 0),
+      imageCount: Number(response.headers.get("x-storyflow-image-count") || 0),
       model:
         response.headers.get("x-storyflow-model") ||
         process.env.FLOW_MODEL_LABEL ||

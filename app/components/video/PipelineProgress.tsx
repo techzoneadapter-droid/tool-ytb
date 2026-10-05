@@ -153,49 +153,68 @@ export function PipelineProgress({
         <span style={{ width: data.progress + "%" }} />
       </div>
 
-      {data.current.stageProgress && (
-        <div className="batch-progress-live">
-          <div>
-            <span className="live-dot" />
-            <strong>Công đoạn</strong>
-            <span>
-              {data.current.stageProgress.label} ·{" "}
-              {Math.min(
-                data.current.stageProgress.current,
-                data.current.stageProgress.total,
-              )}
-              /{data.current.stageProgress.total}
-            </span>
+      {data.current.stageProgress &&
+        !(
+          data.current.snapshot.settings.imageEnabled === false &&
+          data.current.status === "images"
+        ) && (
+          <div className="batch-progress-live">
+            <div>
+              <span className="live-dot" />
+              <strong>Công đoạn</strong>
+              <span>
+                {data.current.stageProgress.label} ·{" "}
+                {Math.min(
+                  data.current.stageProgress.current,
+                  data.current.stageProgress.total,
+                )}
+                /{data.current.stageProgress.total}
+              </span>
+            </div>
+            <div>
+              <strong>Đang xử lý</strong>
+              <span>{data.current.stageProgress.detail}</span>
+            </div>
+            <div>
+              <strong>Hiệu suất</strong>
+              <span>
+                {data.current.stageProgress.concurrency
+                  ? `${data.current.stageProgress.concurrency} luồng`
+                  : "1 luồng"}
+                {data.current.stageProgress.ratePerMinute
+                  ? ` · ${data.current.stageProgress.ratePerMinute.toFixed(1)} mục/phút`
+                  : ""}
+                {data.current.stageProgress.elapsedSeconds
+                  ? ` · đã chạy ${formatTime(data.current.stageProgress.elapsedSeconds)}`
+                  : ""}
+                {data.current.stageProgress.etaSeconds
+                  ? ` · còn khoảng ${formatTime(data.current.stageProgress.etaSeconds)}`
+                  : ""}
+              </span>
+            </div>
           </div>
-          <div>
-            <strong>Đang xử lý</strong>
-            <span>{data.current.stageProgress.detail}</span>
-          </div>
-          <div>
-            <strong>Hiệu suất</strong>
-            <span>
-              {data.current.stageProgress.concurrency
-                ? `${data.current.stageProgress.concurrency} luồng`
-                : "1 luồng"}
-              {data.current.stageProgress.ratePerMinute
-                ? ` · ${data.current.stageProgress.ratePerMinute.toFixed(1)} mục/phút`
-                : ""}
-              {data.current.stageProgress.elapsedSeconds
-                ? ` · đã chạy ${formatTime(data.current.stageProgress.elapsedSeconds)}`
-                : ""}
-              {data.current.stageProgress.etaSeconds
-                ? ` · còn khoảng ${formatTime(data.current.stageProgress.etaSeconds)}`
-                : ""}
-            </span>
-          </div>
-        </div>
-      )}
+        )}
 
       {project.chapters
         .filter((chapter) =>
           data.batchJobs.some((job) => job.chapterIds.includes(chapter.id)),
         )
         .map((chapter) => {
+          const owningJob = data.batchJobs.find((job) =>
+            job.chapterIds.includes(chapter.id),
+          );
+          const settings = owningJob?.snapshot.settings || project.settings;
+          if (settings.imageEnabled === false)
+            return (
+              <div className="batch-progress-live" key={chapter.id}>
+                <strong>{chapter.title}</strong>
+                <span>
+                  {owningJob?.sharedImageValid === true
+                    ? "Ảnh chương: ✓ Dùng ảnh chung"
+                    : "Ảnh chương: ✕ Ảnh dùng chung không hợp lệ"}
+                </span>
+              </div>
+            );
           const image =
             project.settings.imageProvider === "flow-browser"
               ? chapter.masterImage
@@ -269,25 +288,33 @@ export function PipelineProgress({
         <details className="notice">
           <summary>Lỗi cảnh · các MP4 đã hoàn thành được giữ nguyên</summary>
           {data.batchJobs.flatMap((job) =>
-            (job.sceneErrors || []).map((error) => (
-              <p
-                key={job.id + error.sceneId}
-                role="alert"
-                style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-              >
-                {project.chapters.find((c) => c.id === error.chapterId)
-                  ?.masterImage?.status === "error" ||
-                error.stage === "CHAPTER_IMAGE" ||
-                (error.sceneIndex === 0 &&
-                  project.chapters.find((c) => c.id === error.chapterId)
-                    ?.apiImage?.status === "error")
-                  ? "Ảnh master chương"
-                  : `Cảnh ${error.sceneIndex}`}{" "}
-                · <strong>{error.code}</strong> · {error.stage}
-                <br />
-                {error.message}
-              </p>
-            )),
+            (job.sceneErrors || [])
+              .filter(
+                (error) =>
+                  job.snapshot.settings.imageEnabled !== false ||
+                  !/IMAGE|CHARACTER|PROMPT/.test(
+                    error.stage + " " + error.code,
+                  ),
+              )
+              .map((error) => (
+                <p
+                  key={job.id + error.sceneId}
+                  role="alert"
+                  style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+                >
+                  {project.chapters.find((c) => c.id === error.chapterId)
+                    ?.masterImage?.status === "error" ||
+                  error.stage === "CHAPTER_IMAGE" ||
+                  (error.sceneIndex === 0 &&
+                    project.chapters.find((c) => c.id === error.chapterId)
+                      ?.apiImage?.status === "error")
+                    ? "Ảnh master chương"
+                    : `Cảnh ${error.sceneIndex}`}{" "}
+                  · <strong>{error.code}</strong> · {error.stage}
+                  <br />
+                  {error.message}
+                </p>
+              )),
           )}
         </details>
       )}

@@ -135,10 +135,11 @@ async function main() {
             mergeProjectChapters(p, job.chapterIds);
           };
           const s = job.snapshot.settings;
-          for (const chapter of p.chapters.filter((c) =>
-            job.chapterIds.includes(c.id),
-          ))
-            ensureVisualProfile(chapter, s);
+          if (s.imageEnabled !== false)
+            for (const chapter of p.chapters.filter((c) =>
+              job.chapterIds.includes(c.id),
+            ))
+              ensureVisualProfile(chapter, s);
           saveProject();
           // Project order is authoritative even if the request selected IDs in reverse order.
           let scenes = p.chapters
@@ -148,6 +149,15 @@ async function main() {
               (scene) => !job.sceneIds || job.sceneIds.includes(scene.id),
             );
           const kind = job.kind || (job.prepare ? "prepare" : "render");
+          if (s.imageEnabled === false) {
+            console.log(
+              `job=${job.id} IMAGE_MODE=SHARED fallbackImage=${s.fallbackImage || "missing"} imageGenerationSkipped=true`,
+            );
+            updateJob(job.id, {
+              imageMode: "shared",
+              sharedImageValid: await validImage(s.fallbackImage),
+            });
+          }
           let partialResourceError = "";
 
           if (kind === "merge-video") {
@@ -457,7 +467,9 @@ async function main() {
                       ? ["motion"]
                       : []),
                   ]
-                : [kind];
+                : kind === "image" && s.imageEnabled === false
+                  ? []
+                  : [kind];
             const imageChapters = p.chapters.filter(
               (chapter) =>
                 job.chapterIds.includes(chapter.id) &&

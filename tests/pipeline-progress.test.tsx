@@ -68,6 +68,22 @@ test("progress recognizes API and legacy chapter masters; chapter error never sa
       />,
     );
   let html = render();
+  project.settings.imageEnabled = false;
+  job.imageMode = "shared";
+  job.sharedImageValid = true;
+  const shared = render();
+  assert.ok(shared.includes("Ảnh chương: ✓ Dùng ảnh chung"));
+  for (const forbidden of [
+    "Ảnh master chương",
+    "Phân tích chương",
+    "Character Bible",
+    "portrait",
+    "gọi API",
+  ])
+    assert.ok(!shared.includes(forbidden));
+  job.sharedImageValid = false;
+  assert.ok(render().includes("Ảnh dùng chung không hợp lệ"));
+  project.settings.imageEnabled = true;
   assert.ok(html.includes("Ảnh master chương"));
   assert.ok(html.includes("Character Bible"));
   assert.ok(!html.includes("Cảnh 0"));

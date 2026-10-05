@@ -47,8 +47,7 @@ export function assertTTS(s: Settings) {
     return;
   }
   if (p === "edge-online") {
-    if (!hasEdgeVoice(s.voice))
-      throw Error("Giọng Edge TTS không hợp lệ.");
+    if (!hasEdgeVoice(s.voice)) throw Error("Giọng Edge TTS không hợp lệ.");
     return;
   }
   if (p === "pollinations") {
@@ -163,9 +162,9 @@ export async function speak(
               ? await speakEdge(narration, temporary, s)
               : s.ttsProvider === "pollinations"
                 ? await speakPollinations(narration, temporary, s)
-              : s.ttsProvider === "cloud"
-                ? await speakCloud(narration, temporary, s)
-                : await speakLocal(narration, temporary, s, options);
+                : s.ttsProvider === "cloud"
+                  ? await speakCloud(narration, temporary, s)
+                  : await speakLocal(narration, temporary, s, options);
         await rename(temporary, cache);
         return seconds;
       } finally {
@@ -228,17 +227,25 @@ export async function speakBatch(
       Math.min(requestedLimit, Math.max(1, items.length)),
     );
     const workers = Array.from({ length: concurrency }, async () => {
+      const errors: Error[] = [];
       while (true) {
-        if (await stopped()) return;
+        if (await stopped()) break;
         const index = cursor++;
-        if (index >= items.length) return;
+        if (index >= items.length) break;
         const item = items[index];
-        const seconds = await speak(item.text, item.file, s);
-        output.set(item.id, seconds);
-        await report(item, seconds, concurrency);
+        try {
+          const seconds = await speak(item.text, item.file, s);
+          output.set(item.id, seconds);
+          await report(item, seconds, concurrency);
+        } catch (error) {
+          errors.push(error instanceof Error ? error : Error(String(error)));
+        }
       }
+      if (errors.length) throw errors[0];
     });
-    await Promise.all(workers);
+    const results = await Promise.allSettled(workers);
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
     return output;
   };
 

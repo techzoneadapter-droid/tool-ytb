@@ -225,6 +225,8 @@ export type ChapterAPIImage = {
   };
 };
 export type Job = {
+  imageMode?: "shared";
+  sharedImageValid?: boolean;
   videoLibraryDeleted?: boolean;
   startedAt?: string;
   finishedAt?: string;

@@ -1,8 +1,9 @@
 import { startService, serviceURL } from "../providers/services";
 import { spawn } from "node:child_process";
-import { mkdir, writeFile, unlink } from "node:fs/promises";
+import { mkdir, writeFile, unlink, rename } from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+import { TTSError, safeTTSErrorBody } from "./errors";
 import type { Settings } from "../project/types";
 import { chunks } from "../project/parser";
 import { run, duration } from "../videoRender/process";
@@ -115,8 +116,7 @@ export async function vieneuVoices() {
   }
 }
 let vieneuVoiceCache:
-  | { until: number; promise: Promise<EngineVoice[]> }
-  | undefined;
+  { until: number; promise: Promise<EngineVoice[]> } | undefined;
 
 async function cachedVieneuVoices(force = false) {
   if (force || !vieneuVoiceCache || vieneuVoiceCache.until < Date.now())
@@ -211,44 +211,106 @@ export async function speakLocal(
   try {
     const normalized: string[] = [];
     const parts =
-      s.ttsProvider === "vieneu-local" ? chunks(text, 18000) : chunks(text, 1500);
+      s.ttsProvider === "vieneu-local" ? chunks(text, 512) : chunks(text, 1500);
     const factor = Math.pow(2, s.pitch / 12);
-    for (const part of parts) {
+    for (const [chunkIndex, part] of parts.entries()) {
       const raw = path.join(directory, randomUUID() + ".wav");
-      const clean = path.join(directory, randomUUID() + ".wav");
-      temporary.push(raw, clean);
+      const clean =
+        s.ttsProvider === "vieneu-local"
+          ? path.join(
+              directory,
+              createHash("sha256")
+                .update(
+                  JSON.stringify(["vieneu-chunk-v1", vieneuURL(), voice, part]),
+                )
+                .digest("hex") + ".wav",
+            )
+          : path.join(directory, randomUUID() + ".wav");
+      temporary.push(raw);
+      const cleanTemporary = path.join(directory, randomUUID() + ".wav");
+      temporary.push(cleanTemporary);
+      if (s.ttsProvider !== "vieneu-local") temporary.push(clean);
+      if (
+        s.ttsProvider === "vieneu-local" &&
+        (await duration(clean).then(
+          (seconds) => seconds > 0,
+          () => false,
+        ))
+      ) {
+        normalized.push(clean);
+        continue;
+      }
       if (s.ttsProvider === "vieneu-local") {
         let response: Response;
-        try {
-          response = await fetch(vieneuURL() + "/v1/audio/speech", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            redirect: "error",
-            body: JSON.stringify({
-              model: "vieneu-v3-turbo",
-              input: part,
+        for (let attempt = 0; ; attempt++) {
+          try {
+            response = await fetch(vieneuURL() + "/v1/audio/speech", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              redirect: "error",
+              body: JSON.stringify({
+                model: "vieneu-v3-turbo",
+                input: part,
+                voice,
+                response_format: "wav",
+                sample_rate: 24000,
+                max_chars: 512,
+              }),
+              signal: AbortSignal.timeout(600000),
+            });
+          } catch (error) {
+            if (attempt < 2) continue;
+            throw new TTSError(
+              "VieNeu Local",
               voice,
-              response_format: "wav",
-              sample_rate: 24000,
-              max_chars: 1024,
-            }),
-            signal: AbortSignal.timeout(600000),
-          });
-        } catch {
-          throw Error(vieneuMissing);
+              part.length,
+              chunkIndex + 1,
+              parts.length,
+              error instanceof Error
+                ? error.message +
+                    (error.cause instanceof Error
+                      ? ": " + error.cause.message
+                      : "")
+                : vieneuMissing,
+            );
+          }
+          if (!response.ok) {
+            const body = safeTTSErrorBody(await response.text());
+            if (
+              attempt < 2 &&
+              (response.status === 429 || response.status >= 500)
+            ) {
+              await new Promise((resolve) =>
+                setTimeout(resolve, 500 * (attempt + 1)),
+              );
+              continue;
+            }
+            throw new TTSError(
+              "VieNeu Local",
+              voice,
+              part.length,
+              chunkIndex + 1,
+              parts.length,
+              body,
+              response.status,
+            );
+          }
+          break;
         }
-        if (!response.ok)
-          throw Error(
-            "VieNeu-TTS trả lỗi HTTP " +
-              response.status +
-              ". Kiểm tra cửa sổ engine.",
-          );
         const bytes = Buffer.from(await response.arrayBuffer());
         if (
           bytes.toString("ascii", 0, 4) !== "RIFF" ||
           bytes.toString("ascii", 8, 12) !== "WAVE"
         )
-          throw Error("VieNeu-TTS không trả về tệp WAV hợp lệ.");
+          throw new TTSError(
+            "VieNeu Local",
+            voice,
+            part.length,
+            chunkIndex + 1,
+            parts.length,
+            "Không trả về WAV hợp lệ",
+            response.status,
+          );
         await writeFile(raw, bytes);
       } else {
         await startService("korva");
@@ -268,7 +330,7 @@ export async function speakLocal(
           throw Error("KorvaTTS: " + (await response.text()).slice(-1200));
         await writeFile(raw, Buffer.from(await response.arrayBuffer()));
       }
-      if (parts.length === 1) {
+      if (parts.length === 1 && s.ttsProvider !== "vieneu-local") {
         await run([
           "-y",
           "-i",
@@ -300,8 +362,9 @@ export async function speakLocal(
         "1",
         "-c:a",
         "pcm_s16le",
-        clean,
+        cleanTemporary,
       ]);
+      await rename(cleanTemporary, clean);
       normalized.push(clean);
     }
     if (!normalized.length) throw Error("Nội dung lời đọc đang trống.");
@@ -334,6 +397,15 @@ export async function speakLocal(
     return seconds;
   } catch (e) {
     await unlink(file).catch(() => {});
+    if (s.ttsProvider === "vieneu-local" && !(e instanceof TTSError))
+      throw new TTSError(
+        "VieNeu Local",
+        voice,
+        text.length,
+        0,
+        0,
+        e instanceof Error ? e.message : String(e),
+      );
     throw e;
   } finally {
     await Promise.all(temporary.map((f) => unlink(f).catch(() => {})));

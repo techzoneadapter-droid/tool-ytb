@@ -55,7 +55,19 @@ export async function GET() {
         scenes: c.scenes.map(verifiedScene),
       })),
     })),
-    jobs: list<Job>("job").map(verifiedJob),
+    jobs: await Promise.all(
+      list<Job>("job").map(async (job) => ({
+        ...verifiedJob(job),
+        ...(job.snapshot.settings.imageEnabled === false
+          ? {
+              sharedImageValid: await validImage(
+                job.snapshot.settings.fallbackImage,
+              ),
+              imageMode: "shared",
+            }
+          : {}),
+      })),
+    ),
     providers: await providerStatus(),
     presets: list("preset"),
     hasKey: !!process.env.OPENAI_API_KEY,
@@ -159,12 +171,15 @@ export async function POST(req: NextRequest) {
           : plan(chapter.text, settings.style)
         ).map((scene) => ({
           ...scene,
-          prompt: styledPrompt(
-            scene.text,
-            settings.style,
-            settings.customPrompt,
-            chapter.title + ": " + chapter.text,
-          ),
+          prompt:
+            settings.imageEnabled === false
+              ? ""
+              : styledPrompt(
+                  scene.text,
+                  settings.style,
+                  settings.customPrompt,
+                  chapter.title + ": " + chapter.text,
+                ),
         })),
       }));
       const project: Project = {
@@ -174,8 +189,9 @@ export async function POST(req: NextRequest) {
         chapters,
         settings,
       };
-      for (const chapter of project.chapters)
-        ensureVisualProfile(chapter, settings);
+      if (settings.imageEnabled !== false)
+        for (const chapter of project.chapters)
+          ensureVisualProfile(chapter, settings);
       put("project", project);
       if (b.action === "createVideo") {
         const batchId = randomUUID();
@@ -494,12 +510,15 @@ export async function POST(req: NextRequest) {
       )
         for (const chapter of p.chapters)
           for (const scene of chapter.scenes) {
-            scene.prompt = styledPrompt(
-              scene.text,
-              settings.style,
-              settings.customPrompt,
-              chapter.title + ": " + chapter.text,
-            );
+            scene.prompt =
+              settings.imageEnabled === false
+                ? ""
+                : styledPrompt(
+                    scene.text,
+                    settings.style,
+                    settings.customPrompt,
+                    chapter.title + ": " + chapter.text,
+                  );
             if (scene.imageSource !== "upload") {
               scene.image = undefined;
               scene.imageSource = undefined;
@@ -512,9 +531,10 @@ export async function POST(req: NextRequest) {
             scene.motionError = undefined;
           }
       for (const chapter of p.chapters)
-        ensureVisualProfile(chapter, settings).style = settings.style;
+        if (settings.imageEnabled !== false)
+          ensureVisualProfile(chapter, settings).style = settings.style;
       p.settings = settings;
-      prepareCharacterBible(p);
+      if (settings.imageEnabled !== false) prepareCharacterBible(p);
       put("project", p);
       return NextResponse.json(p);
     }
@@ -613,12 +633,15 @@ export async function POST(req: NextRequest) {
           text += (await rewrite(part, p.settings)) + "\n";
         c.scenes = plan(text, p.settings.style);
         for (const scene of c.scenes)
-          scene.prompt = styledPrompt(
-            scene.text,
-            p.settings.style,
-            p.settings.customPrompt,
-            c.title + ": " + c.text,
-          );
+          scene.prompt =
+            p.settings.imageEnabled === false
+              ? ""
+              : styledPrompt(
+                  scene.text,
+                  p.settings.style,
+                  p.settings.customPrompt,
+                  c.title + ": " + c.text,
+                );
       }
       put("project", p);
       return NextResponse.json(p);
@@ -652,12 +675,15 @@ export async function POST(req: NextRequest) {
                 : plan(chapter.text, p.settings.style)
             ).map((scene) => ({
               ...scene,
-              prompt: styledPrompt(
-                scene.text,
-                p.settings.style,
-                p.settings.customPrompt,
-                chapter.title + ": " + chapter.text,
-              ),
+              prompt:
+                p.settings.imageEnabled === false
+                  ? ""
+                  : styledPrompt(
+                      scene.text,
+                      p.settings.style,
+                      p.settings.customPrompt,
+                      chapter.title + ": " + chapter.text,
+                    ),
             }));
           }
         put("project", p);

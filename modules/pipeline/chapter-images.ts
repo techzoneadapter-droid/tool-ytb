@@ -79,6 +79,7 @@ export async function processChapterImages(
   settings: Settings,
   deps: Dependencies,
 ) {
+  if (settings.imageEnabled === false) return [];
   const errors: { chapterId: string; code: string; message: string }[] = [];
   const provider = settings.imageProvider || "openai";
   const api = isImageAPIProvider(provider);

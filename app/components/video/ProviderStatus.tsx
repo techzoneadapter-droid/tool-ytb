@@ -160,8 +160,8 @@ export function ProviderStatus({
     const imageRaw =
       isImageAPIProvider(provider)
         ? {
-            label: `${imageAPIOptions.find(option => option.id === provider)!.label} · ${p?.imageAPIs?.[provider]?.model || "API key"}`,
-            ready: !!p?.imageAPIs?.[provider]?.configured,
+            label: `${imageAPIOptions.find(option => option.id === provider)!.label} · ${settings.imageModel || p?.imageAPIs?.[provider]?.model || "API key"}`,
+            ready: !!p?.imageAPIs?.[provider]?.connected,
             configured: !!p?.imageAPIs?.[provider]?.configured,
             service: "",
           }
@@ -299,7 +299,8 @@ export function ProviderStatus({
               {!p
                 ? "Đang kiểm tra"
                 : row.ready
-                  ? "Sẵn sàng"
+                  ? row.name === "Hình ảnh" && isImageAPIProvider(settings.imageProvider) ? "Đã kết nối" : "Sẵn sàng"
+                  : row.name === "Hình ảnh" && isImageAPIProvider(settings.imageProvider) ? "Chưa kết nối"
                   : row.service === "flow" && ["starting", "restoring"].includes(p?.flow?.state || "")
                     ? "Đang khôi phục phiên Flow..."
                   : row.configured
@@ -381,7 +382,7 @@ export function ProviderStatus({
             ["Edge TTS Online", true],
             ["Story AI Cloud", !!p?.modal?.image?.ready],
             ["Google Flow", !!p?.flow?.generationReady],
-            ...imageAPIOptions.map(option => [option.label, !!p?.imageAPIs?.[option.id]?.configured]),
+            ...imageAPIOptions.map(option => [option.label, !!p?.imageAPIs?.[option.id]?.connected]),
             ["AI Horde", !!p?.freeCloud?.aiHorde?.ready],
             ["Pollinations Image", !!p?.freeCloud?.pollinations?.imageReady],
             ["VieNeu Local", !!p?.local.vieneu.ready],

@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
         enabled: z.boolean().default(true),
         aspect: z.enum(["16:9", "9:16"]).default("16:9"),
         style: z.string().max(100).optional(),
+        model: z.string().regex(/^[a-zA-Z0-9._-]+$/).max(150).optional(),
       })
       .parse(body);
     const file = randomUUID() + ".png";
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
         ...defaults,
         imageEnabled: b.enabled,
         imageProvider: b.provider,
+        imageModel: b.model,
         aspect: b.aspect,
       },
     );

@@ -17,6 +17,7 @@ import { AdvancedOptions } from "./AdvancedOptions";
 import { VisualProfiles } from "./VisualProfiles";
 import { ProviderStatus } from "./ProviderStatus";
 import { PipelineProgress } from "./PipelineProgress";
+import { ImageAPIConnection } from "./ImageAPIConnection";
 export function VideoCreatePage({
   data,
   projectId,
@@ -387,6 +388,7 @@ export function VideoCreatePage({
                             change({
                               imageProvider: e.target
                                 .value as Settings["imageProvider"],
+                              imageModel: undefined,
                             })
                           }
                         >
@@ -420,12 +422,9 @@ export function VideoCreatePage({
                         </select>
                       </label>
                       {isImageAPIProvider(settings.imageProvider) && (
-                        <p className="notice">
-                          {data.providers?.imageAPIs?.[settings.imageProvider]?.configured ? "Đã cấu hình key" : "Chưa cấu hình key"}
-                          {" · "}{data.providers?.imageAPIs?.[settings.imageProvider]?.model || "Model từ cấu hình server"}.
-                          {" Thêm "}{imageAPIOptions.find(option => option.id === settings.imageProvider)?.keyEnv}
-                          {" vào .env.local, sau đó khởi động lại ứng dụng. API tính phí theo tài khoản; quyền truy cập và hạn mức được kiểm tra khi tạo ảnh."}
-                        </p>
+                        <ImageAPIConnection key={settings.imageProvider} provider={settings.imageProvider}
+                          status={data.providers?.imageAPIs?.[settings.imageProvider]} model={settings.imageModel}
+                          onModel={model => change({ imageModel: model })} refresh={refresh} />
                       )}
                       <label>
                         Phong cách ảnh

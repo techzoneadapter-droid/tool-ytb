@@ -1,6 +1,9 @@
 import { imageAPIOptions, isImageAPIProvider } from "./image-api-options";
+import { readImageAPI, type ImageAPIModel } from "./image-api-settings";
 
 export function imageConfig(provider = process.env.IMAGE_PROVIDER || "openai") {
+  const saved = isImageAPIProvider(provider) ? readImageAPI(provider) : undefined;
+  if (saved) return { provider, key: saved.key, model: saved.model };
   if (provider === "gemini") return {
     provider, key: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
     model: process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image",
@@ -20,7 +23,7 @@ export function requireImage(provider?: string) {
   const config = imageConfig(provider);
   const option = imageAPIOptions.find(option => option.id === config.provider);
   if (!option || !config.key?.trim())
-    throw Error(`Chưa cấu hình API tạo ảnh${option ? `: ${option.label}. Thêm ${option.keyEnv} vào .env.local và khởi động lại server/worker.` : "."}`);
+    throw Error(`Chưa cấu hình API tạo ảnh${option ? `: ${option.label}. Nhập API key và kết nối trong phần Engine ảnh (${option.keyEnv}).` : "."}`);
   if (!/^[a-zA-Z0-9._-]+$/.test(config.model))
     throw Error(`${option.modelEnv} không phải mã model hợp lệ.`);
   if (config.provider === "stability" && !["core", "ultra"].includes(config.model))
@@ -31,10 +34,11 @@ export function requireImage(provider?: string) {
 export function imageAPIStatus() {
   return Object.fromEntries(imageAPIOptions.map(option => {
     const config = imageConfig(option.id);
+    const saved = readImageAPI(option.id);
     let configured = false;
     try { requireImage(option.id); configured = true; } catch { /* Metadata only. */ }
-    return [option.id, { label: option.label, model: config.model, configured, keyEnv: option.keyEnv }];
-  })) as Record<(typeof imageAPIOptions)[number]["id"], { label: string; model: string; configured: boolean; keyEnv: string }>;
+    return [option.id, { label: option.label, model: config.model, configured, keyEnv: option.keyEnv, connected: configured && saved?.connected === true, models: saved?.models || [], checkedAt: saved?.checkedAt, catalogSource: saved?.catalogSource }];
+  })) as Record<(typeof imageAPIOptions)[number]["id"], { label: string; model: string; configured: boolean; keyEnv: string; connected: boolean; models: ImageAPIModel[]; checkedAt?: string; catalogSource?: string }>;
 }
 
 function decodeImage(data: unknown, label: string) {
@@ -46,8 +50,12 @@ function decodeImage(data: unknown, label: string) {
 }
 
 // No automatic retry/fallback here: a repeated paid request can incur extra charges.
-export async function generateAPIImage(provider: string | undefined, prompt: string, aspect: "16:9" | "9:16", seed = 0) {
+export async function generateAPIImage(provider: string | undefined, prompt: string, aspect: "16:9" | "9:16", seed = 0, selectedModel?: string) {
   const config = requireImage(provider);
+  if (selectedModel) {
+    if (!/^[a-zA-Z0-9._-]+$/.test(selectedModel) || (config.provider === "stability" && !["core", "ultra"].includes(selectedModel))) throw Error("Model ảnh không hợp lệ.");
+    config.model = selectedModel;
+  }
   if (!isImageAPIProvider(config.provider)) throw Error("Nhà cung cấp ảnh không hợp lệ.");
   const label = imageAPIOptions.find(option => option.id === config.provider)!.label;
   const composed = `${prompt} Compose for ${aspect} with important subjects inside the central crop.`;

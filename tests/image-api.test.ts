@@ -4,6 +4,7 @@ import sharp from "sharp";
 import { mkdtemp, readFile, rm, unlink } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { imageConfig, imageAPIStatus, requireImage, generateAPIImage } from "../modules/providers/image-api";
 import { imageAPIOptions } from "../modules/providers/image-api-options";
@@ -13,6 +14,14 @@ import { makeImage } from "../modules/imagePrompt";
 
 const envKeys = ["IMAGE_PROVIDER", "IMAGE_API_KEY", "IMAGE_MODEL", "OPENAI_API_KEY", "OPENAI_IMAGE_MODEL", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_IMAGE_MODEL", "STABILITY_API_KEY", "STABILITY_IMAGE_MODEL"];
 function isolateEnv(t: test.TestContext) {
+  const previousDir = process.env.IMAGE_API_CONFIG_DIR;
+  const dir = mkdtempSync(path.join(os.tmpdir(), "storyflow-image-config-"));
+  process.env.IMAGE_API_CONFIG_DIR = dir;
+  t.after(() => {
+    if (previousDir === undefined) delete process.env.IMAGE_API_CONFIG_DIR;
+    else process.env.IMAGE_API_CONFIG_DIR = previousDir;
+    rmSync(dir, { recursive: true, force: true });
+  });
   const previous = envKeys.map(key => process.env[key]);
   envKeys.forEach(key => delete process.env[key]);
   t.after(() => envKeys.forEach((key, index) => {

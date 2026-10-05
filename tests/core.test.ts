@@ -320,10 +320,13 @@ test("missing credentials fail closed and never activate named presets", async (
     "IMAGE_API_KEY",
     "TTS_VOICE_MAP",
     "TTS_PROVIDER",
+    "IMAGE_API_CONFIG_DIR",
   ];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  const imageConfigDir = await mkdtemp(path.join(tmpdir(), "storyflow-empty-image-config-"));
   try {
     for (const k of keys) delete process.env[k];
+    process.env.IMAGE_API_CONFIG_DIR = imageConfigDir;
     assert.throws(() => requireTTS("ngoc-huyen"), /Chưa cấu hình API TTS/);
     assert.throws(() => requireImage(), /Chưa cấu hình API tạo ảnh/);
     assert.equal(
@@ -332,6 +335,7 @@ test("missing credentials fail closed and never activate named presets", async (
       false,
     );
   } finally {
+    await rmdir(imageConfigDir);
     for (const k of keys) {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];

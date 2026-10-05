@@ -44,7 +44,9 @@ Engine mặc định cho dự án mới là **VieNeu-TTS v3 Turbo**. Có thêm *
 
 Sao chép `.env.example` thành `.env.local`. Không gửi khóa vào chat hoặc commit vào Git. Khởi động lại **cả server và worker** sau khi sửa biến môi trường.
 
-Trong **Tạo video → Ảnh minh họa → Engine ảnh**, có thêm OpenAI/GPT Image, Google Gemini/Nano Banana và Stability AI. Lưu thiết lập dự án để hàng đợi dùng đúng lựa chọn. Mỗi API tạo một ảnh cho mỗi cảnh cần ảnh; kết quả được giải mã, cắt theo tỷ lệ video và dùng trong luồng dựng video hiện có.
+Trong **Tạo video → Ảnh minh họa → Engine ảnh**, chọn OpenAI/GPT Image, Google Gemini/Nano Banana hoặc Stability AI, dán API key rồi bấm **Kết nối & lấy danh sách model**. Chọn model trong danh sách vừa tải. OpenAI/Gemini lấy danh sách từ API; Stability kiểm tra key qua API tài khoản rồi hiển thị hai endpoint Core/Ultra được hỗ trợ. Kết nối không phát sinh yêu cầu tạo ảnh và không xác nhận hạn mức tạo ảnh.
+
+Key được lưu cục bộ trong `data/image-api/<provider>.json` (đã loại khỏi Git), không trả về trình duyệt. Cấu hình từ giao diện ưu tiên hơn biến môi trường; cả server và worker đọc thay đổi ngay, không cần khởi động lại. Không đưa key vào thiết lập dự án, localStorage hoặc log. Model được chọn lưu cùng thiết lập dự án khi bắt đầu tạo video để worker dùng đúng lựa chọn. Mỗi API tạo một ảnh cho mỗi cảnh cần ảnh; kết quả được giải mã, cắt theo tỷ lệ video và dùng trong luồng dựng video hiện có.
 
 | Lựa chọn | API key trong `.env.local` | Model |
 | --- | --- | --- |
@@ -52,7 +54,7 @@ Trong **Tạo video → Ảnh minh họa → Engine ảnh**, có thêm OpenAI/GP
 | Google Gemini · Nano Banana | `GEMINI_API_KEY` hoặc `GOOGLE_API_KEY` | `GEMINI_IMAGE_MODEL=gemini-3.1-flash-image` |
 | Stability AI · Stable Image | `STABILITY_API_KEY` | `STABILITY_IMAGE_MODEL=core` hoặc `ultra` |
 
-Key chỉ được đọc ở server/worker; trạng thái giao diện chỉ phản ánh đã có cấu hình, chưa xác nhận quyền truy cập hoặc số dư. Không tự chuyển sang API trả phí khác khi một API lỗi. Endpoint tạo ảnh riêng `/api/image/generate` cũng nhận `provider: "openai"`, `"gemini"` hoặc `"stability"`.
+Key chỉ được đọc ở server/worker; giao diện phân biệt có key với đã kết nối API. Không tự chuyển sang API trả phí khác khi một API lỗi. Endpoint tạo ảnh riêng `/api/image/generate` cũng nhận `provider: "openai"`, `"gemini"` hoặc `"stability"` và `model` tùy chọn.
 
 Gemini dùng [Interactions API](https://ai.google.dev/gemini-api/docs/image-generation) và chỉ lấy ảnh kết quả cuối, bỏ ảnh suy nghĩ trung gian. Stability gọi [Stable Image Core/Ultra](https://platform.stability.ai/docs/api-reference). [Imagen đã ngừng cung cấp trên Gemini API](https://ai.google.dev/gemini-api/docs/imagen). Tài liệu [DeepSeek Vision](https://api-docs.deepseek.com/guides/vision/) mô tả nhận ảnh đầu vào; chưa có API xuất ảnh được xác minh để thêm vào danh sách tạo ảnh.
 

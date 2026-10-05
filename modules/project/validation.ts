@@ -10,6 +10,7 @@ export const settingsSchema = z.object({
   fallbackOnImageError: z.boolean().optional(),
   provider: z.literal("openai"),
   imageEnabled: z.boolean().optional(),
+  imageModel: z.string().regex(/^[a-zA-Z0-9._-]+$/).max(150).optional(),
   imageProvider: z
     .enum([
       "modal-story",

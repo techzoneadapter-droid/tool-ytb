@@ -116,7 +116,7 @@ export async function makeImage(
       ? "stabilityai/sd-turbo"
       : provider === "flux2-local"
         ? process.env.FLUX2_MODEL || "flux2-klein-4b"
-        : imageConfig(provider).model;
+        : s.imageModel || imageConfig(provider).model;
 
   if (provider === "flux2-local" || provider === "local-fast") {
     bytes = await localGenerate(provider === "local-fast" ? "fast" : "flux", {
@@ -126,7 +126,7 @@ export async function makeImage(
       seed,
     });
   } else {
-    const generated = await generateAPIImage(provider, prompt, s.aspect, seed);
+    const generated = await generateAPIImage(provider, prompt, s.aspect, seed, s.imageModel);
     bytes = generated.bytes;
     provider = generated.engine;
   }

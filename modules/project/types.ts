@@ -63,6 +63,7 @@ export type Settings = {
   fallbackImage?: string;
   fallbackOnImageError?: boolean;
   imageEnabled?: boolean;
+  imageModel?: string;
   imageProvider?:
     | "modal-story"
     | "modal-reference"

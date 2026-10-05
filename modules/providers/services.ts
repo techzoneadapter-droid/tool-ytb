@@ -4,8 +4,8 @@ import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu" | "flow";
-export const WORKER_PROTOCOL = 8;
-export const FLOW_PROTOCOL = 18;
+export const WORKER_PROTOCOL = 9;
+export const FLOW_PROTOCOL = 22;
 export async function alive(file: string) {
   try {
     const pid = Number(
@@ -103,16 +103,17 @@ async function ready(service: Service) {
     return false;
   }
 }
-const starts = new Map<Service, Promise<void>>();
+const starts = new Map<string, Promise<void>>();
 
-export function startService(service: Service): Promise<void> {
-  const pending = starts.get(service);
+export function startService(service: Service, options: { replaceFlowSession?: boolean } = {}): Promise<void> {
+  const key = service + (service === "flow" && options.replaceFlowSession ? ":replace" : "");
+  const pending = starts.get(key);
   if (pending) return pending;
-  const task = start(service).finally(() => starts.delete(service));
-  starts.set(service, task);
+  const task = start(service, options).finally(() => starts.delete(key));
+  starts.set(key, task);
   return task;
 }
-async function start(service: Service) {
+async function start(service: Service, options: { replaceFlowSession?: boolean }) {
   if (await ready(service)) return;
 
   if (service === "flow") {
@@ -120,12 +121,14 @@ async function start(service: Service) {
     if (await alive(flowPidFile)) {
       const pid = Number(await readFile(flowPidFile, "utf8").catch(() => "0"));
       let protocolOk = false;
+      let legacySessionReady = false;
       try {
         const response = await fetch(new URL("/health", serviceURL("flow")), {
           signal: AbortSignal.timeout(1000),
           redirect: "error",
         });
         const health = await response.json();
+        legacySessionReady = health.engine === "flow" && health.connected === true;
         protocolOk =
           response.ok &&
           health.status === "ok" &&
@@ -133,6 +136,8 @@ async function start(service: Service) {
           health.protocol === FLOW_PROTOCOL &&
           health.connectionMode === "python-headless-cookies";
       } catch {}
+      if (!protocolOk && legacySessionReady && !options.replaceFlowSession && !existsSync(/* turbopackIgnore: true */ path.resolve(process.env.FLOW_COOKIES_FILE || "cookies.json")))
+        throw Object.assign(Error("[FLOW_LOGIN_REQUIRED] Worker cũ đang giữ phiên Flow trong RAM; chưa có cookie file để khôi phục. Phiên hiện tại được giữ nguyên."), { code: "FLOW_LOGIN_REQUIRED", stage: "FLOW_SESSION_RESTORE" });
       if (!protocolOk && Number.isInteger(pid) && pid > 0) {
         if (process.platform === "win32") {
           await new Promise<void>((resolve) => {

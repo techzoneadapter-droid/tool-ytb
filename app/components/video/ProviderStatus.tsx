@@ -42,12 +42,12 @@ export function ProviderStatus({
       pendingFlow.current = false;
       setWaitingFlow(false);
       if (p.flow.lastError) setDetail(p.flow.lastError);
-    } else if (p?.flow?.connected) {
+    } else if (p?.flow?.generationReady) {
       pendingFlow.current = false;
       setWaitingFlow(false);
       void afterFlow.current?.().catch(error => setDetail((error as Error).message));
     }
-  }, [p?.flow?.connected, p?.flow?.state, p?.flow?.lastError]);
+  }, [p?.flow?.generationReady, p?.flow?.state, p?.flow?.lastError]);
 
   useEffect(() => {
     if (!setup) return;
@@ -100,7 +100,7 @@ export function ProviderStatus({
       pendingFlow.current = true;
       const result = await request<{ status: NonNullable<StudioData["providers"]>["flow"] }>({ action: "initializeFlowSession", cookieJson, projectUrl: flowProjectUrl });
       setCookieJson("");
-      if (result.status.connected) {
+      if (result.status.generationReady) {
         pendingFlow.current = false;
         await afterFlow.current?.();
       } else {
@@ -159,8 +159,8 @@ export function ProviderStatus({
     const imageRaw =
       provider === "flow-browser"
         ? {
-            label: "Google Flow · Nano Banana Pro · tài khoản của bạn",
-            ready: !!p?.flow?.connected,
+            label: `Google Flow · ${p?.flow?.model || "model của project"} · tài khoản của bạn`,
+            ready: !!p?.flow?.generationReady,
             configured: true,
             service: "flow",
           }
@@ -338,7 +338,7 @@ export function ProviderStatus({
           local hoặc bật ảnh dùng chung dự phòng để vẫn dựng được video.
         </p>
       )}
-      {settings.imageProvider === "flow-browser" && !p?.flow?.connected && (
+      {settings.imageProvider === "flow-browser" && !p?.flow?.generationReady && (
         <p className="notice">
           {p?.flow?.message || "Dán JSON Cookie và URL dự án Flow để kết nối chạy ẩn."}
           {onFlowConnected && " Kết nối xong sẽ tự tạo ảnh và dựng video cho các chương đang chọn."}
@@ -356,7 +356,8 @@ export function ProviderStatus({
           <button className="text-button" disabled={!!busy || !cookieJson.trim()} onClick={() => void openFlow()}>
             {busy === "flow" ? "Đang kết nối chạy ẩn…" : "Kết nối bằng cookie"}
           </button>
-          <p className="notice">Cookie chỉ giữ trong bộ nhớ phiên, không lưu vào file. Trình duyệt chạy headless, không hiện cửa sổ. Khi phiên hết hạn, xuất lại cookie từ tài khoản Flow của bạn.</p>
+          <p className="notice">Cookie được lưu cục bộ để khôi phục phiên, không đưa lên Git. Trình duyệt chạy headless. Project Flow giữ cấu hình model/tỷ lệ hiện tại.</p>
+          <p className="notice">Phiên: {p?.flow?.sessionReady ? "✓" : "chưa kết nối"} · Composer: {p?.flow?.composerReady ? "✓" : "chưa tìm thấy"} · Tạo ảnh: {p?.flow?.generationReady ? "sẵn sàng" : "chưa sẵn sàng"}{p?.flow?.lastStage ? ` · ${p.flow.lastStage}` : ""}</p>
         </div>
       )}
 
@@ -367,7 +368,7 @@ export function ProviderStatus({
             ["VieNeu Cloud", !!p?.modal?.tts?.ready],
             ["Edge TTS Online", true],
             ["Story AI Cloud", !!p?.modal?.image?.ready],
-            ["Google Flow", !!p?.flow?.connected],
+            ["Google Flow", !!p?.flow?.generationReady],
             ["AI Horde", !!p?.freeCloud?.aiHorde?.ready],
             ["Pollinations Image", !!p?.freeCloud?.pollinations?.imageReady],
             ["VieNeu Local", !!p?.local.vieneu.ready],

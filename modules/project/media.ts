@@ -3,6 +3,7 @@ import path from "node:path";
 import { root } from "./store";
 import type { Scene, Job, Settings } from "./types";
 import sharp from "sharp";
+import { cachedSceneVideo } from "../videoRender/scene-cache";
 export function assetExists(name?: string) {
   try {
     return (
@@ -73,6 +74,7 @@ export async function resolveSceneImage(
   return undefined;
 }
 export async function requireSceneMedia(scene: Scene, settings?: Settings) {
+  if (settings && cachedSceneVideo(scene, settings)) return;
   if (!scene.audioSource || !assetExists(scene.audio))
     throw Error("Cảnh chưa có tệp lời đọc thật. Hãy tạo lại lời đọc.");
   if (!(await resolveSceneImage(scene, settings)))

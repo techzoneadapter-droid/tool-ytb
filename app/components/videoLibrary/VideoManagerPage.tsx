@@ -86,7 +86,9 @@ export function VideoManagerPage({
     const latest = new Map<string, VideoRecord>();
     for (const video of videos) {
       const key =
-        video.kind === "chapter"
+        video.kind === "scene"
+          ? "scene:" + video.sceneId
+          : video.kind === "chapter"
           ? "chapter:" + video.chapterIds.join(",")
           : "merged:" + video.id;
       const current = latest.get(key);
@@ -329,6 +331,7 @@ export function VideoManagerPage({
                           <div className="video-library-info">
                             <div className="row">
                               {video.kind === "merged" && <span className="badge">GỘP</span>}
+                              {video.kind === "scene" && <span className="badge">CẢNH</span>}
                               <h3>{video.title}</h3>
                             </div>
                             <small>
@@ -429,7 +432,9 @@ export function VideoManagerPage({
                 <X size={18} />
               </button>
             </div>
-            <video controls preload="metadata" src={fileURL(player.output)} />
+            <video controls preload="metadata" src={fileURL(player.output)}>
+              {player.kind === "scene" && player.vtt && <track kind="subtitles" src={fileURL(player.vtt)} srcLang="vi" label="Tiếng Việt" default />}
+            </video>
             <div className="row">
               <a
                 className="button primary"

@@ -4,6 +4,7 @@ export function run(
   cwd?: string,
   probe = false,
   progress?: { seconds: number; onProgress: (fraction: number) => void },
+  inputBuffer?: Buffer,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(
@@ -39,6 +40,14 @@ export function run(
       output = (output + d).slice(-12000);
     });
     p.on("error", reject);
+    // The still image is written once, directly to FFmpeg. No image temp file.
+    p.stdin.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE" && error.code !== "ECONNRESET") {
+        p.kill();
+        reject(error);
+      }
+    });
+    p.stdin.end(inputBuffer);
     p.on("close", (code) =>
       code === 0
         ? resolve(output)

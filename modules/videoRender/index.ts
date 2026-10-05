@@ -7,6 +7,7 @@ import { subtitles } from "../subtitle";
 import { run, duration } from "./process";
 import { usesMotion } from "../providers/local-workers";
 import { assetExists, resolveSceneImage } from "../project/media";
+import { cachedSceneVideo } from "./scene-cache";
 export const assets = path.join(root, "assets");
 export async function render(
   scenes: Scene[],
@@ -61,6 +62,11 @@ export async function render(
   for (let i = 0; i < scenes.length; i++) {
     checkpoint((i / scenes.length) * 0.6);
     const scene = scenes[i];
+    const cached = cachedSceneVideo(scene, s, assets);
+    if (cached) {
+      segments.push(path.join(assets, cached).replaceAll("\\", "/"));
+      continue;
+    }
     const image = await resolveSceneImage(scene, s);
     if (!image) throw Error('Cảnh chưa có ảnh hợp lệ hoặc ảnh dùng chung.');
     const motion =

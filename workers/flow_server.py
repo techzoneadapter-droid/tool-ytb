@@ -19,6 +19,7 @@ async def lifespan(app):
         await session.restore_session()
     except FlowError as error:
         session.last_error = f"[{error.code}] {error}"
+        session.last_stage = error.stage
     yield
     async with lock:
         await session.close()
@@ -36,8 +37,8 @@ async def local_only(request: Request, call_next):
 
 @app.exception_handler(FlowError)
 async def flow_error(request, error):
-    status = 401 if error.code == "COOKIE_EXPIRED" else 400 if error.code.startswith("INVALID_") else 409
-    return JSONResponse({"error": str(error), "code": error.code, "stage": error.stage, "diagnostics": error.diagnostics}, status_code=status)
+    status = 401 if error.code in ("FLOW_COOKIE_EXPIRED", "FLOW_LOGIN_REQUIRED") else 400 if error.code.startswith("INVALID_") else 409
+    return JSONResponse({"error": str(error), "message": str(error), "code": error.code, "stage": error.stage, "diagnostics": error.diagnostics}, status_code=status)
 
 
 async def payload(request):
@@ -74,11 +75,12 @@ async def initialize(request: Request):
 async def generate(request: Request):
     data = await payload(request)
     async with lock:
+        session.current_request_id = data.get("requestId")
         if session.state == "disconnected":
             session.project_url = str(data.get("projectUrl") or session.project_url)
             await session.restore_session()
         content, mime = await session.generate_image(data.get("prompt"), data.get("aspect", "16:9"))
-    return Response(content, media_type=mime, headers={"Cache-Control": "no-store", "X-StoryFlow-Model": session.model})
+    return Response(content, media_type=mime, headers={"Cache-Control": "no-store", "X-StoryFlow-Model": session.observed_model or "project-current"})
 
 
 @app.post("/disconnect")

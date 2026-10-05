@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     if (b.action === "initializeFlowSession") {
       const cookieJson = z.string().min(1).max(1048576).parse(b.cookieJson);
       const projectUrl = z.string().max(2000).parse(b.projectUrl || "");
-      await startService("flow");
+      await startService("flow", { replaceFlowSession: true });
       const status = await initializeFlowSession(cookieJson, projectUrl);
       return NextResponse.json({ ok: true, status });
     }
@@ -237,6 +237,7 @@ export async function POST(req: NextRequest) {
         updateJob(j.id, {
           status: "queued",
           error: undefined,
+          sceneErrors: undefined,
           message:
             b.action === "resume"
               ? "Tiếp tục tác vụ từ tài nguyên đã có"
@@ -562,7 +563,7 @@ export async function POST(req: NextRequest) {
         sceneIds?.some((id) => !scenes.some((s) => s.id === id))
       )
         throw Error("Không tìm thấy cảnh cần xử lý.");
-      if (kind === "audio" || kind === "prepare" || kind === "pipeline")
+      if (kind === "audio" || kind === "prepare" || kind === "pipeline" || (kind === "image" && p.settings.imageProvider === "flow-browser"))
         assertTTS(p.settings);
       if (kind === "image" && p.settings.imageEnabled === false)
         throw Error("Tạo ảnh đang tắt. Hãy bật tạo ảnh hoặc tải ảnh lên.");

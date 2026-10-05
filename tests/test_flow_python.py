@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workers"))
-from flow_automation import FlowAutomation, FlowError, normalize_cookies
+from flow_automation import FlowAutomation, FlowError, normalize_cookies, COMPOSER_SCRIPT, MONITOR_SCRIPT
 
 
 class ServerTests(unittest.TestCase):
@@ -36,12 +36,12 @@ class ServerTests(unittest.TestCase):
                     if time.monotonic() > deadline:
                         self.fail("Flow Python HTTP server did not start")
                     time.sleep(0.1)
-            self.assertEqual(health["protocol"], 18)
+            self.assertEqual(health["protocol"], 22)
             self.assertFalse(health["connected"])
             self.assertTrue(health["background"])
             for endpoint, data, headers, expected, code in (
                 ("/session", {"cookieJson": "bad"}, {}, 400, "INVALID_COOKIES"),
-                ("/generate", {"prompt": "forest"}, {}, 409, "SESSION_REQUIRED"),
+                ("/generate", {"prompt": "forest"}, {}, 401, "FLOW_LOGIN_REQUIRED"),
                 ("/session", {"cookieJson": "bad"}, {"Origin": "https://example.test"}, 403, None),
             ):
                 request = urllib.request.Request(base + endpoint, data=json.dumps(data).encode(),
@@ -81,7 +81,7 @@ class CookieTests(unittest.TestCase):
     def test_expired_export(self):
         with self.assertRaises(FlowError) as caught:
             normalize_cookies('[{"name":"SID","value":"x","domain":".google.com","expirationDate":1}]', now=1000)
-        self.assertEqual(caught.exception.code, "COOKIE_EXPIRED")
+        self.assertEqual(caught.exception.code, "FLOW_COOKIE_EXPIRED")
 
     def test_invalid_data_does_not_expose_values(self):
         for raw in ("broken", "{}", "[]", '[{"name":"SID","value":"secret","domain":"evil.test"}]',
@@ -92,6 +92,109 @@ class CookieTests(unittest.TestCase):
 
 
 class SessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generate_http_response_is_binary_and_never_an_image_file(self):
+        import flow_server
+        session = MagicMock()
+        session.state = 'ready'
+        session.observed_model = 'Nano Banana Pro'
+        content = b'\x89PNG\r\n\x1a\n' + b'fixture' * 2000
+        session.generate_image = AsyncMock(return_value=(content, 'image/png'))
+        with patch.object(flow_server, 'session', session), patch.object(flow_server, 'payload', AsyncMock(return_value={'prompt': 'test'})):
+            response = await flow_server.generate(MagicMock())
+        self.assertEqual(response.body, content)
+        self.assertEqual(response.media_type, 'image/png')
+        self.assertEqual(response.headers['x-storyflow-model'], 'Nano Banana Pro')
+
+    async def test_form_submit_native_setter_events_and_no_private_handler(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel="chrome", headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content('<form><textarea required></textarea><button type="submit">Generate</button></form>')
+                await page.evaluate("""() => {
+                    window.events = []; window.sent = 0;
+                    const editor = document.querySelector('textarea');
+                    const proto = HTMLTextAreaElement.prototype;
+                    Object.defineProperty(editor, 'value', { get: () => Object.getOwnPropertyDescriptor(proto, 'value').get.call(editor), set: () => { throw Error('must use native setter'); } });
+                    for (const name of ['beforeinput', 'input', 'change']) editor.addEventListener(name, () => window.events.push(name));
+                    document.querySelector('button').__reactProps$fixture = { onClick() { throw Error('private props must be the last fallback'); } };
+                    document.querySelector('form').onsubmit = event => { event.preventDefault(); window.sent++; window.prompt = editor.value; };
+                }""")
+                session = FlowAutomation(); session.page = page
+                result = await session._submit_prompt('React-style textarea')
+                self.assertEqual(result['method'], 'requestSubmit')
+                self.assertEqual(await page.evaluate('window.sent'), 1)
+                self.assertEqual(await page.evaluate('window.prompt'), 'React-style textarea')
+                self.assertEqual(await page.evaluate('window.events'), ['beforeinput', 'input', 'change'])
+            finally:
+                await browser.close()
+
+    async def test_noop_submit_is_not_reported_as_generation_and_debug_is_opt_in(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel="chrome", headless=True)
+            try:
+                context = await browser.new_context(); page = await context.new_page()
+                await page.route('https://flow.google.com/**', lambda route: route.fulfill(body='<textarea></textarea><button>Generate</button>', content_type='text/html'))
+                await page.goto('https://flow.google.com/project/test')
+                session = FlowAutomation(); session.page = page; session.state = 'ready'
+                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'FLOW_START_TIMEOUT_MS': '150', 'FLOW_DEBUG': '0', 'FLOW_DIAGNOSTICS_DIR': directory}):
+                    with self.assertRaises(FlowError) as caught:
+                        await session.generate_image('Do not claim success')
+                    self.assertEqual(caught.exception.code, 'FLOW_GENERATION_START_TIMEOUT')
+                    self.assertEqual(caught.exception.stage, 'FLOW_GENERATION_START_WAIT')
+                    self.assertIsNone(caught.exception.diagnostics)
+                    self.assertEqual(list(Path(directory).iterdir()), [])
+            finally:
+                await browser.close()
+
+    async def test_new_image_ignores_old_avatar_and_recreated_old_source(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel='chrome', headless=True)
+            try:
+                context = await browser.new_context(); page = await context.new_page()
+                await page.route('https://flow.google.com/**', lambda route: route.fulfill(body='<textarea></textarea><button>Generate</button>', content_type='text/html'))
+                await page.goto('https://flow.google.com/project/test')
+                await page.evaluate("""async () => {
+                    window.makeImage = async (alt = '') => {
+                        const canvas = document.createElement('canvas'); canvas.width = 768; canvas.height = 512;
+                        const context = canvas.getContext('2d'); const pixels = context.createImageData(768,512);
+                        for (let index = 0; index < pixels.data.length; index++) pixels.data[index] = Math.random()*255;
+                        context.putImageData(pixels,0,0);
+                        const image = new Image(); image.alt = alt; image.src = canvas.toDataURL(); document.body.append(image); await image.decode(); return image;
+                    };
+                    window.oldImage = await window.makeImage();
+                    await window.makeImage('avatar');
+                }""")
+                before = await page.evaluate(MONITOR_SCRIPT, {})
+                self.assertEqual(len(before['images']), 1)
+                await page.evaluate("async () => { const copy = new Image(); copy.src = window.oldImage.src; document.body.append(copy); await copy.decode(); }")
+                self.assertEqual((await page.evaluate(MONITOR_SCRIPT, {'before': before, 'prompt': 'test'}))['fresh'], [])
+                await page.evaluate("document.querySelector('button').onclick = async () => { window.newImage = await window.makeImage(); }")
+                session = FlowAutomation(); session.page = page; session.context = context; session.state = 'ready'
+                with patch.object(session, '_configure', AsyncMock(side_effect=AssertionError('configuration must not run'))) as configure:
+                    content, mime = await session.generate_image('test')
+                    configure.assert_not_awaited()
+                import base64
+                expected = await page.evaluate('window.newImage.src')
+                self.assertEqual(content, base64.b64decode(expected.split(',', 1)[1]))
+                self.assertEqual(mime, 'image/png')
+                self.assertTrue(session.health()['generationReady'])
+            finally:
+                await browser.close()
+
+    async def test_health_distinguishes_session_from_missing_composer(self):
+        session = FlowAutomation(); session.session_ready = True
+        session.page = AsyncMock()
+        session.page.evaluate.return_value = {'error': 'No editor', 'code': 'FLOW_COMPOSER_NOT_FOUND'}
+        with self.assertRaises(FlowError): await session._ensure_composer_ready()
+        self.assertTrue(session.health()['sessionReady'])
+        self.assertTrue(session.health()['connected'])
+        self.assertFalse(session.health()['composerReady'])
+        self.assertFalse(session.health()['generationReady'])
+
     async def test_launch_is_headless_and_cookies_imported(self):
         session = FlowAutomation(project_url="https://flow.google.com/project/demo")
         session.cookie_file = MagicMock()
@@ -103,7 +206,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         pw.chromium.launch.return_value = browser
         starter = MagicMock(start=AsyncMock(return_value=pw))
         editor = MagicMock(wait_for=AsyncMock())
-        with patch("flow_automation.async_playwright", return_value=starter), patch.object(session, "_auth_check", AsyncMock()), patch.object(session, "_editor", return_value=editor), patch.object(session, "_save_cookies") as save:
+        with patch("flow_automation.async_playwright", return_value=starter), patch.object(session, "_auth_check", AsyncMock()), patch.object(session, "_editor", return_value=editor), patch.object(session, "_ensure_composer_ready", AsyncMock()), patch.object(session, "_save_cookies") as save:
             result = await session.initialize_session('[{"name":"SID","value":"test-only","domain":".google.com"}]')
             self.assertTrue(result["connected"])
             self.assertTrue(pw.chromium.launch.call_args.kwargs["headless"])
@@ -118,6 +221,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         session = FlowAutomation()
         with tempfile.TemporaryDirectory() as directory:
             session.cookie_file = Path(directory) / "cookies.json"
+            session.session_file = Path(directory) / "session.json"
             cookies = [{"name": "SID", "value": "test-only", "domain": ".google.com"}]
             session._save_cookies(cookies)
             self.assertEqual(json.loads(session.cookie_file.read_text()), cookies)
@@ -126,7 +230,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(result["connected"])
                 initialize.assert_awaited_once_with(session.cookie_file.read_text(), persist=False)
 
-    async def test_evaluate_composer_calls_handler_once_and_rejects_ambiguity(self):
+    async def test_evaluate_composer_prefers_dom_once_and_rejects_ambiguity(self):
         from playwright.async_api import async_playwright
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(channel="chrome", headless=True)
@@ -142,22 +246,164 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
                         window.submissions++;
                         window.submitted = document.querySelector('textarea').value;
                     }};
-                    button.onclick = () => { throw Error('DOM click must not also run'); };
+                    button.onclick = () => { window.submissions++; window.submitted = document.querySelector('textarea').value; };
                 }""")
                 session = FlowAutomation()
                 session.page = page
                 result = await session._submit_prompt('A forest')
-                self.assertEqual(result['method'], 'react-handler')
+                self.assertEqual(result['method'], 'dom-click')
                 self.assertEqual(await page.evaluate('window.submissions'), 1)
                 self.assertEqual(await page.evaluate('window.submitted'), 'A forest')
                 await page.evaluate("document.body.appendChild(document.createElement('textarea'))")
-                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"FLOW_DIAGNOSTICS_DIR": directory}):
+                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"FLOW_DEBUG": "1", "FLOW_DIAGNOSTICS_DIR": directory}):
                     with self.assertRaises(FlowError) as caught:
                         await session._submit_prompt('Do not submit')
-                    self.assertEqual(caught.exception.code, 'FLOW_PROMPT_INPUT')
+                    self.assertEqual(caught.exception.code, 'FLOW_COMPOSER_NOT_FOUND')
                     self.assertEqual(await page.evaluate('window.submissions'), 1)
             finally:
                 await browser.close()
+
+    async def test_structural_generation_signals_and_unrelated_mutations(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel="chrome", headless=True)
+            try:
+                page = await browser.new_page()
+                for trigger in ("clear", "disabled", "spinner", "placeholder", "unrelated"):
+                    with self.subTest(trigger=trigger):
+                        await page.set_content('<div><textarea></textarea><button aria-label="Generate">Generate</button></div>')
+                        await page.evaluate(COMPOSER_SCRIPT, {"action": "inject", "prompt": "forest"})
+                        before = await page.evaluate(COMPOSER_SCRIPT, {"action": "observe"})
+                        await page.evaluate("""trigger => {
+                            if (trigger === 'clear') document.querySelector('textarea').value = '';
+                            if (trigger === 'disabled') document.querySelector('button').disabled = true;
+                            if (trigger === 'spinner') { const n = document.createElement('div'); n.className = 'spinner'; n.textContent = '...'; document.body.append(n); }
+                            if (trigger === 'placeholder') { const n = document.createElement('div'); n.dataset.testid = 'media-placeholder'; n.textContent = '...'; document.body.append(n); }
+                            if (trigger === 'unrelated') { const n = document.createElement('div'); n.textContent = 'clock update'; document.body.append(n); }
+                        }""", trigger)
+                        result = await page.evaluate(COMPOSER_SCRIPT, {"action": "snapshot", "before": before, "prompt": "forest"})
+                        self.assertEqual(result['generationStarted'], trigger != 'unrelated')
+                        if trigger == 'unrelated':
+                            self.assertGreater(result['signals']['mutationCount'], 0)
+                            self.assertFalse(result['safeToRetry'])
+            finally:
+                await browser.close()
+
+    async def test_contenteditable_input_sync_and_disabled_state_error(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel="chrome", headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content('<div class="ProseMirror" contenteditable="true">old prompt</div><button aria-label="Generate" disabled>Generate</button>')
+                await page.evaluate("""() => document.querySelector('.ProseMirror').oninput = event => {
+                    window.received = event.target.textContent;
+                    document.querySelector('button').disabled = false;
+                }""")
+                session = FlowAutomation(); session.page = page
+                await session._submit_prompt('new forest')
+                self.assertEqual(await page.evaluate('window.received'), 'new forest')
+                self.assertTrue(session.flow_diagnostics['promptSynced'])
+                await page.evaluate("""() => { document.querySelector('.ProseMirror').oninput = null; document.querySelector('button').disabled = true; }""")
+                with patch.dict(os.environ, {'FLOW_PROMPT_SYNC_TIMEOUT_MS': '100'}):
+                    with self.assertRaises(FlowError) as caught:
+                        await session._submit_prompt('still disabled')
+                    self.assertEqual(caught.exception.code, 'FLOW_PROMPT_STATE_NOT_SYNCED')
+                    self.assertEqual(caught.exception.stage, 'FLOW_PROMPT_SYNC')
+            finally:
+                await browser.close()
+
+    async def test_noop_request_submit_retries_click_once_and_detects_start(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel="chrome", headless=True)
+            try:
+                page = await browser.new_page()
+                for start in (True, False):
+                    await page.set_content('<form><textarea></textarea><button type="submit">Generate</button></form>')
+                    await page.evaluate("""start => {
+                        window.forms = 0; window.clicks = 0;
+                        document.querySelector('form').onsubmit = e => { e.preventDefault(); window.forms++; };
+                        document.querySelector('button').onclick = () => { window.clicks++; if (start) document.querySelector('textarea').value = ''; };
+                    }""", start)
+                    session = FlowAutomation(); session.page = page
+                    before = await page.evaluate(MONITOR_SCRIPT, {})
+                    await session._submit_prompt('forest')
+                    with patch.object(session, '_auth_check', AsyncMock()), patch.dict(os.environ, {'FLOW_START_TIMEOUT_MS': '3400'}):
+                        if start:
+                            result = await session._wait_generation_started(before, 'forest')
+                            self.assertTrue(result['generationStarted'])
+                        else:
+                            with self.assertRaises(FlowError) as caught:
+                                await session._wait_generation_started(before, 'forest')
+                            self.assertEqual(caught.exception.code, 'FLOW_GENERATION_START_TIMEOUT')
+                    self.assertEqual(await page.evaluate('window.forms'), 2)
+                    self.assertEqual(await page.evaluate('window.clicks'), 1)
+                    self.assertEqual(len(session.flow_diagnostics['attempts']), 2)
+            finally:
+                await browser.close()
+
+    async def test_click_uses_real_pointer_gesture(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel="chrome", headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content('<textarea></textarea><button aria-label="Generate">Generate</button>')
+                await page.evaluate("""() => {
+                    window.sent = 0;
+                    document.querySelector('button').onpointerdown = event => {
+                        if (event.isTrusted) { window.sent++; document.querySelector('textarea').value = ''; }
+                    };
+                }""")
+                session = FlowAutomation(); session.page = page
+                before = await page.evaluate(MONITOR_SCRIPT, {})
+                await session._submit_prompt('forest')
+                with patch.object(session, '_auth_check', AsyncMock()):
+                    result = await session._wait_generation_started(before, 'forest')
+                self.assertTrue(result['generationStarted'])
+                self.assertEqual(await page.evaluate('window.sent'), 1)
+            finally:
+                await browser.close()
+
+    async def test_form_and_click_immediate_generation_no_duplicate(self):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(channel="chrome", headless=True)
+            try:
+                page = await browser.new_page()
+                for form in (True, False):
+                    body = '<textarea></textarea><button type="submit" aria-label="Generate">Generate</button>'
+                    await page.set_content('<form>' + body + '</form>' if form else body)
+                    await page.evaluate("""form => {
+                        window.sent = 0;
+                        const target = document.querySelector(form ? 'form' : 'button');
+                        target.addEventListener(form ? 'submit' : 'click', event => {
+                            event.preventDefault(); window.sent++; document.querySelector('button').disabled = true;
+                        });
+                    }""", form)
+                    session = FlowAutomation(); session.page = page
+                    before = await page.evaluate(MONITOR_SCRIPT, {})
+                    await session._submit_prompt('forest')
+                    with patch.object(session, '_auth_check', AsyncMock()):
+                        result = await session._wait_generation_started(before, 'forest')
+                    self.assertTrue(result['signals']['buttonChanged'])
+                    self.assertEqual(await page.evaluate('window.sent'), 1)
+            finally:
+                await browser.close()
+
+    async def test_live_flow_content_host_download_and_untrusted_host_rejection(self):
+        import base64
+        session = FlowAutomation(); session.page = AsyncMock()
+        content = b'fixture' * 2000
+        session.page.evaluate.return_value = {'data': 'data:image/png;base64,' + base64.b64encode(content).decode()}
+        actual, mime = await session._download_image({'src': 'https://flow-content.google/asset/test'})
+        self.assertEqual(actual, content)
+        self.assertEqual(mime, 'image/png')
+        for src in ('https://flow-content.google.evil.test/test', 'http://flow-content.google/test'):
+            with self.assertRaises(FlowError):
+                await session._download_image({'src': src})
+        self.assertEqual(session.page.evaluate.await_count, 1)
 
     async def test_invalid_replacement_clears_old_session(self):
         session = FlowAutomation()
@@ -177,12 +423,12 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         session.page.url = "https://accounts.google.com/v3/signin/identifier"
         with self.assertRaises(FlowError) as caught:
             await session._auth_check()
-        self.assertEqual(caught.exception.code, "COOKIE_EXPIRED")
+        self.assertEqual(caught.exception.code, "FLOW_COOKIE_EXPIRED")
 
     async def test_generation_requires_session(self):
         with self.assertRaises(FlowError) as caught:
             await FlowAutomation().generate_image("forest")
-        self.assertEqual(caught.exception.code, "SESSION_REQUIRED")
+        self.assertEqual(caught.exception.code, "FLOW_LOGIN_REQUIRED")
 
     async def test_configuration_failure_keeps_stage_and_artifacts(self):
         session = FlowAutomation()
@@ -192,7 +438,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         async def fail(aspect):
             session.config_stage = "FLOW_CONFIG_RATIO"
             raise RuntimeError("locator click timeout: original detail")
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"FLOW_DIAGNOSTICS_DIR": directory}), patch.object(session, "_configure_controls", fail):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"FLOW_DEBUG": "1", "FLOW_DIAGNOSTICS_DIR": directory}), patch.object(session, "_configure_controls", fail):
             with self.assertRaises(FlowError) as caught:
                 await session._configure("16:9")
             error = caught.exception
@@ -214,7 +460,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         async def fail(aspect):
             session.config_stage = "FLOW_CONFIG_MODEL"
             raise FlowError("MODEL_UNAVAILABLE", "requested model missing")
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"FLOW_DIAGNOSTICS_DIR": directory}), patch.object(session, "_configure_controls", fail):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"FLOW_DEBUG": "1", "FLOW_DIAGNOSTICS_DIR": directory}), patch.object(session, "_configure_controls", fail):
             with self.assertRaises(FlowError) as caught:
                 await session._configure("16:9")
             self.assertEqual(caught.exception.code, "FLOW_CONFIG_MODEL")
@@ -238,8 +484,8 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
                   document.querySelector('.settings-trigger-button').onclick=()=>document.querySelector('#menu').hidden=false;
                   document.querySelector('.ProseMirror').oninput=()=>document.querySelector('[aria-label="Bắt đầu tạo"]').disabled=false;
                   document.querySelector('[aria-label="Bắt đầu tạo"]').onclick=()=>{
-                    const c=document.createElement('canvas');c.width=768;c.height=432;
-                    const ctx=c.getContext('2d');const d=ctx.createImageData(768,432);
+                    const c=document.createElement('canvas');c.width=768;c.height=512;
+                    const ctx=c.getContext('2d');const d=ctx.createImageData(768,512);
                     for(let i=0;i<d.data.length;i++)d.data[i]=Math.random()*255;
                     ctx.putImageData(d,0,0);const img=new Image();img.src=c.toDataURL();document.body.append(img);
                   };
@@ -269,8 +515,8 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
                   document.querySelector('.settings-trigger-button').onclick=()=>document.querySelector('#menu').hidden=false;
                   document.querySelector('.ProseMirror').oninput=()=>document.querySelector('[aria-label="Bắt đầu tạo"]').disabled=false;
                   document.querySelector('[aria-label="Bắt đầu tạo"]').onclick=()=>{
-                    const c=document.createElement('canvas');c.width=768;c.height=432;
-                    const ctx=c.getContext('2d');const d=ctx.createImageData(768,432);
+                    const c=document.createElement('canvas');c.width=768;c.height=512;
+                    const ctx=c.getContext('2d');const d=ctx.createImageData(768,512);
                     for(let i=0;i<d.data.length;i++)d.data[i]=Math.random()*255;
                     ctx.putImageData(d,0,0);const img=new Image();img.src=c.toDataURL();document.body.append(img);
                   };

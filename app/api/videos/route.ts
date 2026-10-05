@@ -50,11 +50,14 @@ export async function POST(req: NextRequest) {
     if (action === "regenerate") {
       const video = get<VideoRecord>(z.string().uuid().parse(body.videoId), "video");
       const project = get<Project>(video.projectId, "project");
+      if (list<Job>("job").some(job => job.projectId === project.id && job.kind !== "merge-video" && ["queued", "audio", "images", "rendering", "paused"].includes(job.status) && job.chapterIds.some(id => video.chapterIds.includes(id))))
+        throw Error("Chương này đang có tác vụ. Chờ tác vụ hiện tại kết thúc để tránh tạo trùng cảnh.");
       const regenerateResources = body.regenerateResources === true;
       const job: Job = {
         id: randomUUID(),
         projectId: project.id,
         chapterIds: [...video.chapterIds],
+        sceneIds: video.sceneId ? [video.sceneId] : undefined,
         status: "queued",
         kind: regenerateResources ? "pipeline" : "render",
         regenerate: regenerateResources,

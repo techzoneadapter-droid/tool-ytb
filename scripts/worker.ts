@@ -19,6 +19,9 @@ import {
 import type { Job, Project, Settings } from "../modules/project/types";
 import { speak, speakBatch } from "../modules/tts";
 import { makeImage, makeStoryImageBatch } from "../modules/imagePrompt";
+import { configuredLimit } from "../modules/pipeline/flow-scenes";
+import { processProjectFlowScenes } from "../modules/pipeline/flow-runtime";
+import { recoverInterruptedFlowScenes } from "../modules/videoRender/scene-cache";
 import {
   sceneVisual,
   ensureVisualProfile,
@@ -48,7 +51,7 @@ async function imageEngineReady(settings: Settings) {
   )
     return (await modalHealth("image")).ready;
   if (settings.imageProvider === "flow-browser")
-    return (await flowHealth()).connected;
+    return (await flowHealth()).generationReady === true;
   if (settings.imageProvider === "aihorde") return true;
   if (settings.imageProvider === "pollinations") return true;
   if (
@@ -130,6 +133,9 @@ async function main() {
       void unlink(lockPath).finally(() => process.exit(0));
     });
   await mkdir(assets, { recursive: true });
+  for (const project of list<Project>("project")) {
+    if (recoverInterruptedFlowScenes(project)) put("project", project);
+  }
   for (const j of list<Job>("job"))
     if (["audio", "images", "rendering"].includes(j.status))
       updateJob(j.id, { status: "queued", message: "Khôi phục xử lý" });
@@ -265,7 +271,44 @@ async function main() {
         }
         updateJob(job.id, { message: "Đã kiểm tra ảnh cảnh / ảnh dùng chung" });
       }
-      if (kind !== "render") {
+      const flowScenePipeline = s.imageProvider === "flow-browser" && s.imageEnabled !== false && ["pipeline", "prepare", "image", "render"].includes(kind);
+      if (flowScenePipeline) {
+        updateJob(job.id, { sceneErrors: [], error: undefined });
+        const started = new Map<string, number>();
+        const stageLabels: Record<string, string> = {
+          FLOW_PROMPT_FIND: "Tìm composer", FLOW_PROMPT_INJECT: "Điền prompt", FLOW_PROMPT_SYNC: "Xác nhận state prompt",
+          FLOW_SUBMIT_DISCOVER: "Tìm nút Generate", FLOW_SUBMIT_ATTEMPT_1: "Gửi prompt lần 1", FLOW_SUBMIT_VERIFY_1: "Xác nhận submit",
+          FLOW_SUBMIT_ATTEMPT_2: "Gửi bằng phương pháp dự phòng", FLOW_GENERATION_START_WAIT: "Xác nhận generation",
+          FLOW_GENERATING: "Flow đang tạo ảnh", FLOW_RESULT_WAIT: "Chờ ảnh", FLOW_RESULT_READY: "Đã nhận ảnh",
+          FLOW_AUTH: "Kiểm tra phiên", FLOW_COMPOSER_READY: "Composer sẵn sàng",
+          FLOW_PROMPT_INPUT: "Điền prompt", FLOW_PROMPT_SENT: "Đã gửi prompt",
+          FLOW_GENERATION_START: "Xác nhận generation", FLOW_GENERATION_STARTED: "Generation đã bắt đầu",
+          FLOW_WAIT_IMAGE: "Đã gửi prompt · Đang chờ model của project", FLOW_RESULT_DOWNLOAD: "Nhận bytes trong RAM",
+        };
+        const errors = await processProjectFlowScenes(p, job, scenes, event => {
+            const done = scenes.filter(scene => scene.flow?.status === "done").length;
+            const failed = scenes.filter(scene => scene.flow?.status === "error").length;
+            const status = event.status === "tts" ? "audio" : event.status === "rendering" || event.status === "done" ? "rendering" : "images";
+            const label = event.status === "tts" ? "Lời đọc" : event.status === "rendering" || event.status === "done" ? "Dựng cảnh" : "Tạo ảnh";
+            started.set(event.scene.id, started.get(event.scene.id) || Date.now());
+            const detail = `Cảnh ${event.index + 1}/${scenes.length} · ${event.stage ? stageLabels[event.stage] || event.stage : event.detail}${event.fraction === undefined ? "" : ` · FFmpeg ${Math.round(event.fraction * 100)}%`}`;
+            reportStage(status, label, done, scenes.length, detail, configuredLimit("FLOW_CONCURRENCY", 1, 2), Math.floor((done / scenes.length) * 75));
+            const current = get<Job>(job.id, "job");
+            if (!["paused", "cancelled"].includes(current.status)) updateJob(job.id, {
+              counts: { audio: scenes.filter(scene => scene.audioStatus === "done" || s.audioEnabled === false).length, image: scenes.filter(scene => scene.flow?.imageGenerated).length, rendered: done, failed, total: scenes.length },
+              completedItems: scenes.filter(scene => scene.flow?.status === "done").flatMap(scene => [scene.id + ":audio", scene.id + ":image", scene.id + ":render"]),
+              stageProgress: current.stageProgress ? { ...current.stageProgress, elapsedSeconds: Math.floor((Date.now() - started.get(event.scene.id)!) / 1000) } : undefined,
+              sceneErrors: scenes.flatMap((scene, index) => scene.flow?.status === "error" ? [{ sceneId: scene.id, chapterId: scene.flow.chapterId, sceneIndex: index + 1, code: scene.flow.errorCode!, stage: scene.flow.errorStage!, message: scene.flow.errorMessage! }] : []),
+            });
+        });
+        updateJob(job.id, { sceneErrors: errors });
+        if (errors.length) throw Error(errors.map(error => `Cảnh ${error.sceneIndex}: [${error.code}] ${error.stage} · ${error.message}`).join("\n"));
+        if (["prepare", "image"].includes(kind)) {
+          updateJob(job.id, { status: "ready", progress: 100, message: `Đã lưu ${scenes.length} scene MP4 trong Quản lý video; ảnh đã giải phóng khỏi RAM.` });
+          return;
+        }
+      }
+      if (kind !== "render" && !flowScenePipeline) {
         let completed = 0;
         let failed = 0;
         const completedItems = new Set(job.completedItems || []);
@@ -1005,7 +1048,10 @@ async function main() {
             throw Error("Ảnh động đã bật nhưng cảnh chưa có clip Wan hợp lệ.");
           await verifyVideo(path.join(assets, scene.motion), false);
         }
-        scene.duration = await duration(path.join(assets, scene.audio!));
+        if (scene.audio && assetExists(scene.audio))
+          scene.duration = await duration(path.join(assets, scene.audio));
+        else if (!flowScenePipeline || s.audioEnabled !== false)
+          throw Error("Cảnh chưa có lời đọc thật.");
         if (!Number.isFinite(scene.duration) || scene.duration <= 0)
           throw Error("Tệp lời đọc không có thời lượng hợp lệ.");
       }

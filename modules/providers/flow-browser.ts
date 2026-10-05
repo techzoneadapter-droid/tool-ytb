@@ -1,4 +1,5 @@
 import { startService } from "./services";
+import { randomUUID } from "node:crypto";
 
 function bridgeURL() {
   const raw = process.env.FLOW_BRIDGE_URL || "http://127.0.0.1:7865";
@@ -30,8 +31,14 @@ export function flowFailure(
   const artifacts = body?.diagnostics
     ? "\nDiagnostic: " + JSON.stringify(body.diagnostics)
     : "";
-  return new Error(
-    (label ? `[${label}] ` : "") + (body?.error || fallback) + artifacts,
+  return Object.assign(
+    new Error(
+      (label ? `[${label}] ` : "") + (body?.error || fallback) + artifacts,
+    ),
+    {
+      code: body?.code || "FLOW_UI_CHANGED",
+      stage: body?.stage || body?.code || "FLOW_GENERATE",
+    },
   );
 }
 
@@ -63,10 +70,16 @@ async function call<T>(
 
 export type FlowHealth = {
   status: "ok";
+  protocol?: number;
   engine: "flow";
   bridgeReady: boolean;
   browserOpen: boolean;
   connected: boolean;
+  sessionReady?: boolean;
+  composerReady?: boolean;
+  generationReady?: boolean;
+  lastStage?: string;
+  currentRequestId?: string;
   state?:
     | "disconnected"
     | "connecting"
@@ -117,38 +130,118 @@ export async function initializeFlowSession(
 export async function generateWithFlow(
   prompt: string,
   aspect: "16:9" | "9:16",
+  onStage?: (stage: string) => void,
 ) {
-  await startService("flow");
-  const response = await fetch(new URL("/generate", bridgeURL()), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      aspect,
-      projectUrl: process.env.FLOW_PROJECT_URL || "",
-      model: process.env.FLOW_MODEL_LABEL || "Nano Banana Pro",
-    }),
-    signal: AbortSignal.timeout(
-      // Up to four video jobs can share one serialized Flow session.
-      (Number(process.env.FLOW_GENERATION_TIMEOUT_MS || 420000) + 60000) * 4,
-    ),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
+  try {
+    await startService("flow");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && "stage" in error) throw error;
     throw flowFailure(
-      body,
-      `Google Flow không tạo được ảnh (HTTP ${response.status}).`,
+      {
+        code: "FLOW_UI_CHANGED",
+        stage: "FLOW_SESSION_START",
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "",
     );
   }
-  const mime = response.headers.get("content-type") || "image/png";
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (!bytes.length) throw Error("Google Flow không trả ảnh về StoryFlow.");
-  return {
-    bytes,
-    model:
-      response.headers.get("x-storyflow-model") ||
-      process.env.FLOW_MODEL_LABEL ||
-      "Nano Banana Pro",
-    mime,
-  };
+  const requestId = randomUUID();
+  const progressController = new AbortController();
+  let progressError: unknown;
+  let active = true;
+  let polling = false;
+  const timer = onStage
+    ? setInterval(() => {
+        if (polling) return;
+        polling = true;
+        void flowHealth()
+          .then((health) => {
+            if (
+              active &&
+              health.currentRequestId === requestId &&
+              health.lastStage
+            )
+              try {
+                onStage(health.lastStage);
+              } catch (error) {
+                progressError = error;
+                progressController.abort();
+              }
+          })
+          .finally(() => {
+            polling = false;
+          });
+      }, 1000)
+    : undefined;
+  try {
+    const response = await fetch(new URL("/generate", bridgeURL()), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        requestId,
+        aspect,
+        projectUrl: process.env.FLOW_PROJECT_URL || "",
+        model: process.env.FLOW_MODEL_LABEL || "Nano Banana Pro",
+      }),
+      signal: AbortSignal.any([
+        progressController.signal,
+        AbortSignal.timeout(
+          // Up to four video jobs can share one serialized Flow session.
+          (Number(process.env.FLOW_GENERATION_TIMEOUT_MS || 420000) + 60000) *
+            4,
+        ),
+      ]),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw flowFailure(
+        body,
+        `Google Flow không tạo được ảnh (HTTP ${response.status}).`,
+      );
+    }
+    const mime = response.headers.get("content-type") || "image/png";
+    if (
+      !mime.startsWith("image/") &&
+      !mime.startsWith("application/octet-stream")
+    )
+      throw flowFailure(
+        {
+          code: "FLOW_RESULT_DOWNLOAD_FAILED",
+          stage: "FLOW_RESULT_DOWNLOAD",
+          error: "Flow không trả binary ảnh.",
+        },
+        "",
+      );
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length) throw Error("Google Flow không trả ảnh về StoryFlow.");
+    return {
+      bytes,
+      model:
+        response.headers.get("x-storyflow-model") ||
+        process.env.FLOW_MODEL_LABEL ||
+        "Nano Banana Pro",
+      mime,
+    };
+  } catch (error) {
+    if (progressError)
+      throw Object.assign(
+        progressError instanceof Error
+          ? progressError
+          : new Error(String(progressError)),
+        { code: "SCENE_CHECKPOINT_FAILED", stage: "SCENE_PROGRESS" },
+      );
+    if (error instanceof Error && "code" in error) throw error;
+    throw flowFailure(
+      {
+        code: "FLOW_RESULT_DOWNLOAD_FAILED",
+        stage: "FLOW_HTTP",
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "",
+    );
+  } finally {
+    active = false;
+    if (timer) clearInterval(timer);
+  }
 }

@@ -1,4 +1,19 @@
 export type Scene = {
+  flow?: {
+    sceneId: string;
+    chapterId: string;
+    status: "pending" | "tts" | "image" | "rendering" | "done" | "error";
+    prompt: string;
+    voiceStatus?: "pending" | "done" | "error" | "skipped";
+    imageGenerated?: boolean;
+    videoPath?: string;
+    videoRecordId?: string;
+    renderKey?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    errorStage?: string;
+    updatedAt: string;
+  };
   finalImagePrompt?: string;
   imageSeed?: number;
   imageEngine?: string;
@@ -154,6 +169,7 @@ export type Job = {
   srt?: string;
   vtt?: string;
   error?: string;
+  sceneErrors?: { sceneId: string; chapterId: string; sceneIndex: number; code: string; stage: string; message: string }[];
   createdAt: string;
   snapshot: Pick<Project, "settings">;
 };
@@ -163,7 +179,8 @@ export type VideoRecord = {
   chapterIds: string[];
   chapterTitles: string[];
   title: string;
-  kind: "chapter" | "merged";
+  kind: "scene" | "chapter" | "merged";
+  sceneId?: string;
   output: string;
   srt?: string;
   vtt?: string;

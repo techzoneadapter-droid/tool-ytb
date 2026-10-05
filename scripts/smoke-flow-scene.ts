@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { flowHealth, flowFailure } from "../modules/providers/flow-browser";
+import { flowHealth, flowFailure, waitForFlowSession } from "../modules/providers/flow-browser";
 import { startService, FLOW_PROTOCOL } from "../modules/providers/services";
 import { list, put, updateJob } from "../modules/project/store";
 import type { Project, Job, Scene } from "../modules/project/types";
@@ -14,7 +14,7 @@ import { createVideoRecord } from "../modules/videoLibrary";
 import { assets, render } from "../modules/videoRender";
 import { verifyVideo } from "../modules/videoRender/process";
 
-async function main() {
+export async function smokeFlowScene() {
   const current = await flowHealth();
   const cookieFile = path.resolve(
     process.env.FLOW_COOKIES_FILE || "cookies.json",
@@ -32,7 +32,7 @@ async function main() {
     );
   }
   await startService("flow");
-  const health = await flowHealth();
+  const health = await waitForFlowSession();
   if (!health.sessionReady)
     throw flowFailure(
       {
@@ -176,6 +176,7 @@ async function main() {
         intermediateImages: 0,
       }) + "\n",
     );
+    return { ok: true, projectId: project.id, sceneId: scene.id, videoId: video.id, output: result.output, intermediateImages: 0 };
   } catch (error) {
     updateJob(job.id, {
       status: "error",
@@ -186,7 +187,7 @@ async function main() {
     throw error;
   }
 }
-main().catch((error) => {
+if (path.basename(process.argv[1] || "") === "smoke-flow-scene.ts") smokeFlowScene().catch((error) => {
   process.stderr.write(
     JSON.stringify({
       ok: false,

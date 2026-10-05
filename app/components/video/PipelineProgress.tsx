@@ -192,7 +192,7 @@ export function PipelineProgress({
       )}
 
       {data.batchJobs.some(job => job.sceneErrors?.length) && (
-        <details className="notice" open={data.failedJobs.length > 0}>
+        <details className="notice">
           <summary>Lỗi cảnh · các MP4 đã hoàn thành được giữ nguyên</summary>
           {data.batchJobs.flatMap(job => (job.sceneErrors || []).map(error => (
             <p key={job.id + error.sceneId} role="alert" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
@@ -204,7 +204,7 @@ export function PipelineProgress({
       {data.failedJobs.filter(job => !job.sceneErrors?.length).map(
         (job) =>
           job.error && (
-            <pre
+            <details
               key={job.id}
               role="alert"
               style={{
@@ -213,11 +213,14 @@ export function PipelineProgress({
                 fontFamily: "inherit",
               }}
             >
+              <summary>Video chưa hoàn thành · Chi tiết</summary>
+              <pre>
               {job.batchIndex !== undefined
                 ? `Video ${job.batchIndex + 1}: `
                 : ""}
               {job.error}
-            </pre>
+              </pre>
+            </details>
           ),
       )}
 

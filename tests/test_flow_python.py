@@ -139,7 +139,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
                 await page.route('https://flow.google.com/**', lambda route: route.fulfill(body='<textarea></textarea><button>Generate</button>', content_type='text/html'))
                 await page.goto('https://flow.google.com/project/test')
                 session = FlowAutomation(); session.page = page; session.state = 'ready'
-                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'FLOW_START_TIMEOUT_MS': '150', 'FLOW_DEBUG': '0', 'FLOW_DIAGNOSTICS_DIR': directory}):
+                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'FLOW_GENERATION_START_TIMEOUT_MS': '150', 'FLOW_DEBUG': '0', 'FLOW_DIAGNOSTICS_DIR': directory}):
                     with self.assertRaises(FlowError) as caught:
                         await session.generate_image('Do not claim success')
                     self.assertEqual(caught.exception.code, 'FLOW_GENERATION_START_TIMEOUT')
@@ -329,7 +329,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
                     session = FlowAutomation(); session.page = page
                     before = await page.evaluate(MONITOR_SCRIPT, {})
                     await session._submit_prompt('forest')
-                    with patch.object(session, '_auth_check', AsyncMock()), patch.dict(os.environ, {'FLOW_START_TIMEOUT_MS': '3400'}):
+                    with patch.object(session, '_auth_check', AsyncMock()), patch.dict(os.environ, {'FLOW_GENERATION_START_TIMEOUT_MS': '3400'}):
                         if start:
                             result = await session._wait_generation_started(before, 'forest')
                             self.assertTrue(result['generationStarted'])
@@ -415,6 +415,40 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         context.close.assert_awaited_once()
         self.assertFalse(session.health()["connected"])
         self.assertIsNone(session.browser)
+
+    async def test_browser_start_failure_is_a_restore_error_not_ui_changed(self):
+        session = FlowAutomation()
+        pw = AsyncMock()
+        pw.chromium.launch.side_effect = RuntimeError("Chrome startup fixture failure")
+        starter = MagicMock(start=AsyncMock(return_value=pw))
+        with patch("flow_automation.async_playwright", return_value=starter):
+            with self.assertRaises(FlowError) as caught:
+                await session.initialize_session('[{"name":"SID","value":"fixture","domain":".google.com"}]', persist=False)
+        self.assertEqual(caught.exception.code, "FLOW_SESSION_RESTORE_FAILED")
+        self.assertEqual(caught.exception.stage, "FLOW_SESSION_RESTORE")
+        self.assertEqual(session.state, "error")
+
+    async def test_public_project_landing_enters_app_and_preserves_cookie_rejection(self):
+        session = FlowAutomation(project_url="https://flow.google.com/project/fixture")
+        pw, browser, context, page = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
+        page.goto.return_value = None
+        page.url = "https://flow.google.com/project/fixture"
+        page.evaluate.return_value = True
+        entry = MagicMock()
+        entry.first.click = AsyncMock()
+        page.get_by_role = MagicMock(return_value=entry)
+        context.pages = [page]
+        context.new_page.return_value = page
+        browser.new_context.return_value = context
+        pw.chromium.launch.return_value = browser
+        starter = MagicMock(start=AsyncMock(return_value=pw))
+        rejected = FlowError("FLOW_COOKIE_EXPIRED", "Google rejected restored fixture", stage="FLOW_AUTH")
+        with patch("flow_automation.async_playwright", return_value=starter), patch.object(session, "_auth_check", AsyncMock(side_effect=rejected)):
+            with self.assertRaises(FlowError) as caught:
+                await session.initialize_session('[{"name":"SID","value":"fixture","domain":".google.com"}]', persist=False)
+        entry.first.click.assert_awaited_once()
+        self.assertEqual(caught.exception.code, "FLOW_COOKIE_EXPIRED")
+        self.assertEqual(session.state, "login_required")
 
     async def test_login_redirect_is_error(self):
         session = FlowAutomation()

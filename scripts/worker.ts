@@ -276,6 +276,9 @@ async function main() {
         updateJob(job.id, { sceneErrors: [], error: undefined });
         const started = new Map<string, number>();
         const stageLabels: Record<string, string> = {
+          FLOW_SERVICE_START: "Khởi động Flow Worker...", FLOW_SESSION_RESTORE: "Đang khôi phục phiên Flow...",
+          FLOW_SESSION_CONNECT: "Đang khôi phục phiên Flow...", FLOW_PROJECT_OPEN: "Đang mở dự án Flow...",
+          FLOW_COMPOSER_WAIT: "Đang chờ trình tạo ảnh...", FLOW_READY: "Flow sẵn sàng",
           FLOW_PROMPT_FIND: "Tìm composer", FLOW_PROMPT_INJECT: "Điền prompt", FLOW_PROMPT_SYNC: "Xác nhận state prompt",
           FLOW_SUBMIT_DISCOVER: "Tìm nút Generate", FLOW_SUBMIT_ATTEMPT_1: "Gửi prompt lần 1", FLOW_SUBMIT_VERIFY_1: "Xác nhận submit",
           FLOW_SUBMIT_ATTEMPT_2: "Gửi bằng phương pháp dự phòng", FLOW_GENERATION_START_WAIT: "Xác nhận generation",

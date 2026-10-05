@@ -13,6 +13,7 @@
     "test:flow": "tsx --test tests/flow.test.ts tests/flow-session.test.ts tests/flow-bridge.test.ts",
     "test:flow:python": "node scripts/test-flow-python.cjs",
     "smoke:flow:scene": "tsx scripts/smoke-flow-scene.ts",
+    "smoke:flow:cold-start": "tsx scripts/smoke-flow-cold-start.ts",
     "app": "tsx scripts/app.ts",
     "check:conflicts": "node scripts/check-conflicts.mjs",
     "preapp": "npm run check:conflicts",

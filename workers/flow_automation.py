@@ -98,16 +98,18 @@ class FlowAutomation:
         self.debug_directory = None
 
     def health(self):
+        current_url = self.page.url if self.page and isinstance(self.page.url, str) else None
         return {"status": "ok", "engine": "flow", "protocol": 22, "bridgeReady": True,
                 "browserOpen": self.browser is not None, "connected": self.session_ready,
                 "sessionReady": self.session_ready, "composerReady": self.composer_ready,
                 "generationReady": self.generation_ready, "lastStage": self.last_stage,
+                "currentUrl": urlparse(current_url)._replace(query="", fragment="").geturl() if current_url else None,
                 "observedModels": self.observed_models,
                 "currentRequestId": self.current_request_id,
                 "state": self.state, "background": True, "connectionMode": "python-headless-cookies",
                 "projectConfigured": bool(self.project_url), "model": self.observed_model or "project-current",
                 "lastError": self.last_error or None,
-                "message": self.last_error or {"ready": "Flow headless đã sẵn sàng.", "generating": "Đang tạo ảnh Flow trong nền.",
+                "message": self.last_error or {"starting": "Khởi động Flow Worker...", "restoring": "Đang khôi phục phiên Flow...", "ready": "Flow sẵn sàng", "generating": "Flow đang tạo ảnh...",
                     "project_required": "Cookie đã xác thực. Cần URL dự án Flow để tạo ảnh."}.get(self.state, "Dán JSON cookie EditThisCookie để kết nối Flow chạy ẩn.")}
 
     async def _auth_check(self):
@@ -166,7 +168,8 @@ class FlowAutomation:
     async def initialize_session(self, cookie_json, persist=True):
         # A failed replacement must not leave an old account silently active.
         await self.close()
-        self.state = "connecting"
+        self.state = "restoring" if not persist else "starting"
+        self.last_stage = "FLOW_SESSION_RESTORE" if not persist else "FLOW_SESSION_CONNECT"
         try:
             if persist:
                 self.cookie_file.unlink(missing_ok=True)
@@ -182,9 +185,35 @@ class FlowAutomation:
             if response and response.status >= 400:
                 raise FlowError("FLOW_UNAVAILABLE", "Flow trả lỗi truy cập. Kiểm tra quyền tài khoản hoặc mạng.")
             if self.project_url:
+                self.last_stage = "FLOW_PROJECT_OPEN"
                 await self.page.goto(self.project_url, wait_until="domcontentloaded", timeout=60000)
+                project_path = re.search(r"/project/([^/?#]+)", urlparse(self.project_url).path)
+                # A fresh session may need the public entry button to enter the
+                # application before a project deep link is accepted.
+                landing = await self.page.evaluate("""() => location.hostname === 'flow.google.com'
+                    && !document.querySelector('textarea,[contenteditable="true"],[role="textbox"]')
+                    && !!document.querySelector('a[href*="one.google.com/ai"]')""")
+                if landing is True and project_path and urlparse(self.project_url).hostname == "flow.google.com":
+                    pages_before = set(self.context.pages)
+                    await self.page.get_by_role("button", name="Create with Google Flow", exact=True).first.click(timeout=10000)
+                    entry_deadline = time.monotonic() + 15
+                    while time.monotonic() < entry_deadline:
+                        new_pages = [page for page in self.context.pages if page not in pages_before]
+                        if new_pages:
+                            self.page = new_pages[-1]
+                        try:
+                            entered = await self.page.evaluate("""() => !document.querySelector('button[aria-label="Create with Google Flow"]')
+                                && (!!document.querySelector('textarea,[contenteditable="true"],[role="textbox"],a[href*="/project/"]'))""")
+                            if entered:
+                                break
+                        except Exception:
+                            pass  # Navigation can briefly destroy the JS context.
+                        await self.page.wait_for_timeout(100)
+                    await self._auth_check()
+                    await self.page.goto(self.project_url, wait_until="domcontentloaded", timeout=60000)
             await self._auth_check()
             try:
+                self.last_stage = "FLOW_COMPOSER_WAIT"
                 await self._editor().wait_for(state="visible", timeout=20000)
             except PlaywrightTimeout:
                 await self._auth_check()
@@ -211,6 +240,7 @@ class FlowAutomation:
             try:
                 await self._ensure_composer_ready()
             except FlowError as error:
+                self.state = "error"
                 self.last_error = f"[{error.code}] {error}"
                 self.last_stage = error.stage
             if persist:
@@ -226,11 +256,12 @@ class FlowAutomation:
             self.last_stage = error.stage
             raise
         except Exception as cause:
+            stage = self.last_stage
             await self.close()
             self.state = "error"
-            self.last_stage = "FLOW_SESSION_CONNECT"
+            self.last_stage = stage
             self.last_error = f"{type(cause).__name__}: Không khởi tạo được Flow headless. Kiểm tra Playwright, Chrome và kết nối mạng."
-            raise FlowError("FLOW_UI_CHANGED", self.last_error, stage=self.last_stage) from cause
+            raise FlowError("FLOW_SESSION_RESTORE_FAILED", self.last_error, stage=self.last_stage) from cause
 
     async def _click(self, locator):
         target = locator.filter(visible=True).first
@@ -466,7 +497,7 @@ class FlowAutomation:
 
     async def _wait_generation_started(self, before, prompt):
         baseline = getattr(self, "submit_before", before)
-        timeout = max(0.1, float(os.getenv("FLOW_START_TIMEOUT_MS", "15000")) / 1000)
+        timeout = max(0.1, float(os.getenv("FLOW_GENERATION_START_TIMEOUT_MS", "15000")) / 1000)
         started_at = time.monotonic()
         deadline = started_at + timeout
         next_sample = iter((0.5, 1, 2, 5))

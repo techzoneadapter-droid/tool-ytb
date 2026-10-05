@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu" | "flow";
-export const WORKER_PROTOCOL = 9;
+export const WORKER_PROTOCOL = 10;
 export const FLOW_PROTOCOL = 22;
 export async function alive(file: string) {
   try {
@@ -37,7 +37,7 @@ export async function acquireLock(file: string) {
   );
   try {
     const contents = await readFile(/* turbopackIgnore: true */ file, "utf8");
-    if (!contents.trim() || (await alive(file)))
+    if ((!contents.trim() && Date.now() - (await stat(file)).mtimeMs < 30000) || (await alive(file)))
       throw Error("Dịch vụ đang chạy hoặc đang khởi động.");
     await unlink(file);
     const handle = await open(/* turbopackIgnore: true */ file, "wx");
@@ -97,7 +97,7 @@ async function ready(service: Service) {
       response.ok &&
       health.status === "ok" &&
       (service === "vieneu" || health.engine === service) &&
-      (service !== "flow" || (health.protocol === FLOW_PROTOCOL && health.connectionMode === "python-headless-cookies"))
+      (service !== "flow" || (health.protocol === FLOW_PROTOCOL && health.connectionMode === "python-headless-cookies" && health.bridgeReady === true && health.backgroundRestore === true))
     );
   } catch {
     return false;
@@ -106,57 +106,118 @@ async function ready(service: Service) {
 const starts = new Map<string, Promise<void>>();
 
 export function startService(service: Service, options: { replaceFlowSession?: boolean } = {}): Promise<void> {
-  const key = service + (service === "flow" && options.replaceFlowSession ? ":replace" : "");
+  const key = service;
   const pending = starts.get(key);
   if (pending) return pending;
-  const task = start(service, options).finally(() => starts.delete(key));
+  const task = (service === "flow" ? startFlowService(options) : start(service)).finally(() => starts.delete(key));
   starts.set(key, task);
   return task;
 }
-async function start(service: Service, options: { replaceFlowSession?: boolean }) {
-  if (await ready(service)) return;
 
-  if (service === "flow") {
-    const flowPidFile = path.resolve("data/flow.service.pid");
-    if (await alive(flowPidFile)) {
-      const pid = Number(await readFile(flowPidFile, "utf8").catch(() => "0"));
-      let protocolOk = false;
-      let legacySessionReady = false;
-      try {
-        const response = await fetch(new URL("/health", serviceURL("flow")), {
-          signal: AbortSignal.timeout(1000),
-          redirect: "error",
-        });
-        const health = await response.json();
-        legacySessionReady = health.engine === "flow" && health.connected === true;
-        protocolOk =
-          response.ok &&
-          health.status === "ok" &&
-          health.engine === "flow" &&
-          health.protocol === FLOW_PROTOCOL &&
-          health.connectionMode === "python-headless-cookies";
-      } catch {}
-      if (!protocolOk && legacySessionReady && !options.replaceFlowSession && !existsSync(/* turbopackIgnore: true */ path.resolve(process.env.FLOW_COOKIES_FILE || "cookies.json")))
-        throw Object.assign(Error("[FLOW_LOGIN_REQUIRED] Worker cũ đang giữ phiên Flow trong RAM; chưa có cookie file để khôi phục. Phiên hiện tại được giữ nguyên."), { code: "FLOW_LOGIN_REQUIRED", stage: "FLOW_SESSION_RESTORE" });
-      if (!protocolOk && Number.isInteger(pid) && pid > 0) {
-        if (process.platform === "win32") {
-          await new Promise<void>((resolve) => {
-            const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
-              shell: false,
-              windowsHide: true,
-            });
-            killer.on("close", () => resolve());
-            killer.on("error", () => resolve());
-          });
-        } else {
-          try {
-            process.kill(pid, "SIGTERM");
-          } catch {}
-        }
-        await unlink(flowPidFile).catch(() => {});
+export function flowTimeout(name: string, fallback: number) {
+  const value = Number(process.env[name] || fallback);
+  return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : fallback;
+}
+
+function flowStartFailure(message: string) {
+  return Object.assign(new Error(message), { code: "FLOW_SERVICE_START_FAILED", stage: "FLOW_SERVICE_START" });
+}
+
+async function bridgeHealth() {
+  try {
+    const response = await fetch(new URL("/health", serviceURL("flow")), { signal: AbortSignal.timeout(500), redirect: "error" });
+    return response.ok ? await response.json() : null;
+  } catch { return null; }
+}
+
+export async function stopFlowService() {
+  const pidFile = path.resolve("data/flow.service.pid");
+  if (!(await alive(pidFile))) { await unlink(pidFile).catch(() => {}); return; }
+  const health = await bridgeHealth();
+  if (health && health.engine !== "flow") throw flowStartFailure("Port Flow đang được dịch vụ khác sử dụng.");
+  const pid = Number(await readFile(pidFile, "utf8"));
+  if (process.platform === "win32") {
+    await new Promise<void>((resolve, reject) => {
+      const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { shell: false, windowsHide: true });
+      killer.on("error", reject);
+      killer.on("close", () => resolve());
+    });
+  } else {
+    try { process.kill(pid, "SIGTERM"); } catch {}
+  }
+  const deadline = Date.now() + 10000;
+  while (await alive(pidFile)) {
+    if (Date.now() >= deadline) throw flowStartFailure("Worker Flow cũ chưa dừng; không khởi động worker thứ hai.");
+    await new Promise(r => setTimeout(r, 100));
+  }
+  await unlink(pidFile).catch(() => {});
+}
+
+async function startFlowService(options: { replaceFlowSession?: boolean }) {
+  const deadline = Date.now() + flowTimeout("FLOW_START_TIMEOUT_MS", 15000);
+  const lockFile = path.resolve("data/flow.start.lock");
+  const pidFile = path.resolve("data/flow.service.pid");
+  let owned = false;
+  try {
+    if (await ready("flow")) return;
+    while (!owned) {
+      try { await acquireLock(lockFile); owned = true; }
+      catch {
+        if (await ready("flow")) return;
+        if (Date.now() >= deadline) throw flowStartFailure("Hết thời gian chờ Flow Worker khởi động.");
+        await new Promise(r => setTimeout(r, 100));
       }
     }
-  }
+    if (await ready("flow")) return;
+    if (await alive(pidFile)) {
+      const health = await bridgeHealth();
+      if (health?.engine === "flow" && (health.protocol !== FLOW_PROTOCOL || health.backgroundRestore !== true)) {
+        if (health.connected && !options.replaceFlowSession && !existsSync(/* turbopackIgnore: true */ path.resolve(process.env.FLOW_COOKIES_FILE || "cookies.json")))
+          throw Object.assign(new Error("Worker cũ đang giữ phiên Flow trong RAM; chưa có cookie file để khôi phục."), { code: "FLOW_LOGIN_REQUIRED", stage: "FLOW_SESSION_RESTORE" });
+        await stopFlowService();
+      } else {
+        // Another starter already spawned the process. Wait, never spawn a second one.
+        while (Date.now() < deadline) {
+          if (await ready("flow")) return;
+          if (!(await alive(pidFile))) break;
+          await new Promise(r => setTimeout(r, 100));
+        }
+        if (await alive(pidFile)) throw flowStartFailure("Flow Worker chưa mở được health; tiến trình đang khởi động được giữ nguyên.");
+      }
+    }
+    await unlink(pidFile).catch(() => {});
+    let command = process.env.FLOW_PYTHON || path.resolve(".flow-venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+    if (!existsSync(/* turbopackIgnore: true */ command)) throw flowStartFailure("Chưa cài backend Flow Python vào .flow-venv.");
+    if (process.platform === "win32" && command.endsWith("python.exe")) {
+      const silent = command.slice(0, -10) + "pythonw.exe";
+      if (existsSync(/* turbopackIgnore: true */ silent)) command = silent;
+    }
+    const log = await open(path.resolve("data/flow.log"), "a");
+    let failure = "";
+    try {
+      const child = spawn(/* turbopackIgnore: true */ command, [path.resolve("workers/flow_server.py")], {
+        env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+        shell: false, windowsHide: true, detached: true, stdio: ["ignore", log.fd, log.fd],
+      });
+      child.on("error", e => { failure = e.message; });
+      child.on("exit", code => { failure = `Flow Worker dừng (mã ${code}).`; });
+      child.unref();
+      if (child.pid) await writeFile(pidFile, String(child.pid));
+    } finally { await log.close(); }
+    while (Date.now() < deadline) {
+      if (await ready("flow")) return;
+      if (failure) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    if (!(await alive(pidFile))) await unlink(pidFile).catch(() => {});
+    throw flowStartFailure(failure || "Hết thời gian chờ health của Flow Worker. Xem Chi tiết dịch vụ.");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && "stage" in error) throw error;
+    throw flowStartFailure(error instanceof Error ? error.message : String(error));
+  } finally { if (owned) await unlink(lockFile).catch(() => {}); }
+}
+async function start(service: Exclude<Service, "flow">) {
+  if (await ready(service)) return;
 
   if (service === "worker") {
     const workerLock = path.resolve("data/worker.lock");
@@ -215,11 +276,6 @@ async function start(service: Service, options: { replaceFlowSession?: boolean }
     if (service === "worker") {
       command = process.execPath;
       args = ["--import", "tsx", path.resolve("scripts/worker.ts")];
-    } else if (service === "flow") {
-      command = process.env.FLOW_PYTHON || path.resolve(".flow-venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-      if (!existsSync(/* turbopackIgnore: true */ command))
-        throw Error("Chưa cài backend Flow Python. Cài workers/flow-requirements.txt vào .flow-venv.");
-      args = [path.resolve("workers/flow_server.py")];
     } else if (service === "vieneu") {
       cwd =
         process.env.VIENEU_REPO_DIR ||

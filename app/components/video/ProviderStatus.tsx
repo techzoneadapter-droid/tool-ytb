@@ -292,6 +292,8 @@ export function ProviderStatus({
                 ? "Đang kiểm tra"
                 : row.ready
                   ? "Sẵn sàng"
+                  : row.service === "flow" && ["starting", "restoring"].includes(p?.flow?.state || "")
+                    ? "Đang khôi phục phiên Flow..."
                   : row.configured
                     ? "Chưa chạy"
                     : "Chưa cấu hình"}
@@ -340,7 +342,9 @@ export function ProviderStatus({
       )}
       {settings.imageProvider === "flow-browser" && !p?.flow?.generationReady && (
         <p className="notice">
-          {p?.flow?.message || "Dán JSON Cookie và URL dự án Flow để kết nối chạy ẩn."}
+          {["starting", "restoring"].includes(p?.flow?.state || "")
+            ? p?.flow?.lastStage === "FLOW_PROJECT_OPEN" ? "Đang mở dự án Flow..." : p?.flow?.lastStage === "FLOW_COMPOSER_WAIT" ? "Đang chờ trình tạo ảnh..." : "Đang khôi phục phiên Flow..."
+            : p?.flow?.lastError ? "Phiên Flow chưa sẵn sàng. Xem Chi tiết." : p?.flow?.message || "Dán JSON Cookie và URL dự án Flow để kết nối chạy ẩn."}
           {onFlowConnected && " Kết nối xong sẽ tự tạo ảnh và dựng video cho các chương đang chọn."}
         </p>
       )}
@@ -396,6 +400,9 @@ export function ProviderStatus({
             <pre>{detail}</pre>
           </details>
         </div>
+      )}
+      {p?.flow?.lastError && !detail && (
+        <details className="notice"><summary>Chi tiết Flow</summary><pre>{p.flow.lastError}</pre></details>
       )}
 
       {setup && (

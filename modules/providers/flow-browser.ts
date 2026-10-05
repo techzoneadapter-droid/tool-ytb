@@ -1,4 +1,4 @@
-import { startService } from "./services";
+import { startService, flowTimeout } from "./services";
 import { randomUUID } from "node:crypto";
 
 function bridgeURL() {
@@ -36,7 +36,7 @@ export function flowFailure(
       (label ? `[${label}] ` : "") + (body?.error || fallback) + artifacts,
     ),
     {
-      code: body?.code || "FLOW_UI_CHANGED",
+      code: body?.code || "FLOW_REQUEST_FAILED",
       stage: body?.stage || body?.code || "FLOW_GENERATE",
     },
   );
@@ -83,6 +83,8 @@ export type FlowHealth = {
   state?:
     | "disconnected"
     | "connecting"
+    | "starting"
+    | "restoring"
     | "login_required"
     | "project_required"
     | "ready"
@@ -95,6 +97,8 @@ export type FlowHealth = {
   model?: string;
   connectionMode?: string;
   lastError?: string;
+  lastErrorCode?: string;
+  backgroundRestore?: boolean;
   message: string;
 };
 
@@ -127,24 +131,44 @@ export async function initializeFlowSession(
   );
 }
 
+export async function waitForFlowSession(onStage?: (stage: string) => void): Promise<FlowHealth> {
+  const deadline = Date.now() + flowTimeout("FLOW_RESTORE_TIMEOUT_MS", 180000);
+  let lastStage = "";
+  while (Date.now() < deadline) {
+    const health = await flowHealth();
+    if (health.generationReady) { onStage?.("FLOW_READY"); return health; }
+    if (["login_required", "project_required", "error", "disconnected"].includes(health.state || "") || (health.state === "ready" && !health.generationReady)) {
+      const code = health.lastErrorCode || health.lastError?.match(/^\[([^\]]+)\]/)?.[1] ||
+        (health.state === "login_required" || health.state === "disconnected" ? "FLOW_LOGIN_REQUIRED" : health.state === "project_required" ? "FLOW_PROJECT_INVALID" : health.state === "ready" ? "FLOW_COMPOSER_NOT_FOUND" : "FLOW_SESSION_RESTORE_FAILED");
+      throw flowFailure({ code, stage: health.lastStage || "FLOW_SESSION_RESTORE", error: health.lastError || health.message }, "");
+    }
+    const stage = health.lastStage || "FLOW_SESSION_RESTORE";
+    if (stage !== lastStage) { onStage?.(stage); lastStage = stage; }
+    await new Promise(r => setTimeout(r, 200));
+  }
+  throw flowFailure({ code: "FLOW_SESSION_RESTORE_FAILED", stage: "FLOW_SESSION_RESTORE", error: "Hết thời gian chờ khôi phục phiên Flow." }, "");
+}
+
 export async function generateWithFlow(
   prompt: string,
   aspect: "16:9" | "9:16",
   onStage?: (stage: string) => void,
 ) {
+  onStage?.("FLOW_SERVICE_START");
   try {
     await startService("flow");
   } catch (error) {
     if (error instanceof Error && "code" in error && "stage" in error) throw error;
     throw flowFailure(
       {
-        code: "FLOW_UI_CHANGED",
-        stage: "FLOW_SESSION_START",
+        code: "FLOW_SERVICE_START_FAILED",
+        stage: "FLOW_SERVICE_START",
         error: error instanceof Error ? error.message : String(error),
       },
       "",
     );
   }
+  await waitForFlowSession(onStage);
   const requestId = randomUUID();
   const progressController = new AbortController();
   let progressError: unknown;

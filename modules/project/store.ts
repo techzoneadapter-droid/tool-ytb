@@ -48,10 +48,7 @@ export function updateJob(id: string, patch: Partial<Job>) {
   }
 }
 
-export function mergeProjectChapters(
-  source: Project,
-  chapterIds: string[],
-) {
+export function mergeProjectChapters(source: Project, chapterIds: string[]) {
   const wanted = new Set(chapterIds);
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -62,6 +59,35 @@ export function mergeProjectChapters(
         .map((chapter) => [chapter.id, chapter]),
     );
     current.characterBible ||= source.characterBible;
+    if (current.characterBible && source.characterBible) {
+      for (const incoming of source.characterBible.characters) {
+        const existing = current.characterBible.characters.find(
+          (character) => character.characterId === incoming.characterId,
+        );
+        if (!existing) current.characterBible.characters.push(incoming);
+        else {
+          for (const key of [
+            "hairColor",
+            "skinColor",
+            "accessories",
+            "vibe",
+            "normalizedDescription",
+            "normalizedPrompt",
+            "primary",
+          ] as const) {
+            if (existing[key] === undefined)
+              Object.assign(existing, { [key]: incoming[key] });
+          }
+          if (
+            incoming.portrait &&
+            (!existing.portrait ||
+              incoming.portrait.createdAt >= existing.portrait.createdAt)
+          )
+            existing.portrait = incoming.portrait;
+        }
+      }
+      current.characterBible.visualStyle ||= source.characterBible.visualStyle;
+    }
     current.chapters = current.chapters.map(
       (chapter) => replacements.get(chapter.id) || chapter,
     );
@@ -103,7 +129,9 @@ export function removeProject(id: string) {
     for (const video of list<VideoRecord>("video").filter(
       (item) => item.projectId === id,
     ))
-      db.prepare("DELETE FROM records WHERE id=? AND kind='video'").run(video.id);
+      db.prepare("DELETE FROM records WHERE id=? AND kind='video'").run(
+        video.id,
+      );
     db.prepare("DELETE FROM records WHERE id=? AND kind='project'").run(id);
     db.exec("COMMIT");
   } catch (error) {

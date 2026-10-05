@@ -68,7 +68,7 @@ export async function render(
       continue;
     }
     const image = await resolveSceneImage(scene, s);
-    if (!image) throw Error('Cảnh chưa có ảnh hợp lệ hoặc ảnh dùng chung.');
+    if (!image) throw Error("Cảnh chưa có ảnh hợp lệ hoặc ảnh dùng chung.");
     const motion =
       usesMotion(scene, s) &&
       scene.motionStatus === "done" &&
@@ -83,8 +83,9 @@ export async function render(
           : ["-loop", "1", "-framerate", "25"]),
         "-i",
         path.join(assets, motion || image),
-        "-i",
-        path.join(assets, scene.audio!),
+        ...(s.audioEnabled === false
+          ? ["-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono"]
+          : ["-i", path.join(assets, scene.audio!)]),
         "-map",
         "0:v:0",
         "-map",

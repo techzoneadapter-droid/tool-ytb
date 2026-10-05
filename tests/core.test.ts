@@ -19,8 +19,9 @@ import { mkdtemp, readFile, writeFile, unlink, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {findEngineVoice} from '../modules/tts/catalog';
-import {ensureVisualProfile,sceneVisual} from '../modules/imagePrompt/profile';
+import {ensureVisualProfile} from '../modules/imagePrompt/profile';
 import type {Chapter} from '../modules/project/types';
+import {buildChapterImagePrompt} from '../modules/imagePrompt/chapter';
 
 test('voice catalog resolves real IDs and aliases without restricting VieNeu presets',()=>{
  const voices=[{id:'Thiện Minh',name:'Thiện Minh',aliases:['Anh Khôi']},{id:'Ngọc Huyền',name:'Ngọc Huyền'}];
@@ -28,17 +29,14 @@ test('voice catalog resolves real IDs and aliases without restricting VieNeu pre
  assert.equal(findEngineVoice(voices,'ngoc_huyen')?.id,'Ngọc Huyền');
  assert.equal(findEngineVoice(voices,'bao_kim'),undefined);
 });
-test('chapter visual context survives reload and scene variations preserve character descriptors',()=>{
- const chapter:Chapter={id:'chapter-fixed',title:'Rừng xanh',text:'Lâm Phong mặc áo đen, tóc dài. Lâm Phong bước qua suối.',scenes:[]};
+test('chapter context survives reload and all scenes use the same chapter prompt',()=>{
+ const chapter:Chapter={id:'chapter-fixed',title:'Forest',text:'Lam Hao enters the forest.',scenes:[]};
  const profile=ensureVisualProfile(chapter,defaults);
- profile.characters=[{name:'Lâm Phong',descriptor:'24-year-old man, long black hair, black robe, silver sword'}];
- const a={id:'a',text:'Lâm Phong bước qua suối.',prompt:'',duration:3,approved:false};
- const b={...a,id:'b',text:'Lâm Phong đứng trên núi.'};
- const first=sceneVisual(chapter,a,defaults),second=sceneVisual(chapter,b,defaults);
- assert.notEqual(first.seed,second.seed);
- assert.notEqual(first.prompt,second.prompt);
- assert.match(first.prompt,/long black hair/);assert.match(second.prompt,/long black hair/);
- assert.deepEqual(sceneVisual(JSON.parse(JSON.stringify(chapter)),a,defaults),first);
+ profile.characters=[{name:'Lam Hao',descriptor:'24-year-old man, long black hair, black robe, silver sword'}];
+ const project={id:'project-fixed',name:'fixture',createdAt:'now',settings:defaults,chapters:[chapter]};
+ const first=buildChapterImagePrompt(project,chapter,defaults);
+ assert.match(first,/long black hair/);
+ assert.equal(buildChapterImagePrompt(JSON.parse(JSON.stringify(project)),JSON.parse(JSON.stringify(chapter)),defaults),first);
  assert.equal(ensureVisualProfile(chapter,defaults),profile);
 });
 

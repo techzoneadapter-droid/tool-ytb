@@ -3,7 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { Clapperboard, ImagePlus } from "lucide-react";
 import type { Settings } from "@/modules/project/types";
 import { imageStyles } from "@/modules/imagePrompt/styles";
-import { imageAPIOptions, isImageAPIProvider } from "@/modules/providers/image-api-options";
+import {
+  imageAPIOptions,
+  isImageAPIProvider,
+} from "@/modules/providers/image-api-options";
 import {
   initialSettings,
   request,
@@ -70,9 +73,13 @@ export function VideoCreatePage({
     setError("");
     try {
       if (
-        !["modal-vieneu", "edge-online", "pollinations", "vieneu-local", "korva-local"].includes(
-          settings.ttsProvider || "",
-        )
+        ![
+          "modal-vieneu",
+          "edge-online",
+          "pollinations",
+          "vieneu-local",
+          "korva-local",
+        ].includes(settings.ttsProvider || "")
       )
         throw Error("Chọn một engine giọng đọc hợp lệ để tạo video.");
       if (
@@ -113,9 +120,13 @@ export function VideoCreatePage({
     try {
       if (["retry", "restart"].includes(action) && project && !active) {
         if (
-          !["modal-vieneu", "edge-online", "pollinations", "vieneu-local", "korva-local"].includes(
-            settings.ttsProvider || "",
-          )
+          ![
+            "modal-vieneu",
+            "edge-online",
+            "pollinations",
+            "vieneu-local",
+            "korva-local",
+          ].includes(settings.ttsProvider || "")
         )
           throw Error("Chọn engine giọng hợp lệ trước khi thử lại.");
         await request({
@@ -143,9 +154,7 @@ export function VideoCreatePage({
     setError("");
     try {
       await Promise.all(
-        ids.map((id) =>
-          request({ action, id, projectId: project?.id }),
-        ),
+        ids.map((id) => request({ action, id, projectId: project?.id })),
       );
       await refresh();
     } catch (e) {
@@ -161,7 +170,10 @@ export function VideoCreatePage({
     try {
       const current = settings.referenceImages || [];
       const next = [...current];
-      for (const file of Array.from(files).slice(0, Math.max(0, 10 - current.length))) {
+      for (const file of Array.from(files).slice(
+        0,
+        Math.max(0, 10 - current.length),
+      )) {
         const result = await upload(file);
         if (!result.asset) throw Error("Ảnh tham chiếu không hợp lệ.");
         next.push(result.asset);
@@ -196,13 +208,15 @@ export function VideoCreatePage({
         <p>Chọn dự án và cấu hình video. StoryFlow lo phần còn lại.</p>
       </header>
       {project && (
-        <div ref={progressPanel}><PipelineProgress
-          project={project}
-          jobs={jobs}
-          busy={busy}
-          act={(action, id) => void act(action, id)}
-          actMany={(action, ids) => void actMany(action, ids)}
-        /></div>
+        <div ref={progressPanel}>
+          <PipelineProgress
+            project={project}
+            jobs={jobs}
+            busy={busy}
+            act={(action, id) => void act(action, id)}
+            actMany={(action, ids) => void actMany(action, ids)}
+          />
+        </div>
       )}
       <div className="video-grid">
         <div className="video-form">
@@ -300,8 +314,20 @@ export function VideoCreatePage({
             <>
               {active && (
                 <div className="notice" role="status">
-                  Dự án đang có tác vụ đang chạy, chờ hoặc tạm dừng. Bạn vẫn có thể chỉnh cấu hình và chọn chương cho lần chạy sau; tác vụ hiện tại dùng cấu hình đã lưu.
-                  <button className="text-button" onClick={() => progressPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>Xem tác vụ / tạm dừng / hủy</button>
+                  Dự án đang có tác vụ đang chạy, chờ hoặc tạm dừng. Bạn vẫn có
+                  thể chỉnh cấu hình và chọn chương cho lần chạy sau; tác vụ
+                  hiện tại dùng cấu hình đã lưu.
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      progressPanel.current?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      })
+                    }
+                  >
+                    Xem tác vụ / tạm dừng / hủy
+                  </button>
                 </div>
               )}
               <fieldset disabled={busy} className="config-fields">
@@ -377,7 +403,9 @@ export function VideoCreatePage({
                                     settings.imageProvider || "",
                                   )
                                 ? "Cloud miễn phí"
-                                : isImageAPIProvider(settings.imageProvider) ? "API key" : "Local"}
+                                : isImageAPIProvider(settings.imageProvider)
+                                  ? "API key"
+                                  : "Local"}
                         </span>
                       </div>
                       <label>
@@ -407,8 +435,10 @@ export function VideoCreatePage({
                           <option value="pollinations">
                             Pollinations · Cloud API
                           </option>
-                          {imageAPIOptions.map(option => (
-                            <option key={option.id} value={option.id}>{option.label} · API key</option>
+                          {imageAPIOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label} · API key
+                            </option>
                           ))}
                           <option value="flux2-local">
                             FLUX.2 Local · Chất lượng
@@ -422,9 +452,26 @@ export function VideoCreatePage({
                         </select>
                       </label>
                       {isImageAPIProvider(settings.imageProvider) && (
-                        <ImageAPIConnection key={settings.imageProvider} provider={settings.imageProvider}
-                          status={data.providers?.imageAPIs?.[settings.imageProvider]} model={settings.imageModel}
-                          onModel={model => change({ imageModel: model })} refresh={refresh} />
+                        <ImageAPIConnection
+                          key={settings.imageProvider}
+                          provider={settings.imageProvider}
+                          status={
+                            data.providers?.imageAPIs?.[settings.imageProvider]
+                          }
+                          model={settings.imageModel}
+                          options={settings.imageAPIOptions}
+                          onOptions={(imageAPIOptions) =>
+                            change({ imageAPIOptions })
+                          }
+                          onModel={(model) => change({ imageModel: model })}
+                          refresh={refresh}
+                        />
+                      )}
+                      {!isImageAPIProvider(settings.imageProvider) && (
+                        <p className="notice">
+                          1 chương = 1 ảnh master · tất cả cảnh trong chương
+                          dùng chung ảnh.
+                        </p>
                       )}
                       <label>
                         Phong cách ảnh
@@ -442,7 +489,10 @@ export function VideoCreatePage({
                           <div className="row between">
                             <div>
                               <strong>Ảnh tham chiếu nhân vật</strong>
-                              <small>Tối đa 10 ảnh. Nên dùng nhiều góc của cùng nhân vật.</small>
+                              <small>
+                                Tối đa 10 ảnh. Nên dùng nhiều góc của cùng nhân
+                                vật.
+                              </small>
                             </div>
                             <label className="button">
                               <ImagePlus size={16} />
@@ -460,28 +510,36 @@ export function VideoCreatePage({
                             </label>
                           </div>
                           <div className="reference-list">
-                            {(settings.referenceImages || []).map((image, index) => (
-                              <div className="reference-thumb" key={image}>
-                                <img src={fileURL(image)} alt={"Tham chiếu " + (index + 1)} />
-                                <button
-                                  type="button"
-                                  aria-label={"Xóa ảnh tham chiếu " + (index + 1)}
-                                  onClick={() =>
-                                    change({
-                                      referenceImages: (settings.referenceImages || []).filter(
-                                        (item) => item !== image,
-                                      ),
-                                    })
-                                  }
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            ))}
+                            {(settings.referenceImages || []).map(
+                              (image, index) => (
+                                <div className="reference-thumb" key={image}>
+                                  <img
+                                    src={fileURL(image)}
+                                    alt={"Tham chiếu " + (index + 1)}
+                                  />
+                                  <button
+                                    type="button"
+                                    aria-label={
+                                      "Xóa ảnh tham chiếu " + (index + 1)
+                                    }
+                                    onClick={() =>
+                                      change({
+                                        referenceImages: (
+                                          settings.referenceImages || []
+                                        ).filter((item) => item !== image),
+                                      })
+                                    }
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ),
+                            )}
                           </div>
                           {!settings.referenceImages?.length && (
                             <p className="muted">
-                              Reference AI chỉ chạy khi đã có ít nhất một ảnh tham chiếu thật.
+                              Reference AI chỉ chạy khi đã có ít nhất một ảnh
+                              tham chiếu thật.
                             </p>
                           )}
                         </div>
@@ -676,7 +734,10 @@ export function VideoCreatePage({
                   change={change}
                   onError={setError}
                 />
-                <fieldset disabled={active} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+                <fieldset
+                  disabled={active}
+                  style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
+                >
                   <VisualProfiles project={project} refresh={refresh} />
                 </fieldset>
               </fieldset>
@@ -712,7 +773,19 @@ export function VideoCreatePage({
                       ? "Đang có tác vụ"
                       : "Bắt đầu tạo video"}
                 </button>
-                {active && <button className="text-button" onClick={() => progressPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>Quản lý tác vụ hiện tại</button>}
+                {active && (
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      progressPanel.current?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      })
+                    }
+                  >
+                    Quản lý tác vụ hiện tại
+                  </button>
+                )}
               </div>
               {jobs.some((job) => job.status === "done" && job.verified) && (
                 <div className="completed-summary">

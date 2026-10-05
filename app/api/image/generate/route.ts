@@ -28,12 +28,24 @@ export async function POST(req: NextRequest) {
       .object({
         prompt: z.string().trim().min(1).max(4000),
         provider: z
-          .enum(["flux2-local", "local-fast", "auto-local", "openai", "gemini", "stability"])
+          .enum([
+            "flux2-local",
+            "local-fast",
+            "auto-local",
+            "openai",
+            "gemini",
+            "stability",
+            "api-compatible",
+          ])
           .default("flux2-local"),
         enabled: z.boolean().default(true),
         aspect: z.enum(["16:9", "9:16"]).default("16:9"),
         style: z.string().max(100).optional(),
-        model: z.string().regex(/^[a-zA-Z0-9._-]+$/).max(150).optional(),
+        model: z
+          .string()
+          .regex(/^[a-zA-Z0-9._-]+$/)
+          .max(150)
+          .optional(),
       })
       .parse(body);
     const file = randomUUID() + ".png";

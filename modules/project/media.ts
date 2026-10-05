@@ -75,7 +75,10 @@ export async function resolveSceneImage(
 }
 export async function requireSceneMedia(scene: Scene, settings?: Settings) {
   if (settings && cachedSceneVideo(scene, settings)) return;
-  if (!scene.audioSource || !assetExists(scene.audio))
+  if (
+    settings?.audioEnabled !== false &&
+    (!scene.audioSource || !assetExists(scene.audio))
+  )
     throw Error("Cảnh chưa có tệp lời đọc thật. Hãy tạo lại lời đọc.");
   if (!(await resolveSceneImage(scene, settings)))
     throw Error("Cảnh chưa có tệp ảnh thật. Hãy tạo hoặc tải ảnh lên.");
@@ -92,7 +95,8 @@ export function verifiedJob(job: Job): Job {
       status: "error",
       progress: 0,
       verified: false,
-      error: "Một hoặc nhiều MP4 trong lô không còn hợp lệ. Cần xuất lại video.",
+      error:
+        "Một hoặc nhiều MP4 trong lô không còn hợp lệ. Cần xuất lại video.",
       message: "Lô video chưa hợp lệ",
     };
   }

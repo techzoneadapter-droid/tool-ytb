@@ -40,6 +40,8 @@ export type Scene = {
   approved: boolean;
 };
 export type Chapter = {
+  imageAnalysis?: ChapterVisualAnalysis;
+  apiImage?: ChapterAPIImage;
   masterImage?: ChapterImageJob;
   chapterImageGenerationCount?: number;
   visualProfile?: VisualProfile;
@@ -64,6 +66,7 @@ export type Settings = {
   fallbackOnImageError?: boolean;
   imageEnabled?: boolean;
   imageModel?: string;
+  imageAPIOptions?: import("../providers/image-api-options").ImageAPIOptions;
   imageProvider?:
     | "modal-story"
     | "modal-reference"
@@ -75,7 +78,8 @@ export type Settings = {
     | "flow-browser"
     | "openai"
     | "gemini"
-    | "stability";
+    | "stability"
+    | "api-compatible";
   referenceImages?: string[];
   motionMode?: "off" | "selected" | "all";
   ttsProvider?: import("../tts/local-voices").TTSProvider;
@@ -141,6 +145,8 @@ export type ChapterRuntimeContext = {
 export type CharacterBible = {
   version: 1;
   referenceImageStatus: "NOT CURRENTLY VERIFIED";
+  visualStyle?: string;
+  sourceMode?: "heuristic" | "manual";
   characters: {
     characterId: string;
     name: string;
@@ -153,7 +159,68 @@ export type CharacterBible = {
     distinctiveFeatures: string;
     role: string;
     sourceDescription: string;
+    hairColor?: string;
+    skinColor?: string;
+    accessories?: string;
+    vibe?: string;
+    normalizedDescription?: string;
+    normalizedPrompt?: string;
+    primary?: boolean;
+    portrait?: {
+      file: string;
+      cacheKey: string;
+      engine: string;
+      model: string;
+      seed: number;
+      createdAt: string;
+    };
   }[];
+};
+export type ChapterVisualAnalysis = {
+  version: 1;
+  cacheKey: string;
+  summary: string;
+  characters: string[];
+  centralCharacter?: string;
+  location: string;
+  time: string;
+  mood: string;
+  action: string;
+  explicitChanges: string[];
+  createdAt: string;
+};
+export type ChapterAPIImage = {
+  requestId: string;
+  cacheKey: string;
+  projectId: string;
+  chapterId: string;
+  engine: string;
+  model: string;
+  prompt: string;
+  negativePrompt: string;
+  characterBlock: string;
+  characterIds: string[];
+  referenceFiles: string[];
+  seed: number;
+  status:
+    | "analyzing"
+    | "characters"
+    | "prompt"
+    | "generating"
+    | "saving"
+    | "ready"
+    | "error";
+  file?: string;
+  createdAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  metadata?: {
+    requestId?: string;
+    attempts?: number;
+    usage?: Record<string, number>;
+    width?: number;
+    height?: number;
+  };
 };
 export type Job = {
   startedAt?: string;

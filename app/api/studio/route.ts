@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureVisualProfile } from "@/modules/imagePrompt/profile";
+import { stableSeed } from "@/modules/imagePrompt/profile";
+import { prepareCharacterBible } from "@/modules/imagePrompt/character-consistency";
 import { findEngineVoice, voiceKey } from "@/modules/tts/catalog";
 import { localStatus } from "@/modules/tts/local";
 import { randomUUID } from "node:crypto";
@@ -12,7 +14,12 @@ import {
   removeProject,
 } from "@/modules/project/store";
 import { defaults, type Project, type Job } from "@/modules/project/types";
-import { parseChapters, plan, chunks, cleanNarrationText } from "@/modules/project/parser";
+import {
+  parseChapters,
+  plan,
+  chunks,
+  cleanNarrationText,
+} from "@/modules/project/parser";
 import { sceneSchema, settingsSchema } from "@/modules/project/validation";
 import { rewrite } from "@/modules/project/ai";
 import { providerStatus, requireImage } from "@/modules/providers/config";
@@ -80,13 +87,18 @@ export async function POST(req: NextRequest) {
     }
     if (b.action === "startService") {
       await startService(
-        z.enum(["worker", "vieneu", "korva", "flux", "wan", "flow"]).parse(b.service),
+        z
+          .enum(["worker", "vieneu", "korva", "flux", "wan", "flow"])
+          .parse(b.service),
       );
       return NextResponse.json({ ok: true });
     }
     if (b.action === "initializeFlowSession") {
       const cookieJson = z.string().min(1).max(1048576).parse(b.cookieJson);
-      const projectUrl = z.string().max(2000).parse(b.projectUrl || "");
+      const projectUrl = z
+        .string()
+        .max(2000)
+        .parse(b.projectUrl || "");
       await startService("flow", { replaceFlowSession: true });
       const status = await initializeFlowSession(cookieJson, projectUrl);
       return NextResponse.json({ ok: true, status });
@@ -94,7 +106,10 @@ export async function POST(req: NextRequest) {
     if (b.action === "create" || b.action === "createVideo") {
       const rawText = storySchema.parse(b.text);
       const text = cleanNarrationText(rawText);
-      if (!text) throw Error("Nội dung truyện không còn văn bản hợp lệ sau khi làm sạch.");
+      if (!text)
+        throw Error(
+          "Nội dung truyện không còn văn bản hợp lệ sau khi làm sạch.",
+        );
       const defaultProvider = defaultTTSProvider();
       const configuredVoice =
         process.env.DEFAULT_VIETNAMESE_VOICE || "Ngọc Huyền";
@@ -259,6 +274,68 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
     const p = get<Project>(z.string().uuid().parse(b.projectId), "project");
+    if (b.action === "characterBible") {
+      if (
+        list<Job>("job").some(
+          (job) =>
+            job.projectId === p.id &&
+            ["queued", "audio", "images", "rendering"].includes(job.status),
+        )
+      )
+        throw Error(
+          "Đợi tác vụ đang chạy hoàn thành trước khi sửa danh tính nhân vật.",
+        );
+      const text = z.string().max(500);
+      const characters = z
+        .array(
+          z.object({
+            characterId: z.string().max(100).optional(),
+            name: z.string().trim().min(1).max(100),
+            gender: text,
+            approximateAge: z.number().int().min(0).max(2000).nullable(),
+            faceDescription: text,
+            hair: text,
+            body: text,
+            clothing: text,
+            distinctiveFeatures: text,
+            role: text,
+            sourceDescription: text,
+            hairColor: text.optional(),
+            skinColor: text.optional(),
+            accessories: text.optional(),
+            vibe: text.optional(),
+            normalizedDescription: z.string().max(1000).optional(),
+            normalizedPrompt: z.string().max(2500).optional(),
+            primary: z.boolean().optional(),
+          }),
+        )
+        .max(100)
+        .parse(b.characters);
+      const bible = prepareCharacterBible(p);
+      const seen = new Set<string>();
+      bible.characters = characters.map((character) => {
+        const old = bible.characters.find(
+          (item) =>
+            item.characterId === character.characterId ||
+            item.name === character.name,
+        );
+        const characterId =
+          old?.characterId ||
+          "character_" +
+            stableSeed(character.name.normalize("NFC").toLocaleLowerCase("vi"));
+        if (seen.has(characterId)) throw Error("Danh tính nhân vật bị trùng.");
+        seen.add(characterId);
+        const changed = old && (["gender", "approximateAge", "faceDescription", "hair", "body", "clothing", "distinctiveFeatures", "hairColor", "skinColor", "accessories", "vibe"] as const).some(key => old[key] !== character[key]);
+        return { ...character, characterId, portrait: old?.portrait,
+          normalizedPrompt: changed && old.normalizedPrompt === character.normalizedPrompt ? undefined : character.normalizedPrompt,
+          normalizedDescription: changed ? undefined : character.normalizedDescription,
+        };
+      });
+      bible.sourceMode = "manual";
+      prepareCharacterBible(p);
+      put("project", p);
+      return NextResponse.json({ ok: true });
+    }
     if (b.action === "approve") {
       if (
         list<Job>("job").some(
@@ -300,7 +377,10 @@ export async function POST(req: NextRequest) {
         .max(200, "Tên chương không được dài quá 200 ký tự.")
         .parse(b.title);
       const text = cleanNarrationText(storySchema.parse(b.text));
-      if (!text) throw Error("Nội dung chương không còn văn bản hợp lệ sau khi làm sạch.");
+      if (!text)
+        throw Error(
+          "Nội dung chương không còn văn bản hợp lệ sau khi làm sạch.",
+        );
       if (
         p.chapters.reduce((n, c) => n + c.text.length, 0) + text.length >
         2000000
@@ -381,6 +461,7 @@ export async function POST(req: NextRequest) {
         settings.style !== p.settings.style ||
         settings.customPrompt !== p.settings.customPrompt ||
         settings.imageProvider !== p.settings.imageProvider ||
+        settings.imageModel !== p.settings.imageModel ||
         settings.aspect !== p.settings.aspect
       )
         for (const chapter of p.chapters)
@@ -405,6 +486,7 @@ export async function POST(req: NextRequest) {
       for (const chapter of p.chapters)
         ensureVisualProfile(chapter, settings).style = settings.style;
       p.settings = settings;
+      prepareCharacterBible(p);
       put("project", p);
       return NextResponse.json(p);
     }
@@ -563,7 +645,12 @@ export async function POST(req: NextRequest) {
         sceneIds?.some((id) => !scenes.some((s) => s.id === id))
       )
         throw Error("Không tìm thấy cảnh cần xử lý.");
-      if (kind === "audio" || kind === "prepare" || kind === "pipeline" || (kind === "image" && p.settings.imageProvider === "flow-browser"))
+      if (
+        kind === "audio" ||
+        kind === "prepare" ||
+        kind === "pipeline" ||
+        (kind === "image" && p.settings.imageProvider === "flow-browser")
+      )
         assertTTS(p.settings);
       if (kind === "image" && p.settings.imageEnabled === false)
         throw Error("Tạo ảnh đang tắt. Hãy bật tạo ảnh hoặc tải ảnh lên.");

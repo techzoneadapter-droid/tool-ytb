@@ -10,7 +10,27 @@ export const settingsSchema = z.object({
   fallbackOnImageError: z.boolean().optional(),
   provider: z.literal("openai"),
   imageEnabled: z.boolean().optional(),
-  imageModel: z.string().regex(/^[a-zA-Z0-9._-]+$/).max(150).optional(),
+  imageModel: z
+    .string()
+    .regex(/^[a-zA-Z0-9._-]+$/)
+    .max(150)
+    .optional(),
+  imageAPIOptions: z
+    .object({
+      referenceStrength: z.number().min(0).max(1).optional(),
+      timeoutSeconds: z.number().int().min(10).max(600).optional(),
+      retries: z.number().int().min(0).max(5).optional(),
+      concurrency: z.number().int().min(1).max(4).optional(),
+      size: z.enum(["auto", "1024x1024", "1024x1536", "1536x1024"]).optional(),
+      seedMode: z.enum(["project", "chapter", "off"]).optional(),
+      references: z.boolean().optional(),
+      debug: z.boolean().optional(),
+      supportsReferenceImages: z.boolean().optional(),
+      supportsMultiImageInput: z.boolean().optional(),
+      supportsSeed: z.boolean().optional(),
+      supportsNegativePrompt: z.boolean().optional(),
+    })
+    .optional(),
   imageProvider: z
     .enum([
       "modal-story",
@@ -24,6 +44,7 @@ export const settingsSchema = z.object({
       "openai",
       "gemini",
       "stability",
+      "api-compatible",
     ])
     .optional(),
   referenceImages: z.array(asset.unwrap()).max(10).optional(),

@@ -138,6 +138,20 @@ Kiểm tra TTS local ngày 02/10/2026: KorvaTTS 0.1.3 trong `.tts-venv` đã t�
 
 Kiểm tra lại sau khi chạy server và worker: `node scripts/verify-local-tts.mjs --audio`, `node scripts/verify-local-pipeline.mjs`. Cần Edge và Korva đã cấu hình; script pipeline chỉ tạo rồi xóa dự án kiểm thử riêng, không sửa truyện có sẵn.
 
+## API ảnh theo chương và đồng nhất nhân vật
+
+Trong **Tạo video → Engine ảnh**, chọn GPT Image, Gemini, Stability hoặc **Image API · OpenAI compatible**. Nhập key và kết nối để lấy model. Engine riêng yêu cầu Base URL có `/models`, `/images/generations` và `/images/edits` khi bật reference; chọn đúng model ảnh, không dùng GLM/DeepSeek chỉ trả văn bản. Có thể cấu hình qua `API_IMAGE_KEY`, `API_IMAGE_BASE_URL`, `API_IMAGE_MODEL` trong `.env.local`; cấu hình UI được ưu tiên và lưu tại `data/image-api/` đã loại khỏi Git.
+
+Mỗi chương chỉ tạo một ảnh master cho toàn bộ cảnh. Worker trích ý đồ hình ảnh, bối cảnh, thời gian, mood, hành động và nhân vật trung tâm bằng heuristic; chương mơ hồ dùng establishing shot. Character Bible chuẩn hóa toàn dự án; có thể chỉnh JSON danh tính và `normalizedPrompt` trong **Nhân vật, bối cảnh và prompt ảnh**. Thuộc tính chưa xuất hiện trong truyện được đánh dấu chưa xác định, không được coi là dữ kiện đã trích xuất.
+
+GPT Image/Gemini native image dùng portrait nhân vật chính đã lưu để conditioning qua API reference. Engine riêng có checkbox capability theo tài liệu model; mặc định không giả định có reference/seed/negative. Stability Core dùng text consistency, seed và negative prompt; Ultra hỗ trợ thêm một portrait qua image-to-image với mức thay đổi reference tùy chỉnh. Portrait được tạo một lần theo danh tính/model/style và dùng lại giữa các chương; `primary` trong Bible xác định nhân vật cần portrait. Đây là cơ chế conditioning giúp giữ nhân diện, không phải bảo đảm mọi model giữ mặt giống tuyệt đối.
+
+Ảnh API base64/bytes/URL được lưu thành PNG tại `data/assets`, publish vào `public/generated/images` rồi đưa trực tiếp vào FFmpeg. Project JSON trong SQLite giữ `characterBible`, `chapter.imageAnalysis`, `chapter.apiImage`; record kind `image_generation_history` giữ metadata mỗi ảnh. Không cần migration SQL vì schema records hiện có lưu JSON. Debug trong cấu hình ảnh hiển thị prompt cuối, negative, character block, metadata và usage số thật do API trả; không tự suy ra credit/chi phí từ token.
+
+Cache khóa theo nội dung/danh tính/style/model/tham số ảnh. Đổi timeout/retry/concurrency/debug không gọi API lại. Lỗi 429/5xx/timeout retry exponential backoff theo cấu hình (mặc định 2); 400/401/403 không retry. Retry timeout có thể bị tính phí thêm nếu nhà cung cấp đã xử lý yêu cầu. Video chương được lưu ngay khi hoàn thành; lỗi một chương không dừng các job còn lại. Flow vẫn giữ luồng Buffer legacy.
+
+Chạy `npm run dev`; kiểm tra bằng `npm test`, `npm run test:flow`, `npm run build`. Test worker sử dụng API fixture, DB riêng trong thư mục tạm và FFmpeg thật, xác minh portrait dùng chung, lỗi riêng từng chương, video library và retry không tạo lại ảnh thành công.
+
 ## Các module
 
 `modules/providers/config.ts`: cấu hình và trạng thái không chứa khóa; `modules/tts`: giọng và API TTS; `modules/imagePrompt`: prompt hệ thống và API ảnh; `modules/project/media.ts`: xác minh tài nguyên; `modules/videoRender`: FFmpeg; `scripts/worker.ts`: hàng đợi; `app/api/tts/preview`: nghe thử; `app/api/studio`: thao tác dự án/cảnh/tác vụ.

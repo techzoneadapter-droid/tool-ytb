@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Settings } from "@/modules/project/types";
 import type { StudioData } from "../studio-api";
 import { request } from "../studio-api";
+import { imageAPIOptions, isImageAPIProvider } from "@/modules/providers/image-api-options";
 
 export function ProviderStatus({
   providers: p,
@@ -157,7 +158,14 @@ export function ProviderStatus({
 
     const provider = settings.imageProvider || "flux2-local";
     const imageRaw =
-      provider === "flow-browser"
+      isImageAPIProvider(provider)
+        ? {
+            label: `${imageAPIOptions.find(option => option.id === provider)!.label} · ${p?.imageAPIs?.[provider]?.model || "API key"}`,
+            ready: !!p?.imageAPIs?.[provider]?.configured,
+            configured: !!p?.imageAPIs?.[provider]?.configured,
+            service: "",
+          }
+        : provider === "flow-browser"
         ? {
             label: `Google Flow · ${p?.flow?.model || "model của project"} · tài khoản của bạn`,
             ready: !!p?.flow?.generationReady,
@@ -336,8 +344,8 @@ export function ProviderStatus({
       )}
       {!current.image.configured && !current.image.fallback && (
         <p className="notice">
-          AI ảnh cloud đang được chọn nhưng chưa có endpoint. Có thể chọn engine
-          local hoặc bật ảnh dùng chung dự phòng để vẫn dựng được video.
+          AI ảnh cloud đang được chọn nhưng chưa đủ cấu hình API key hoặc endpoint.
+          Thêm cấu hình tương ứng vào .env.local và khởi động lại server/worker.
         </p>
       )}
       {settings.imageProvider === "flow-browser" && !p?.flow?.generationReady && (
@@ -373,6 +381,7 @@ export function ProviderStatus({
             ["Edge TTS Online", true],
             ["Story AI Cloud", !!p?.modal?.image?.ready],
             ["Google Flow", !!p?.flow?.generationReady],
+            ...imageAPIOptions.map(option => [option.label, !!p?.imageAPIs?.[option.id]?.configured]),
             ["AI Horde", !!p?.freeCloud?.aiHorde?.ready],
             ["Pollinations Image", !!p?.freeCloud?.pollinations?.imageReady],
             ["VieNeu Local", !!p?.local.vieneu.ready],

@@ -7,6 +7,8 @@ import { runtimeStatus } from "./runtime-status";
 import { pollinationsAudioCatalog, pollinationsConfigured } from "./free-cloud";
 import { edgeVoices } from "../tts/edge";
 import { flowHealth } from "./flow-browser";
+import { imageConfig, imageAPIStatus } from "./image-api";
+export { imageConfig, requireImage } from "./image-api";
 
 export function ttsConfig() {
   const provider = process.env.TTS_PROVIDER || "openai";
@@ -53,21 +55,6 @@ export function requireTTS(voice: string) {
   return { ...c, voiceId: id };
 }
 
-export function imageConfig() {
-  return {
-    provider: process.env.IMAGE_PROVIDER || "openai",
-    key: process.env.IMAGE_API_KEY || process.env.OPENAI_API_KEY,
-    model: process.env.IMAGE_MODEL || "gpt-image-1",
-  };
-}
-
-export function requireImage() {
-  const c = imageConfig();
-  if (c.provider !== "openai" || !c.key)
-    throw Error("Chưa cấu hình API tạo ảnh");
-  return c;
-}
-
 export async function providerStatus() {
   const [local, runtime, modalTTS, modalImage, pollinations, flow] = await Promise.all([
     localStatus(),
@@ -108,8 +95,9 @@ export async function providerStatus() {
     tts: { provider: t.provider, configured: t.configured },
     image: {
       provider: imageConfig().provider,
-      configured: imageConfig().provider === "openai" && !!imageConfig().key,
+      configured: !!imageAPIStatus()[imageConfig().provider as keyof ReturnType<typeof imageAPIStatus>]?.configured,
     },
+    imageAPIs: imageAPIStatus(),
     flow: {
       ...flow,
       configured: !!process.env.FLOW_PROJECT_URL,

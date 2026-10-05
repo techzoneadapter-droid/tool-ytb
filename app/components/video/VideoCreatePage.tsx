@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Clapperboard, ImagePlus } from "lucide-react";
 import type { Settings } from "@/modules/project/types";
 import { imageStyles } from "@/modules/imagePrompt/styles";
+import { imageAPIOptions, isImageAPIProvider } from "@/modules/providers/image-api-options";
 import {
   initialSettings,
   request,
@@ -375,7 +376,7 @@ export function VideoCreatePage({
                                     settings.imageProvider || "",
                                   )
                                 ? "Cloud miễn phí"
-                                : "Local"}
+                                : isImageAPIProvider(settings.imageProvider) ? "API key" : "Local"}
                         </span>
                       </div>
                       <label>
@@ -404,6 +405,9 @@ export function VideoCreatePage({
                           <option value="pollinations">
                             Pollinations · Cloud API
                           </option>
+                          {imageAPIOptions.map(option => (
+                            <option key={option.id} value={option.id}>{option.label} · API key</option>
+                          ))}
                           <option value="flux2-local">
                             FLUX.2 Local · Chất lượng
                           </option>
@@ -415,6 +419,14 @@ export function VideoCreatePage({
                           </option>
                         </select>
                       </label>
+                      {isImageAPIProvider(settings.imageProvider) && (
+                        <p className="notice">
+                          {data.providers?.imageAPIs?.[settings.imageProvider]?.configured ? "Đã cấu hình key" : "Chưa cấu hình key"}
+                          {" · "}{data.providers?.imageAPIs?.[settings.imageProvider]?.model || "Model từ cấu hình server"}.
+                          {" Thêm "}{imageAPIOptions.find(option => option.id === settings.imageProvider)?.keyEnv}
+                          {" vào .env.local, sau đó khởi động lại ứng dụng. API tính phí theo tài khoản; quyền truy cập và hạn mức được kiểm tra khi tạo ảnh."}
+                        </p>
+                      )}
                       <label>
                         Phong cách ảnh
                         <select

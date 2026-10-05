@@ -21,6 +21,8 @@ export const settingsSchema = z.object({
       "pollinations",
       "flow-browser",
       "openai",
+      "gemini",
+      "stability",
     ])
     .optional(),
   referenceImages: z.array(asset.unwrap()).max(10).optional(),

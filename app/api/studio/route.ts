@@ -581,7 +581,7 @@ export async function POST(req: NextRequest) {
           "flow-browser",
         ].includes(p.settings.imageProvider || "")
       )
-        requireImage();
+        requireImage(p.settings.imageProvider);
       if (kind === "motion") {
         if (!p.settings.motionMode || p.settings.motionMode === "off")
           throw Error("Ảnh động đang tắt. Chọn chế độ ảnh động trước.");

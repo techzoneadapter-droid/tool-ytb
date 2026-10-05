@@ -72,7 +72,9 @@ export type Settings = {
     | "aihorde"
     | "pollinations"
     | "flow-browser"
-    | "openai";
+    | "openai"
+    | "gemini"
+    | "stability";
   referenceImages?: string[];
   motionMode?: "off" | "selected" | "all";
   ttsProvider?: import("../tts/local-voices").TTSProvider;

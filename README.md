@@ -44,6 +44,18 @@ Engine mặc định cho dự án mới là **VieNeu-TTS v3 Turbo**. Có thêm *
 
 Sao chép `.env.example` thành `.env.local`. Không gửi khóa vào chat hoặc commit vào Git. Khởi động lại **cả server và worker** sau khi sửa biến môi trường.
 
+Trong **Tạo video → Ảnh minh họa → Engine ảnh**, có thêm OpenAI/GPT Image, Google Gemini/Nano Banana và Stability AI. Lưu thiết lập dự án để hàng đợi dùng đúng lựa chọn. Mỗi API tạo một ảnh cho mỗi cảnh cần ảnh; kết quả được giải mã, cắt theo tỷ lệ video và dùng trong luồng dựng video hiện có.
+
+| Lựa chọn | API key trong `.env.local` | Model |
+| --- | --- | --- |
+| OpenAI · GPT Image | `OPENAI_API_KEY` hoặc `IMAGE_API_KEY` | `OPENAI_IMAGE_MODEL`, rồi `IMAGE_MODEL`; mặc định `gpt-image-1` |
+| Google Gemini · Nano Banana | `GEMINI_API_KEY` hoặc `GOOGLE_API_KEY` | `GEMINI_IMAGE_MODEL=gemini-3.1-flash-image` |
+| Stability AI · Stable Image | `STABILITY_API_KEY` | `STABILITY_IMAGE_MODEL=core` hoặc `ultra` |
+
+Key chỉ được đọc ở server/worker; trạng thái giao diện chỉ phản ánh đã có cấu hình, chưa xác nhận quyền truy cập hoặc số dư. Không tự chuyển sang API trả phí khác khi một API lỗi. Endpoint tạo ảnh riêng `/api/image/generate` cũng nhận `provider: "openai"`, `"gemini"` hoặc `"stability"`.
+
+Gemini dùng [Interactions API](https://ai.google.dev/gemini-api/docs/image-generation) và chỉ lấy ảnh kết quả cuối, bỏ ảnh suy nghĩ trung gian. Stability gọi [Stable Image Core/Ultra](https://platform.stability.ai/docs/api-reference). [Imagen đã ngừng cung cấp trên Gemini API](https://ai.google.dev/gemini-api/docs/imagen). Tài liệu [DeepSeek Vision](https://api-docs.deepseek.com/guides/vision/) mô tả nhận ảnh đầu vào; chưa có API xuất ảnh được xác minh để thêm vào danh sách tạo ảnh.
+
 ### Lựa chọn A: OpenAI TTS và OpenAI Images
 
 ```dotenv

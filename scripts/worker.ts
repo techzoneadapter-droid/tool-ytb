@@ -26,7 +26,8 @@ import {
   sceneVisual,
   ensureVisualProfile,
 } from "../modules/imagePrompt/profile";
-import { imageConfig } from "../modules/providers/config";
+import { isImageAPIProvider } from "../modules/providers/image-api-options";
+import { imageAPIStatus } from "../modules/providers/image-api";
 import { runtimeStatus } from "../modules/providers/runtime-status";
 import { modalHealth } from "../modules/providers/modal/client";
 import { flowHealth } from "../modules/providers/flow-browser";
@@ -64,7 +65,7 @@ async function imageEngineReady(settings: Settings) {
       ? runtime.flux
       : runtime.fast;
   }
-  if (settings.imageProvider === "openai") return !!imageConfig().key;
+  if (isImageAPIProvider(settings.imageProvider)) return imageAPIStatus()[settings.imageProvider].configured;
   return false;
 }
 

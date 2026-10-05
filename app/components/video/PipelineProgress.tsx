@@ -191,37 +191,79 @@ export function PipelineProgress({
         </div>
       )}
 
-      {project.settings.imageProvider === "flow-browser" &&
-        project.chapters
-          .filter((c) =>
-            data.batchJobs.some((j) => j.chapterIds.includes(c.id)),
-          )
-          .map((chapter) => (
+      {project.chapters
+        .filter((chapter) =>
+          data.batchJobs.some((job) => job.chapterIds.includes(chapter.id)),
+        )
+        .map((chapter) => {
+          const image =
+            project.settings.imageProvider === "flow-browser"
+              ? chapter.masterImage
+              : chapter.apiImage;
+          const chapterJobs = data.batchJobs.filter((job) =>
+            job.chapterIds.includes(chapter.id),
+          );
+          const rendered =
+            project.settings.imageProvider === "flow-browser"
+              ? chapter.scenes.filter((scene) => scene.flow?.status === "done")
+                  .length
+              : chapterJobs.some(
+                    (job) =>
+                      job.verified ||
+                      job.outputs?.some(
+                        (output) =>
+                          output.verified &&
+                          output.chapterIds.includes(chapter.id),
+                      ),
+                  )
+                ? chapter.scenes.length
+                : Math.min(
+                    chapter.scenes.length,
+                    Math.max(
+                      0,
+                      ...chapterJobs.map((job) => job.counts?.rendered || 0),
+                    ),
+                  );
+          const apiStage = chapter.apiImageProgress || chapter.apiImage?.stage;
+          return (
             <div className="batch-progress-live" key={chapter.id}>
               <strong>{chapter.title}</strong>
               <span>
-                Ảnh master:{" "}
-                {chapter.masterImage?.status === "ready"
+                Ảnh master chương:{" "}
+                {image?.status === "ready"
                   ? "✓ Sẵn sàng"
-                  : chapter.masterImage?.status === "error"
-                    ? "Lỗi · " + chapter.masterImage.errorCode
-                    : chapter.masterImage
+                  : image?.status === "error"
+                    ? "Lỗi · " + image.errorCode
+                    : image
                       ? "Đang tạo ảnh master…"
                       : "Đang chờ"}
               </span>
+              {project.settings.imageProvider !== "flow-browser" && (
+                <>
+                  <small>
+                    Phân tích chương → Character Bible → tạo/dùng lại portrait →
+                    tạo prompt → gọi API → lưu master image → dựng video
+                  </small>
+                  <span>
+                    {chapterJobs.some((job) => job.status === "rendering")
+                      ? "Dựng video"
+                      : apiStage?.label || "Phân tích chương"}
+                    {apiStage?.detail ? " · " + apiStage.detail : ""}
+                  </span>
+                </>
+              )}
               <span>
-                Dựng video:{" "}
-                {chapter.scenes.filter((s) => s.flow?.status === "done").length}
-                /{chapter.scenes.length} cảnh
+                Dựng video: {rendered}/{chapter.scenes.length} cảnh
               </span>
-              {chapter.masterImage?.status === "error" && (
+              {image?.status === "error" && (
                 <details>
                   <summary>Chi tiết lỗi ảnh chương</summary>
-                  {chapter.masterImage.errorMessage}
+                  {image.errorMessage}
                 </details>
               )}
             </div>
-          ))}
+          );
+        })}
 
       {data.batchJobs.some((job) => job.sceneErrors?.length) && (
         <details className="notice">
@@ -234,7 +276,11 @@ export function PipelineProgress({
                 style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
               >
                 {project.chapters.find((c) => c.id === error.chapterId)
-                  ?.masterImage?.status === "error"
+                  ?.masterImage?.status === "error" ||
+                error.stage === "CHAPTER_IMAGE" ||
+                (error.sceneIndex === 0 &&
+                  project.chapters.find((c) => c.id === error.chapterId)
+                    ?.apiImage?.status === "error")
                   ? "Ảnh master chương"
                   : `Cảnh ${error.sceneIndex}`}{" "}
                 · <strong>{error.code}</strong> · {error.stage}

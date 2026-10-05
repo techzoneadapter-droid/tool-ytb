@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { isSameOrigin } from "@/modules/project/request";
+import { validImageModelID } from "@/modules/providers/image-api-options";
 import { imageAPIStatus } from "@/modules/providers/image-api";
 import {
   connectImageAPI,
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
           baseURL: z.string().max(500).optional(),
           model: z
             .string()
-            .regex(/^[a-zA-Z0-9._-]+$/)
+            .refine((id) => validImageModelID(id))
             .max(150)
             .optional(),
         }),
@@ -39,11 +40,13 @@ export async function POST(req: NextRequest) {
           provider: z.enum(["openai", "gemini", "stability", "api-compatible"]),
           model: z
             .string()
-            .regex(/^[a-zA-Z0-9._-]+$/)
+            .refine((id) => validImageModelID(id))
             .max(150),
         }),
       ])
       .parse(await req.json());
+    if (body.model && !validImageModelID(body.model, body.provider))
+      throw Error("Model ảnh không hợp lệ.");
     const result =
       body.action === "connect"
         ? await connectImageAPI(

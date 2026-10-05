@@ -184,6 +184,22 @@ test(
       const first = await waitFinished();
       assert.equal(first.jobs.filter((job) => job.status === "done").length, 2);
       assert.equal(first.videos.length, 2);
+      const failedJob = first.jobs.find((job) => job.status === "error")!;
+      assert.equal(
+        failedJob.counts?.failed,
+        1,
+        "a failed chapter with three scenes is one image error",
+      );
+      assert.equal(failedJob.counts?.imageTotal, 1);
+      assert.equal(failedJob.sceneErrors?.length, 1);
+      for (const job of first.jobs.filter((job) => job.status === "done")) {
+        assert.equal(job.counts?.image, 1);
+        assert.equal(job.counts?.imageTotal, 1);
+        assert.equal(
+          job.completedItems?.filter((key) => key.endsWith(":image")).length,
+          1,
+        );
+      }
       assert.equal(portraits, 1);
       assert.match(
         first.jobs.find((job) => job.status === "error")!.sceneErrors![0].code,
@@ -223,6 +239,35 @@ test(
           (await readFile(path.join(workspace, "data/assets", video.output)))
             .length > 1000,
         );
+      // A shared fallback permits rendering but does not erase the one failed master task.
+      fail = true;
+      const fallbackProject = structuredClone(project);
+      fallbackProject.id = randomUUID();
+      fallbackProject.chapters = [structuredClone(project.chapters[0])];
+      fallbackProject.settings.fallbackOnImageError = true;
+      fallbackProject.settings.fallbackImage =
+        second.project.chapters[1].apiImage!.file;
+      const fallbackJob: Job = {
+        id: randomUUID(),
+        projectId: fallbackProject.id,
+        chapterIds: [fallbackProject.chapters[0].id],
+        kind: "pipeline",
+        outputMode: "separate",
+        status: "queued",
+        progress: 0,
+        message: "fallback test",
+        createdAt: new Date().toISOString(),
+        snapshot: { settings: fallbackProject.settings },
+      };
+      cli(
+        `s.put('project', ${JSON.stringify(fallbackProject)});s.put('job', ${JSON.stringify(fallbackJob)});`,
+      );
+      const third = await waitFinished();
+      const fallbackDone = third.jobs.find((job) => job.id === fallbackJob.id)!;
+      assert.equal(fallbackDone.status, "done");
+      assert.equal(fallbackDone.counts?.failed, 1);
+      assert.equal(fallbackDone.counts?.imageTotal, 1);
+      assert.equal(fallbackDone.sceneErrors?.length, 1);
     } finally {
       worker.kill();
       if (worker.exitCode === null) await once(worker, "exit");

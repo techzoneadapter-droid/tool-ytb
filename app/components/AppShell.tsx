@@ -113,6 +113,7 @@ export default function AppShell() {
               projectId={projectId}
               onProject={selectProject}
               onCreate={openCreate}
+              refreshProjects={refresh}
             />
           )}
           {tab === 3 && <ChannelManagerPage />}

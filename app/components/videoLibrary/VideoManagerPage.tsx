@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Download,
   Film,
@@ -22,27 +22,40 @@ export function VideoManagerPage({
   projectId,
   onProject,
   onCreate,
+  refreshProjects,
 }: {
   projects: Project[];
   projectId: string;
   onProject: (id: string) => void;
   onCreate: (id: string) => void;
+  refreshProjects: () => Promise<void>;
 }) {
-  const [library, setLibrary] = useState<LibraryData>({ videos: [], history: [] });
+  const [library, setLibrary] = useState<LibraryData>({
+    videos: [],
+    history: [],
+  });
   const [query, setQuery] = useState("");
   const [videoQuery, setVideoQuery] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
+  const operation = useRef(false);
+  const libraryVersion = useRef(0);
   const [subtab, setSubtab] = useState<"videos" | "history">("videos");
   const [player, setPlayer] = useState<VideoRecord>();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
   const project = projects.find((p) => p.id === projectId) || projects[0];
+  const visibleProjects = projects.filter((p) =>
+    p.name.toLocaleLowerCase("vi").includes(query.toLocaleLowerCase("vi")),
+  );
 
   async function refresh() {
+    const version = ++libraryVersion.current;
     const response = await fetch("/api/videos", { cache: "no-store" });
     if (!response.ok) throw Error("Không đọc được thư viện video.");
-    setLibrary(await response.json());
+    const snapshot = await response.json();
+    if (version === libraryVersion.current) setLibrary(snapshot);
   }
 
   useEffect(() => {
@@ -76,7 +89,9 @@ export function VideoManagerPage({
       library.videos
         .filter((video) => video.projectId === project?.id)
         .filter((video) =>
-          video.title.toLocaleLowerCase("vi").includes(videoQuery.toLocaleLowerCase("vi")),
+          video.title
+            .toLocaleLowerCase("vi")
+            .includes(videoQuery.toLocaleLowerCase("vi")),
         )
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
     [library.videos, project?.id, videoQuery],
@@ -89,8 +104,8 @@ export function VideoManagerPage({
         video.kind === "scene"
           ? "scene:" + video.sceneId
           : video.kind === "chapter"
-          ? "chapter:" + video.chapterIds.join(",")
-          : "merged:" + video.id;
+            ? "chapter:" + video.chapterIds.join(",")
+            : "merged:" + video.id;
       const current = latest.get(key);
       if (!current || video.version > current.version) latest.set(key, video);
     }
@@ -104,29 +119,83 @@ export function VideoManagerPage({
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
   async function mutate(body: object, key: string) {
+    if (operation.current) return false;
+    operation.current = true;
     setBusy(key);
     setError("");
     try {
       await request(body, "/api/videos");
       await refresh();
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     } finally {
       setBusy("");
+      operation.current = false;
     }
   }
 
   async function removeVideo(video: VideoRecord) {
-    if (!confirm(`Xóa "${video.title}" khỏi thư viện? Project, lời đọc và ảnh nguồn vẫn được giữ.`))
+    if (
+      !confirm(
+        `Xóa "${video.title}" khỏi thư viện? Project, lời đọc và ảnh nguồn vẫn được giữ.`,
+      )
+    )
       return;
-    await mutate({ action: "delete", videoId: video.id }, video.id);
-    if (player?.id === video.id) setPlayer(undefined);
+    if (await mutate({ action: "delete", videoId: video.id }, video.id)) {
+      setSelected((ids) => ids.filter((id) => id !== video.id));
+      if (player?.id === video.id) setPlayer(undefined);
+    }
   }
 
-  async function regenerate(
-    video: VideoRecord,
-    regenerateResources = false,
-  ) {
+  async function deleteSelectedVideos() {
+    if (operation.current || !selected.length) return;
+    const ids = [...selected];
+    if (
+      !confirm(
+        `Bạn có chắc muốn xóa ${ids.length} video đã chọn?\n\nCác file MP4/SRT/VTT không còn được sử dụng sẽ bị xóa khỏi máy.\nẢnh nguồn, audio nguồn và dự án vẫn được giữ.\n\nHành động này không thể hoàn tác.`,
+      )
+    )
+      return;
+    if (await mutate({ action: "deleteMany", videoIds: ids }, "deleteVideos")) {
+      setSelected([]);
+      if (player && ids.includes(player.id)) setPlayer(undefined);
+    }
+  }
+
+  async function deleteSelectedProjects() {
+    if (operation.current || !selectedProjects.length) return;
+    const ids = [...selectedProjects];
+    const count = library.videos.filter((video) =>
+      ids.includes(video.projectId),
+    ).length;
+    if (
+      !confirm(
+        `Bạn sắp xóa:\n\n${ids.length} dự án\n${count} video thành phẩm\n\nCác tác vụ, lịch sử và dữ liệu thuộc các dự án này sẽ bị xóa.\n\nHành động này không thể hoàn tác.\n\nTiếp tục?`,
+      )
+    )
+      return;
+    operation.current = true;
+    setBusy("deleteProjects");
+    setError("");
+    try {
+      await request({ action: "deleteProjects", projectIds: ids });
+      setSelectedProjects([]);
+      setSelected([]);
+      if (player && ids.includes(player.projectId)) setPlayer(undefined);
+      if (project && ids.includes(project.id))
+        onProject(projects.find((p) => !ids.includes(p.id))?.id || "");
+      await Promise.all([refreshProjects(), refresh()]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      operation.current = false;
+      setBusy("");
+    }
+  }
+
+  async function regenerate(video: VideoRecord, regenerateResources = false) {
     if (
       regenerateResources &&
       !confirm(
@@ -154,11 +223,11 @@ export function VideoManagerPage({
           ? `${chosen[chosen.length - 1].title} - ${chosen[0].title}`
           : "Video đã ghép",
       ) || "Video đã ghép";
-    await mutate(
+    const ok = await mutate(
       { action: "merge", videoIds: chosen.map((video) => video.id), title },
       "merge",
     );
-    setSelected([]);
+    if (ok) setSelected([]);
   }
 
   function formatBytes(bytes: number) {
@@ -208,17 +277,54 @@ export function VideoManagerPage({
               onChange={(e) => setQuery(e.target.value)}
             />
           </label>
+          <div className="library-selection-toolbar">
+            <SelectAll
+              label="Chọn tất cả dự án"
+              ids={visibleProjects.map((p) => p.id)}
+              selected={selectedProjects}
+              setSelected={setSelectedProjects}
+              disabled={!!busy}
+            />
+            {selectedProjects.length > 0 && (
+              <>
+                <small>Đã chọn {selectedProjects.length} dự án</small>
+                <button
+                  className="danger-outline"
+                  disabled={!!busy}
+                  onClick={() => void deleteSelectedProjects()}
+                >
+                  <Trash2 size={15} />
+                  {busy === "deleteProjects"
+                    ? "Đang xóa..."
+                    : `Xóa ${selectedProjects.length} dự án`}
+                </button>
+              </>
+            )}
+          </div>
           <div className="library-project-list">
-            {projects
-              .filter((p) =>
-                p.name.toLocaleLowerCase("vi").includes(query.toLocaleLowerCase("vi")),
-              )
-              .map((p) => {
-                const meta = projectCounts.get(p.id);
-                return (
+            {visibleProjects.map((p) => {
+              const meta = projectCounts.get(p.id);
+              return (
+                <div className="library-project-row" key={p.id}>
+                  <input
+                    type="checkbox"
+                    aria-label={"Chọn dự án " + p.name}
+                    checked={selectedProjects.includes(p.id)}
+                    disabled={!!busy}
+                    onChange={(e) =>
+                      setSelectedProjects((ids) =>
+                        e.target.checked
+                          ? [...new Set([...ids, p.id])]
+                          : ids.filter((id) => id !== p.id),
+                      )
+                    }
+                  />
                   <button
-                    className={"library-project " + (p.id === project?.id ? "active" : "")}
-                    key={p.id}
+                    className={
+                      "library-project " +
+                      (p.id === project?.id ? "active" : "")
+                    }
+                    disabled={!!busy}
                     onClick={() => onProject(p.id)}
                   >
                     <Film size={18} />
@@ -227,13 +333,15 @@ export function VideoManagerPage({
                       <small>
                         {meta?.count || 0} video
                         {meta?.latest
-                          ? " · " + new Date(meta.latest).toLocaleDateString("vi-VN")
+                          ? " · " +
+                            new Date(meta.latest).toLocaleDateString("vi-VN")
                           : ""}
                       </small>
                     </span>
                   </button>
-                );
-              })}
+                </div>
+              );
+            })}
           </div>
         </aside>
 
@@ -250,10 +358,13 @@ export function VideoManagerPage({
                 <div>
                   <h2>{project.name}</h2>
                   <p className="muted">
-                    {project.chapters.length} chương · {videos.length} phiên bản video
+                    {project.chapters.length} chương · {videos.length} phiên bản
+                    video
                   </p>
                 </div>
-                <button onClick={() => onCreate(project.id)}>Mở trong Tạo video</button>
+                <button onClick={() => onCreate(project.id)}>
+                  Mở trong Tạo video
+                </button>
               </div>
 
               <div className="library-tabs">
@@ -283,14 +394,36 @@ export function VideoManagerPage({
                         onChange={(e) => setVideoQuery(e.target.value)}
                       />
                     </label>
+                    <SelectAll
+                      label="Chọn tất cả video"
+                      ids={latestVideos.map((video) => video.id)}
+                      selected={selected}
+                      setSelected={setSelected}
+                      disabled={!!busy}
+                    />
+                    {selected.length > 0 && (
+                      <small>Đã chọn {selected.length} video</small>
+                    )}
                     {selected.length >= 2 && (
                       <button
                         className="primary"
-                        disabled={busy === "merge"}
+                        disabled={!!busy}
                         onClick={() => void mergeSelected()}
                       >
                         <Merge size={17} />
                         Ghép {selected.length} video
+                      </button>
+                    )}
+                    {selected.length > 0 && (
+                      <button
+                        className="danger-outline"
+                        disabled={!!busy}
+                        onClick={() => void deleteSelectedVideos()}
+                      >
+                        <Trash2 size={16} />
+                        {busy === "deleteVideos"
+                          ? "Đang xóa..."
+                          : `Xóa ${selected.length} video`}
                       </button>
                     )}
                   </div>
@@ -300,7 +433,10 @@ export function VideoManagerPage({
                       <Film size={34} />
                       <h2>Chưa có video</h2>
                       <p>Tạo video đầu tiên cho dự án này.</p>
-                      <button className="primary" onClick={() => onCreate(project.id)}>
+                      <button
+                        className="primary"
+                        onClick={() => onCreate(project.id)}
+                      >
                         Đi tới Tạo video
                       </button>
                     </div>
@@ -311,11 +447,12 @@ export function VideoManagerPage({
                           <input
                             aria-label={"Chọn " + video.title}
                             type="checkbox"
+                            disabled={!!busy}
                             checked={selected.includes(video.id)}
                             onChange={(e) =>
                               setSelected((ids) =>
                                 e.target.checked
-                                  ? [...ids, video.id]
+                                  ? [...new Set([...ids, video.id])]
                                   : ids.filter((id) => id !== video.id),
                               )
                             }
@@ -326,34 +463,51 @@ export function VideoManagerPage({
                             aria-label={"Xem " + video.title}
                           >
                             <Film size={30} />
-                            <span><Play size={14} /></span>
+                            <span>
+                              <Play size={14} />
+                            </span>
                           </button>
                           <div className="video-library-info">
                             <div className="row">
-                              {video.kind === "merged" && <span className="badge">GỘP</span>}
-                              {video.kind === "scene" && <span className="badge">CẢNH</span>}
+                              {video.kind === "merged" && (
+                                <span className="badge">GỘP</span>
+                              )}
+                              {video.kind === "scene" && (
+                                <span className="badge">CẢNH</span>
+                              )}
                               <h3>{video.title}</h3>
                             </div>
                             <small>
-                              {formatDuration(video.duration)} · {video.width}×{video.height} ·{" "}
-                              {formatBytes(video.fileSize)}
+                              {formatDuration(video.duration)} · {video.width}×
+                              {video.height} · {formatBytes(video.fileSize)}
                             </small>
                             <small>
-                              {new Date(video.createdAt).toLocaleString("vi-VN")}
+                              {new Date(video.createdAt).toLocaleString(
+                                "vi-VN",
+                              )}
                               {video.version > 1 ? ` · v${video.version}` : ""}
                             </small>
                             {!video.verified && (
-                              <small className="file-missing">⚠ File không còn trên máy</small>
+                              <small className="file-missing">
+                                ⚠ File không còn trên máy
+                              </small>
                             )}
                           </div>
                           <div className="video-actions">
-                            <button disabled={!video.verified} onClick={() => setPlayer(video)}>
+                            <button
+                              disabled={!video.verified}
+                              onClick={() => setPlayer(video)}
+                            >
                               <Play size={16} /> Xem
                             </button>
                             <a
                               className="button"
                               aria-disabled={!video.verified}
-                              href={video.verified ? fileURL(video.output) + "?download=1" : undefined}
+                              href={
+                                video.verified
+                                  ? fileURL(video.output) + "?download=1"
+                                  : undefined
+                              }
                               download={video.title + ".mp4"}
                             >
                               <Download size={16} /> Tải
@@ -368,7 +522,9 @@ export function VideoManagerPage({
                               </button>
                             )}
                             <details className="video-more">
-                              <summary aria-label="Thêm thao tác"><MoreHorizontal size={18} /></summary>
+                              <summary aria-label="Thêm thao tác">
+                                <MoreHorizontal size={18} />
+                              </summary>
                               {video.kind === "chapter" && (
                                 <button
                                   disabled={busy === video.id}
@@ -377,7 +533,10 @@ export function VideoManagerPage({
                                   <RefreshCw size={16} /> Tạo lại toàn bộ
                                 </button>
                               )}
-                              <button onClick={() => void removeVideo(video)}>
+                              <button
+                                disabled={!!busy}
+                                onClick={() => void removeVideo(video)}
+                              >
                                 <Trash2 size={16} /> Xóa video
                               </button>
                             </details>
@@ -401,8 +560,13 @@ export function VideoManagerPage({
                       .catch((e) => setError((e as Error).message))
                   }
                   onClear={() =>
-                    confirm("Dọn các lịch sử đã hoàn thành/lỗi? Video thành phẩm không bị xóa.") &&
-                    void mutate({ action: "clearHistory", mode: "done-and-error" }, "history")
+                    confirm(
+                      "Dọn các lịch sử đã hoàn thành/lỗi? Video thành phẩm không bị xóa.",
+                    ) &&
+                    void mutate(
+                      { action: "clearHistory", mode: "done-and-error" },
+                      "history",
+                    )
                   }
                 />
               )}
@@ -424,8 +588,8 @@ export function VideoManagerPage({
               <div>
                 <h2>{player.title}</h2>
                 <small>
-                  {formatDuration(player.duration)} · {player.width}×{player.height} ·{" "}
-                  {formatBytes(player.fileSize)}
+                  {formatDuration(player.duration)} · {player.width}×
+                  {player.height} · {formatBytes(player.fileSize)}
                 </small>
               </div>
               <button aria-label="Đóng" onClick={() => setPlayer(undefined)}>
@@ -433,7 +597,15 @@ export function VideoManagerPage({
               </button>
             </div>
             <video controls preload="metadata" src={fileURL(player.output)}>
-              {player.kind === "scene" && player.vtt && <track kind="subtitles" src={fileURL(player.vtt)} srcLang="vi" label="Tiếng Việt" default />}
+              {player.kind === "scene" && player.vtt && (
+                <track
+                  kind="subtitles"
+                  src={fileURL(player.vtt)}
+                  srcLang="vi"
+                  label="Tiếng Việt"
+                  default
+                />
+              )}
             </video>
             <div className="row">
               <a
@@ -444,7 +616,11 @@ export function VideoManagerPage({
                 <Download size={17} /> Tải MP4
               </a>
               {player.srt && (
-                <a className="button" href={fileURL(player.srt) + "?download=1"} download>
+                <a
+                  className="button"
+                  href={fileURL(player.srt) + "?download=1"}
+                  download
+                >
                   <Download size={17} /> Tải SRT
                 </a>
               )}
@@ -453,6 +629,47 @@ export function VideoManagerPage({
         </div>
       )}
     </>
+  );
+}
+
+function SelectAll({
+  label,
+  ids,
+  selected,
+  setSelected,
+  disabled,
+}: {
+  label: string;
+  ids: string[];
+  selected: string[];
+  setSelected: React.Dispatch<React.SetStateAction<string[]>>;
+  disabled: boolean;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const checked = ids.length > 0 && ids.every((id) => selected.includes(id));
+  const partial = !checked && ids.some((id) => selected.includes(id));
+  useEffect(() => {
+    if (input.current) input.current.indeterminate = partial;
+  }, [partial]);
+  return (
+    <label className="library-select-all">
+      <input
+        ref={input}
+        type="checkbox"
+        aria-label={label}
+        checked={checked}
+        disabled={disabled || !ids.length}
+        onChange={(e) => {
+          const ticked = e.target.checked;
+          setSelected((current) =>
+            ticked
+              ? [...new Set([...current, ...ids])]
+              : current.filter((id) => !ids.includes(id)),
+          );
+        }}
+      />
+      Chọn tất cả
+    </label>
   );
 }
 
@@ -487,23 +704,20 @@ function HistoryList({
     }
     return [...map.entries()]
       .map(([id, batchJobs]) => {
-        batchJobs.sort(
-          (a, b) => (a.batchIndex ?? 0) - (b.batchIndex ?? 0),
-        );
-        const total = Math.max(
-          batchJobs[0]?.batchTotal || 0,
-          batchJobs.length,
-        );
+        batchJobs.sort((a, b) => (a.batchIndex ?? 0) - (b.batchIndex ?? 0));
+        const total = Math.max(batchJobs[0]?.batchTotal || 0, batchJobs.length);
         const done = batchJobs.filter((job) => job.status === "done").length;
         const errors = batchJobs.filter((job) => job.status === "error");
-        const cancelled = batchJobs.filter(
-          (job) => job.status === "cancelled",
-        );
+        const cancelled = batchJobs.filter((job) => job.status === "cancelled");
         const running = batchJobs.filter((job) =>
           ["audio", "images", "rendering"].includes(job.status),
         ).length;
-        const queued = batchJobs.filter((job) => job.status === "queued").length;
-        const paused = batchJobs.filter((job) => job.status === "paused").length;
+        const queued = batchJobs.filter(
+          (job) => job.status === "queued",
+        ).length;
+        const paused = batchJobs.filter(
+          (job) => job.status === "paused",
+        ).length;
         return {
           id,
           jobs: batchJobs,
@@ -515,9 +729,7 @@ function HistoryList({
           running,
           queued,
           paused,
-          createdAt: batchJobs
-            .map((job) => job.createdAt)
-            .sort()[0],
+          createdAt: batchJobs.map((job) => job.createdAt).sort()[0],
         };
       })
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
@@ -588,13 +800,11 @@ function HistoryList({
                   )}
                 </details>
               )}
-              {retryable.length > 0 &&
-                !group.running &&
-                !group.queued && (
-                  <button onClick={() => onRetry(retryable)}>
-                    Thử lại {retryable.length} video
-                  </button>
-                )}
+              {retryable.length > 0 && !group.running && !group.queued && (
+                <button onClick={() => onRetry(retryable)}>
+                  Thử lại {retryable.length} video
+                </button>
+              )}
             </article>
           );
         })}

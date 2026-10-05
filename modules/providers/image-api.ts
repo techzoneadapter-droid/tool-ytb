@@ -2,6 +2,7 @@ import {
   imageAPIOptions,
   isImageAPIProvider,
   validateImageBaseURL,
+  validImageModelID,
   type ImageAPIOptions,
 } from "./image-api-options";
 import { readImageAPI, type ImageAPIModel } from "./image-api-settings";
@@ -69,7 +70,7 @@ export function requireImage(provider?: string) {
     throw Error(
       `Chưa cấu hình API tạo ảnh${option ? `: ${option.label}. Nhập API key và kết nối trong phần Engine ảnh (${option.keyEnv}).` : "."}`,
     );
-  if (!/^[a-zA-Z0-9._-]+$/.test(config.model))
+  if (!validImageModelID(config.model, config.provider))
     throw Error(`${option.modelEnv} không phải mã model hợp lệ.`);
   if (config.provider === "api-compatible")
     validateImageBaseURL(config.baseURL || "");
@@ -151,7 +152,7 @@ export async function generateAPIImage(
   const config = requireImage(provider);
   if (selectedModel) {
     if (
-      !/^[a-zA-Z0-9._-]+$/.test(selectedModel) ||
+      !validImageModelID(selectedModel, config.provider) ||
       (config.provider === "stability" &&
         !["core", "ultra"].includes(selectedModel))
     )

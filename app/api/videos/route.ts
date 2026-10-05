@@ -8,6 +8,7 @@ import {
   listVideos,
   migrateCompletedJobs,
   removeVideoRecord,
+  removeVideoRecords,
 } from "@/modules/videoLibrary";
 import { startService } from "@/modules/providers/services";
 
@@ -24,10 +25,25 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     if (!isSameOrigin(req))
-      return NextResponse.json({ error: "Nguồn yêu cầu không hợp lệ." }, { status: 403 });
+      return NextResponse.json(
+        { error: "Nguồn yêu cầu không hợp lệ." },
+        { status: 403 },
+      );
 
     const body = await req.json();
-    const action = z.enum(["delete", "regenerate", "merge", "clearHistory"]).parse(body.action);
+    const action = z
+      .enum(["delete", "deleteMany", "regenerate", "merge", "clearHistory"])
+      .parse(body.action);
+
+    if (action === "deleteMany") {
+      const ids = z
+        .array(z.string().uuid())
+        .min(1)
+        .max(500)
+        .parse(body.videoIds);
+      const deleted = await removeVideoRecords([...new Set(ids)]);
+      return NextResponse.json({ ok: true, deleted });
+    }
 
     if (action === "delete") {
       const id = z.string().uuid().parse(body.videoId);
@@ -36,22 +52,42 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "clearHistory") {
-      const mode = z.enum(["done", "error", "done-and-error"]).default("done-and-error").parse(body.mode);
+      const mode = z
+        .enum(["done", "error", "done-and-error"])
+        .default("done-and-error")
+        .parse(body.mode);
       for (const job of list<Job>("job")) {
         if (
           (mode === "done" && job.status === "done") ||
           (mode === "error" && job.status === "error") ||
-          (mode === "done-and-error" && ["done", "error", "ready"].includes(job.status))
-        ) remove("job", job.id);
+          (mode === "done-and-error" &&
+            ["done", "error", "ready"].includes(job.status))
+        )
+          remove("job", job.id);
       }
       return NextResponse.json({ ok: true });
     }
 
     if (action === "regenerate") {
-      const video = get<VideoRecord>(z.string().uuid().parse(body.videoId), "video");
+      const video = get<VideoRecord>(
+        z.string().uuid().parse(body.videoId),
+        "video",
+      );
       const project = get<Project>(video.projectId, "project");
-      if (list<Job>("job").some(job => job.projectId === project.id && job.kind !== "merge-video" && ["queued", "audio", "images", "rendering", "paused"].includes(job.status) && job.chapterIds.some(id => video.chapterIds.includes(id))))
-        throw Error("Chương này đang có tác vụ. Chờ tác vụ hiện tại kết thúc để tránh tạo trùng cảnh.");
+      if (
+        list<Job>("job").some(
+          (job) =>
+            job.projectId === project.id &&
+            job.kind !== "merge-video" &&
+            ["queued", "audio", "images", "rendering", "paused"].includes(
+              job.status,
+            ) &&
+            job.chapterIds.some((id) => video.chapterIds.includes(id)),
+        )
+      )
+        throw Error(
+          "Chương này đang có tác vụ. Chờ tác vụ hiện tại kết thúc để tránh tạo trùng cảnh.",
+        );
       const regenerateResources = body.regenerateResources === true;
       const job: Job = {
         id: randomUUID(),
@@ -94,7 +130,9 @@ export async function POST(req: NextRequest) {
       projectId,
       chapterIds,
       sourceVideoIds: ids,
-      outputTitle: z.string().trim().min(1).max(160).optional().parse(body.title) || "Video đã ghép",
+      outputTitle:
+        z.string().trim().min(1).max(160).optional().parse(body.title) ||
+        "Video đã ghép",
       status: "queued",
       kind: "merge-video",
       progress: 0,

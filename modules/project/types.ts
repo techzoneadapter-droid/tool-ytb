@@ -40,6 +40,7 @@ export type Scene = {
   approved: boolean;
 };
 export type Chapter = {
+  apiImageProgress?: { label: string; detail: string; updatedAt: string };
   imageAnalysis?: ChapterVisualAnalysis;
   apiImage?: ChapterAPIImage;
   masterImage?: ChapterImageJob;
@@ -190,6 +191,7 @@ export type ChapterVisualAnalysis = {
   createdAt: string;
 };
 export type ChapterAPIImage = {
+  stage?: { label: string; detail: string; updatedAt: string };
   requestId: string;
   cacheKey: string;
   projectId: string;
@@ -223,6 +225,7 @@ export type ChapterAPIImage = {
   };
 };
 export type Job = {
+  videoLibraryDeleted?: boolean;
   startedAt?: string;
   finishedAt?: string;
   id: string;

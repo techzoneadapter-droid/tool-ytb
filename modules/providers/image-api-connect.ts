@@ -2,6 +2,7 @@ import { imageConfig } from "./image-api";
 import {
   imageAPIOptions,
   validateImageBaseURL,
+  validImageModelID,
   type ImageAPIProvider,
 } from "./image-api-options";
 import {
@@ -100,7 +101,7 @@ export async function fetchImageModels(
   models = [
     ...new Map(
       models
-        .filter((model) => /^[a-zA-Z0-9._-]+$/.test(model.id))
+        .filter((model) => validImageModelID(model.id, provider))
         .map((model) => [model.id, model]),
     ).values(),
   ].sort((a, b) => a.id.localeCompare(b.id));
@@ -117,6 +118,8 @@ export async function connectImageAPI(
   baseURL?: string,
   explicitModel?: string,
 ) {
+  if (explicitModel && !validImageModelID(explicitModel, provider))
+    throw Error("Model ảnh không hợp lệ.");
   const config = imageConfig(provider);
   const key = enteredKey?.trim() || config.key?.trim();
   if (!key) throw Error("Nhập API key trước khi kết nối.");
@@ -160,6 +163,8 @@ export async function connectImageAPI(
 }
 
 export function selectImageModel(provider: ImageAPIProvider, model: string) {
+  if (!validImageModelID(model, provider))
+    throw Error("Model ảnh không hợp lệ.");
   const saved = readImageAPI(provider);
   if (!saved?.connected)
     throw Error("Kết nối API và tải danh sách model trước khi chọn.");

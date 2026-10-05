@@ -134,6 +134,81 @@ test("one portrait per main character, one master per chapter, all scenes share 
     analysis?.cacheKey,
   );
 });
+test("portrait generation is lazy for current chapter references and reused in later chapters", async (t) => {
+  const project = fixture();
+  project.chapters.push({
+    ...structuredClone(project.chapters[1]),
+    id: randomUUID(),
+    title: "Future chapter",
+    text: "Mai Linh 22 tuổi mặc áo trắng. Mai Linh đứng dưới trăng.",
+  });
+  const bible = prepareCharacterBible(project);
+  const future = bible.characters.find((c) => c.name === "Mai Linh")!;
+  assert.ok(future, "future character is in project bible");
+  future.primary = true;
+  cleanup(t, project);
+  const bytes = await image(),
+    prompts: string[] = [],
+    stages: string[] = [];
+  const deps = {
+    save: () => {},
+    load: () => project,
+    history: () => {},
+    stage: (_c: unknown, label: string) => {
+      stages.push(label);
+    },
+    generate: async (_p: unknown, prompt: string) => {
+      prompts.push(prompt);
+      return {
+        bytes,
+        engine: "gemini",
+        model: "image",
+        metadata: { attempts: 1 },
+      };
+    },
+  };
+  assert.deepEqual(
+    await processChapterImages(
+      project,
+      [project.chapters[0]],
+      project.settings,
+      deps,
+    ),
+    [],
+  );
+  assert.equal(prompts.length, 2);
+  assert.ok(!future.portrait);
+  assert.ok(!prompts[0].includes("Mai Linh"));
+  const file = bible.characters.find((c) => c.name === "Lâm Hạo")!.portrait!
+    .file;
+  await processChapterImages(
+    project,
+    [project.chapters[1]],
+    project.settings,
+    deps,
+  );
+  assert.equal(prompts.length, 3);
+  assert.equal(project.chapters[1].apiImage!.referenceFiles[0], file);
+  assert.ok(!future.portrait);
+  await processChapterImages(
+    project,
+    [project.chapters[2]],
+    project.settings,
+    deps,
+  );
+  assert.equal(prompts.length, 5);
+  assert.ok(future.portrait);
+  for (const label of [
+    "Phân tích chương",
+    "Đồng bộ Character Bible",
+    "Tạo/dùng lại portrait",
+    "Tạo prompt",
+    "Gọi API tạo ảnh",
+    "Lưu master image",
+    "Ảnh đã lưu",
+  ])
+    assert.ok(stages.includes(label), label);
+});
 test("failed chapter leaves other masters intact; retry only generates the missing chapter; unsupported references are omitted", async (t) => {
   const project = fixture();
   project.settings.imageProvider = "stability";

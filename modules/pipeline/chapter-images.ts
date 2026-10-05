@@ -96,7 +96,19 @@ export async function processChapterImages(
     label: string,
     detail = label,
   ) => {
-    if (chapter.apiImage) chapter.apiImage.status = status;
+    chapter.apiImageProgress = {
+      label,
+      detail,
+      updatedAt: new Date().toISOString(),
+    };
+    if (chapter.apiImage) {
+      chapter.apiImage.status = status;
+      chapter.apiImage.stage = {
+        label,
+        detail,
+        updatedAt: new Date().toISOString(),
+      };
+    }
     deps.stage?.(chapter, label, detail);
     deps.save();
   };
@@ -112,8 +124,9 @@ export async function processChapterImages(
   }
   for (const chapter of chapters) {
     try {
-      deps.stage?.(
+      stage(
         chapter,
+        "analyzing",
         "Phân tích chương",
         "Trích ý đồ hình ảnh và nhân vật trung tâm",
       );
@@ -158,8 +171,9 @@ export async function processChapterImages(
         chapter.apiImage.errorMessage = undefined;
         mapMaster(chapter, chapter.apiImage, settings);
         deps.save();
-        deps.stage?.(
+        stage(
           chapter,
+          "ready",
           "Ảnh đã lưu",
           "Dùng lại ảnh master hợp lệ; không gọi API",
         );
@@ -211,8 +225,8 @@ export async function processChapterImages(
         stage(
           chapter,
           "characters",
-          "Đồng bộ Character Bible",
-          "Tạo hoặc dùng lại portrait nhân vật chính",
+          "Tạo/dùng lại portrait",
+          "Chỉ tạo reference cho nhân vật xuất hiện trong chương",
         );
         await portraitLock(project.id, async () => {
           const latest =
@@ -224,7 +238,16 @@ export async function processChapterImages(
                 return project;
               }
             })();
-          for (const character of bible.characters.filter((c) => c.primary)) {
+          const needed = built.characters
+            .filter((c) => c.primary)
+            .slice(0, capabilities.supportsMultiImageInput ? 10 : 1);
+          for (const character of needed) {
+            stage(
+              chapter,
+              "characters",
+              "Tạo/dùng lại portrait",
+              character.name,
+            );
             const persisted = latest.characterBible?.characters.find(
               (c) => c.characterId === character.characterId,
             )?.portrait;
@@ -281,7 +304,9 @@ export async function processChapterImages(
             }
           }
         });
-        for (const character of built.characters.filter((c) => c.portrait)) {
+        for (const character of built.characters.filter(
+          (c) => c.primary && c.portrait,
+        )) {
           if (!capabilities.supportsMultiImageInput && references.length) break;
           if (references.length >= 10) break;
           const file = character.portrait!.file;
@@ -329,7 +354,7 @@ export async function processChapterImages(
               ),
           },
         );
-        stage(chapter, "saving", "Lưu ảnh nội bộ");
+        stage(chapter, "saving", "Lưu master image");
         const asset = await saveAsset(generated.bytes);
         file = asset.file;
         chapter.apiImage.metadata = {
@@ -359,8 +384,9 @@ export async function processChapterImages(
       const history = { ...chapter.apiImage };
       if (deps.history) deps.history(history);
       else put("image_generation_history", { id: requestId, ...history });
-      deps.stage?.(
+      stage(
         chapter,
+        "ready",
         "Ảnh đã lưu",
         `${chapter.title} · ảnh master sẵn sàng cho ${chapter.scenes.length} cảnh`,
       );
@@ -396,7 +422,7 @@ export async function processChapterImages(
       }
       errors.push({ chapterId: chapter.id, code, message });
       deps.save();
-      deps.stage?.(chapter, "Lỗi ảnh chương", `${code}: ${message}`);
+      stage(chapter, "error", "Lỗi ảnh chương", `${code}: ${message}`);
     }
   }
   return errors;

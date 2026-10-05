@@ -67,3 +67,17 @@ export function validateImageBaseURL(value: string) {
 export function isImageAPIProvider(value: unknown): value is ImageAPIProvider {
   return imageAPIOptions.some((option) => option.id === value);
 }
+/** Model identifiers are payload values, never URL paths. Keep namespaces/tags literal. */
+export function validImageModelID(model: string, provider = "api-compatible") {
+  if (!model || model.length > 150) return false;
+  if (provider !== "api-compatible") return /^[a-zA-Z0-9._-]+$/.test(model);
+  return (
+    /^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/.test(model) &&
+    !model.includes("://") &&
+    model
+      .split(/[/:]/)
+      .every(
+        (segment) => segment.length > 0 && segment !== "." && segment !== "..",
+      )
+  );
+}

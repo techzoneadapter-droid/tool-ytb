@@ -121,19 +121,65 @@ export function claim(): Job | undefined {
 }
 
 // Delete project/job records only. Media files can be shared by caches and are not removed here.
-export function removeProject(id: string) {
+export function removeProjects(ids: string[]) {
+  const wanted = new Set(ids);
   db.exec("BEGIN IMMEDIATE");
   try {
-    for (const job of list<Job>("job").filter((j) => j.projectId === id))
-      db.prepare("DELETE FROM records WHERE id=? AND kind='job'").run(job.id);
-    for (const video of list<VideoRecord>("video").filter(
-      (item) => item.projectId === id,
-    ))
-      db.prepare("DELETE FROM records WHERE id=? AND kind='video'").run(
-        video.id,
+    for (const id of wanted) get<Project>(id, "project");
+    const blocked = new Set(
+      list<Job>("job")
+        .filter(
+          (job) =>
+            wanted.has(job.projectId) &&
+            ["queued", "audio", "images", "rendering", "paused"].includes(
+              job.status,
+            ),
+        )
+        .map((job) => job.projectId),
+    );
+    if (blocked.size)
+      throw Error(
+        `Không thể xóa ${blocked.size} dự án vì đang có tác vụ chạy. Hãy hủy hoặc chờ tác vụ hoàn thành.`,
       );
-    db.prepare("DELETE FROM records WHERE id=? AND kind='project'").run(id);
+    const videos = list<VideoRecord>("video").filter((video) =>
+      wanted.has(video.projectId),
+    );
+    for (const id of wanted) {
+      db.prepare(
+        "DELETE FROM records WHERE json_extract(body, '$.projectId')=?",
+      ).run(id);
+      remove("project", id);
+    }
     db.exec("COMMIT");
+    return { deleted: wanted.size, videos };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function removeProject(id: string) {
+  return removeProjects([id]);
+}
+
+export function deleteVideoRecords(ids: string[]) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const videos = [...new Set(ids)].map((id) => get<VideoRecord>(id, "video"));
+    for (const video of videos) remove("video", video.id);
+    // A deleted legacy video must not reappear on the next GET migration.
+    const retainedJobs = new Set(
+      list<VideoRecord>("video").map((video) => video.sourceJobId),
+    );
+    for (const id of new Set(
+      videos.map((video) => video.sourceJobId).filter(Boolean),
+    )) {
+      if (retainedJobs.has(id)) continue;
+      const job = list<Job>("job").find((job) => job.id === id);
+      if (job) put("job", { ...job, videoLibraryDeleted: true });
+    }
+    db.exec("COMMIT");
+    return videos;
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;

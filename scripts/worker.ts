@@ -62,7 +62,7 @@ async function splitLegacyPipelineJobs() {
       const sceneIds = new Set(chapter.scenes.map((scene) => scene.id));
       const completedItems = [...sharedCompleted].filter((key) => {
         const sceneId = key.split(":")[0];
-        return sceneIds.has(sceneId);
+        return sceneIds.has(sceneId) || key === chapterId + ":image";
       });
       const child: Job = {
         ...job,
@@ -296,9 +296,17 @@ async function main() {
                 const done = scenes.filter(
                   (scene) => scene.flow?.status === "done",
                 ).length;
-                const failed = scenes.filter(
-                  (scene) => scene.flow?.status === "error",
-                ).length;
+                const failed = new Set(
+                  scenes
+                    .filter((scene) => scene.flow?.status === "error")
+                    .map((scene) =>
+                      p.chapters.find(
+                        (chapter) => chapter.id === scene.flow?.chapterId,
+                      )?.masterImage?.status === "error"
+                        ? scene.flow!.chapterId
+                        : scene.id,
+                    ),
+                ).size;
                 const status =
                   event.status === "tts"
                     ? "audio"
@@ -360,9 +368,17 @@ async function main() {
                       .filter((scene) => scene.flow?.status === "done")
                       .flatMap((scene) => [
                         scene.id + ":audio",
-                        scene.id + ":image",
                         scene.id + ":render",
-                      ]),
+                      ])
+                      .concat(
+                        p.chapters
+                          .filter(
+                            (chapter) =>
+                              job.chapterIds.includes(chapter.id) &&
+                              chapter.masterImage?.status === "ready",
+                          )
+                          .map((chapter) => chapter.id + ":image"),
+                      ),
                     stageProgress: current.stageProgress
                       ? {
                           ...current.stageProgress,
@@ -371,20 +387,30 @@ async function main() {
                           ),
                         }
                       : undefined,
-                    sceneErrors: scenes.flatMap((scene, index) =>
-                      scene.flow?.status === "error"
-                        ? [
-                            {
-                              sceneId: scene.id,
-                              chapterId: scene.flow.chapterId,
-                              sceneIndex: index + 1,
-                              code: scene.flow.errorCode!,
-                              stage: scene.flow.errorStage!,
-                              message: scene.flow.errorMessage!,
-                            },
-                          ]
-                        : [],
-                    ),
+                    sceneErrors: scenes
+                      .flatMap((scene, index) =>
+                        scene.flow?.status === "error"
+                          ? [
+                              {
+                                sceneId: scene.id,
+                                chapterId: scene.flow.chapterId,
+                                sceneIndex: index + 1,
+                                code: scene.flow.errorCode!,
+                                stage: scene.flow.errorStage!,
+                                message: scene.flow.errorMessage!,
+                              },
+                            ]
+                          : [],
+                      )
+                      .filter(
+                        (error, index, all) =>
+                          p.chapters.find(
+                            (chapter) => chapter.id === error.chapterId,
+                          )?.masterImage?.status !== "error" ||
+                          all.findIndex(
+                            (item) => item.chapterId === error.chapterId,
+                          ) === index,
+                      ),
                   });
               },
             );
@@ -410,6 +436,7 @@ async function main() {
           if (kind !== "render" && !flowScenePipeline) {
             let completed = 0;
             let failed = 0;
+            let recoveredImageFailures = 0;
             const completedItems = new Set(job.completedItems || []);
             updateJob(job.id, { subtitlesReady: false });
             const tasks =
@@ -431,19 +458,32 @@ async function main() {
                       : []),
                   ]
                 : [kind];
-            const total = scenes.reduce(
-              (n, scene) =>
-                n +
-                tasks.filter((t) => t !== "motion" || usesMotion(scene, s))
-                  .length,
-              0,
+            const imageChapters = p.chapters.filter(
+              (chapter) =>
+                job.chapterIds.includes(chapter.id) &&
+                chapter.scenes.some((scene) => scenes.includes(scene)),
             );
             const handledThisRun = new Set<string>();
-            const relevantKeys = scenes.flatMap((scene) =>
-              tasks
-                .filter((type) => type !== "motion" || usesMotion(scene, s))
-                .map((type) => scene.id + ":" + type),
-            );
+            const relevantKeys = [
+              ...scenes.flatMap((scene) =>
+                tasks
+                  .filter(
+                    (type) =>
+                      type !== "image" &&
+                      (type !== "motion" || usesMotion(scene, s)),
+                  )
+                  .map((type) => scene.id + ":" + type),
+              ),
+              ...(tasks.includes("image")
+                ? imageChapters.map((chapter) => chapter.id + ":image")
+                : []),
+            ];
+            const total = relevantKeys.length;
+            // Older workers stored scene image keys; chapter keys are revalidated below.
+            for (const scene of scenes)
+              completedItems.delete(scene.id + ":image");
+            for (const chapter of imageChapters)
+              completedItems.delete(chapter.id + ":image");
             completed = relevantKeys.filter((key) =>
               completedItems.has(key),
             ).length;
@@ -486,14 +526,10 @@ async function main() {
               image:
                 s.imageEnabled === false
                   ? job.chapterIds.length
-                  : p.chapters.filter(
-                      (chapter) =>
-                        job.chapterIds.includes(chapter.id) &&
-                        chapter.scenes.every((scene) =>
-                          completedItems.has(scene.id + ":image"),
-                        ),
+                  : imageChapters.filter((chapter) =>
+                      completedItems.has(chapter.id + ":image"),
                     ).length,
-              imageTotal: job.chapterIds.length,
+              imageTotal: imageChapters.length,
               motion: scenes.filter((x) => completedItems.has(x.id + ":motion"))
                 .length,
               rendered: get<Job>(job.id, "job").counts?.rendered || 0,
@@ -515,7 +551,9 @@ async function main() {
               const stageTotal =
                 type === "motion"
                   ? scenes.filter((item) => usesMotion(item, s)).length
-                  : scenes.length;
+                  : type === "image"
+                    ? imageChapters.length
+                    : scenes.length;
               const label =
                 type === "audio"
                   ? "Lời đọc"
@@ -550,13 +588,17 @@ async function main() {
 
             for (const type of tasks as ("audio" | "image" | "motion")[]) {
               if (type === "image") {
-                const chapters = p.chapters.filter((chapter) =>
-                  job.chapterIds.includes(chapter.id),
-                );
+                const chapters = imageChapters;
                 const errors = await processChapterImages(p, chapters, s, {
                   save: saveProject,
                   load: () => get<Project>(p.id, "project"),
                   stage: (chapter, label, detail) => {
+                    if (chapter.apiImage?.status === "ready")
+                      finishKey(chapter.id + ":image");
+                    updateJob(job.id, {
+                      counts: counts(),
+                      completedItems: [...completedItems],
+                    });
                     checkpoint(
                       "images",
                       Math.floor((completed / Math.max(1, total)) * 75),
@@ -565,9 +607,7 @@ async function main() {
                     reportStage(
                       "images",
                       label,
-                      chapters.filter(
-                        (item) => item.apiImage?.status === "ready",
-                      ).length,
+                      counts().image,
                       chapters.length,
                       `${chapter.title} · ${detail}`,
                       s.imageAPIOptions?.concurrency ?? 2,
@@ -585,10 +625,20 @@ async function main() {
                       ?.apiImage?.requestId,
                   })),
                 });
-                for (const scene of scenes) {
-                  if (await valid(scene, "image"))
-                    finishKey(scene.id + ":image");
-                  else failed++;
+                for (const chapter of chapters) {
+                  const validScenes = await Promise.all(
+                    chapter.scenes
+                      .filter((scene) => scenes.includes(scene))
+                      .map((scene) => valid(scene, "image")),
+                  );
+                  const masterFailed = errors.some(
+                    (error) => error.chapterId === chapter.id,
+                  );
+                  if (masterFailed) failed++;
+                  if (validScenes.every(Boolean)) {
+                    finishKey(chapter.id + ":image");
+                    if (masterFailed) recoveredImageFailures++;
+                  } else if (!masterFailed) failed++;
                 }
                 updateJob(job.id, {
                   completedItems: [...completedItems],
@@ -838,7 +888,7 @@ async function main() {
                 });
               }
             }
-            if (failed) {
+            if (failed > recoveredImageFailures) {
               const message = `${failed} tài nguyên lỗi. Thử lại chỉ xử lý tài nguyên lỗi hoặc còn thiếu. ${scenes.flatMap((scene) => [scene.audioError, scene.imageError, scene.motionError]).find(Boolean) || ""}`;
               if (kind !== "pipeline" || job.outputMode !== "merged")
                 throw Error(message);
@@ -1013,7 +1063,8 @@ async function main() {
                 counts: {
                   ...(get<Job>(job.id, "job").counts || {
                     audio: scenes.length,
-                    image: scenes.length,
+                    image: chapters.length,
+                    imageTotal: chapters.length,
                     total: scenes.length,
                     failed: 0,
                   }),

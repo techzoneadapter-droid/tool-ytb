@@ -6,13 +6,7 @@ import { findEngineVoice, voiceKey } from "@/modules/tts/catalog";
 import { localStatus } from "@/modules/tts/local";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import {
-  get,
-  list,
-  put,
-  updateJob,
-  removeProject,
-} from "@/modules/project/store";
+import { get, list, put, updateJob } from "@/modules/project/store";
 import { defaults, type Project, type Job } from "@/modules/project/types";
 import {
   parseChapters,
@@ -39,6 +33,7 @@ import { isSameOrigin } from "@/modules/project/request";
 import { runtimeStatus } from "@/modules/providers/runtime-status";
 import { startService } from "@/modules/providers/services";
 import { initializeFlowSession } from "@/modules/providers/flow-browser";
+import { removeProjectRecords } from "@/modules/videoLibrary";
 import { modalConfigured } from "@/modules/providers/modal/client";
 const projectNameSchema = z
   .string({ error: "Vui lòng nhập tên dự án." })
@@ -77,6 +72,15 @@ export async function POST(req: NextRequest) {
         { status: 403 },
       );
     const b = await req.json();
+    if (b.action === "deleteProjects") {
+      const ids = z
+        .array(z.string().uuid())
+        .min(1)
+        .max(100)
+        .parse(b.projectIds);
+      const result = await removeProjectRecords([...new Set(ids)]);
+      return NextResponse.json({ ok: true, ...result });
+    }
     if (b.action === "previewChapters") {
       const text = cleanNarrationText(storySchema.parse(b.text));
       return NextResponse.json(
@@ -325,10 +329,34 @@ export async function POST(req: NextRequest) {
             stableSeed(character.name.normalize("NFC").toLocaleLowerCase("vi"));
         if (seen.has(characterId)) throw Error("Danh tính nhân vật bị trùng.");
         seen.add(characterId);
-        const changed = old && (["gender", "approximateAge", "faceDescription", "hair", "body", "clothing", "distinctiveFeatures", "hairColor", "skinColor", "accessories", "vibe"] as const).some(key => old[key] !== character[key]);
-        return { ...character, characterId, portrait: old?.portrait,
-          normalizedPrompt: changed && old.normalizedPrompt === character.normalizedPrompt ? undefined : character.normalizedPrompt,
-          normalizedDescription: changed ? undefined : character.normalizedDescription,
+        const changed =
+          old &&
+          (
+            [
+              "gender",
+              "approximateAge",
+              "faceDescription",
+              "hair",
+              "body",
+              "clothing",
+              "distinctiveFeatures",
+              "hairColor",
+              "skinColor",
+              "accessories",
+              "vibe",
+            ] as const
+          ).some((key) => old[key] !== character[key]);
+        return {
+          ...character,
+          characterId,
+          portrait: old?.portrait,
+          normalizedPrompt:
+            changed && old.normalizedPrompt === character.normalizedPrompt
+              ? undefined
+              : character.normalizedPrompt,
+          normalizedDescription: changed
+            ? undefined
+            : character.normalizedDescription,
         };
       });
       bible.sourceMode = "manual";
@@ -400,7 +428,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(p);
     }
     if (b.action === "delete") {
-      removeProject(p.id);
+      await removeProjectRecords([p.id]);
       return NextResponse.json({ ok: true });
     }
     if (b.action === "motionSelection") {

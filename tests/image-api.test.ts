@@ -304,3 +304,59 @@ test("all API providers enter the real image pipeline and publish a correctly si
     );
   }
 });
+
+test("Experiential image models use Chat Completions and decode image_url results with spend metadata", async (t) => {
+  isolateEnv(t);
+  process.env.API_IMAGE_KEY = "gateway-test-key";
+  process.env.API_IMAGE_MODEL = "gemini-3.1-flash-lite-image";
+  process.env.API_IMAGE_BASE_URL = "https://api.experientiallabs.ai/v1";
+  const bytes = await png();
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    assert.equal(url, "https://api.experientiallabs.ai/v1/chat/completions");
+    assert.equal(
+      new Headers(init.headers).get("authorization"),
+      "Bearer gateway-test-key",
+    );
+    const body = JSON.parse(String(init.body));
+    assert.deepEqual(Object.keys(body).sort(), ["messages", "model"]);
+    assert.equal(body.model, "gemini-3.1-flash-lite-image");
+    assert.match(body.messages[0].content[0].text, /16:9/);
+    assert.equal(body.messages[0].content[1].type, "image_url");
+    assert.match(body.messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+    return Response.json({
+      choices: [{
+        message: {
+          images: [{
+            type: "image_url",
+            image_url: { url: `data:image/png;base64,${bytes.toString("base64")}` },
+          }],
+        },
+      }],
+      usage: { prompt_tokens: 14, completion_tokens: 5, cost: 0.04 },
+    });
+  });
+  const result = await generateAPIImage(
+    "api-compatible",
+    "A forest",
+    "16:9",
+    0,
+    undefined,
+    { references: [{ bytes, mime: "image/png", name: "hero.png" }] },
+  );
+  assert.deepEqual(result.bytes, bytes);
+  assert.equal(result.metadata.usage?.cost, 0.04);
+});
+
+test("Experiential does not accept a text-only completion as a generated image", async (t) => {
+  isolateEnv(t);
+  process.env.API_IMAGE_KEY = "gateway-test-key";
+  process.env.API_IMAGE_MODEL = "gemini-3.1-flash-lite-image";
+  process.env.API_IMAGE_BASE_URL = "https://api.experientiallabs.ai/v1";
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ choices: [{ message: { content: "I cannot generate an image" } }] }),
+  );
+  await assert.rejects(
+    generateAPIImage("api-compatible", "A forest", "9:16"),
+    /không có ảnh/,
+  );
+});

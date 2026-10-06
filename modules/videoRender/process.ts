@@ -1,5 +1,14 @@
 import { spawn } from "node:child_process";
+import { ffmpegConcurrency, withResource } from "../pipeline/resources";
 export function run(
+  args: string[], cwd?: string, probe = false,
+  progress?: { seconds: number; onProgress: (fraction: number) => void },
+  inputBuffer?: Buffer,
+): Promise<string> {
+  const action = () => runProcess(args, cwd, probe, progress, inputBuffer);
+  return probe ? action() : withResource("FFmpeg", ffmpegConcurrency, action);
+}
+function runProcess(
   args: string[],
   cwd?: string,
   probe = false,

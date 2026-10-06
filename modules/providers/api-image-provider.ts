@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { withResource } from "../pipeline/resources";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   validateImageBaseURL,
@@ -58,27 +59,13 @@ export type APIImageResult = {
     usage?: Record<string, number>;
   };
 };
-const active = new Map<string, number>();
-const queues = new Map<string, (() => void)[]>();
 export async function withImageSlot<T>(
   provider: string,
   limit: number,
   action: () => Promise<T>,
 ): Promise<T> {
-  // A single shared gate also bounds parallel chapter jobs in this worker.
-  while ((active.get(provider) || 0) >= limit)
-    await new Promise<void>((resolve) => {
-      const queue = queues.get(provider) || [];
-      queue.push(resolve);
-      queues.set(provider, queue);
-    });
-  active.set(provider, (active.get(provider) || 0) + 1);
-  try {
-    return await action();
-  } finally {
-    active.set(provider, (active.get(provider) || 1) - 1);
-    queues.get(provider)?.shift()?.();
-  }
+  const configured = Number(process.env[`IMAGE_${provider.replaceAll("-", "_").toUpperCase()}_CONCURRENCY`] || process.env.IMAGE_API_CONCURRENCY || limit);
+  return withResource("image:" + provider, Math.max(1, Math.min(16, configured || limit)), action);
 }
 export async function requestImage(
   url: string,

@@ -1,5 +1,5 @@
 import type { Job, Project } from "@/modules/project/types";
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Pause, Play, RotateCcw, XCircle } from "lucide-react";
 import { isActive } from "../studio-api";
 
@@ -31,13 +31,21 @@ export function PipelineProgress({
   busy,
   act,
   actMany,
+  initialDetailsOpen = false,
 }: {
   jobs: Job[];
   project: Project;
   busy: boolean;
   act: (action: string, id: string) => void;
   actMany?: (action: string, ids: string[]) => void;
+  initialDetailsOpen?: boolean;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(initialDetailsOpen);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   const data = useMemo(() => {
     const sorted = [...jobs].sort(
       (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
@@ -122,6 +130,10 @@ export function PipelineProgress({
   const stoppable = [...data.running, ...data.queued];
   const resumable = data.paused;
   const retryable = [...data.failedJobs, ...data.cancelledJobs];
+  const request = Object.values(data.current.ttsRequests || {})
+    .filter((r) => r.state !== "done")
+    .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0];
+  const shared = data.current.snapshot.settings.imageEnabled === false;
 
   return (
     <section
@@ -131,12 +143,19 @@ export function PipelineProgress({
     >
       <div className="batch-progress-top">
         <div className="batch-progress-copy">
-          <strong>{labels[data.current.status] || "Đang xử lý"}</strong>
+          <strong>
+            {shared && data.current.status === "images"
+              ? "Đang chuẩn bị video"
+              : labels[data.current.status] || "Đang xử lý"}
+          </strong>
           <span>
             {data.current.batchIndex !== undefined
               ? `Video ${data.current.batchIndex + 1}/${data.total} · `
               : ""}
-            {data.current.message}
+            {data.current.waitingResource ||
+              (shared && data.current.status === "images"
+                ? "Dùng ảnh chung"
+                : labels[data.current.status])}
           </span>
         </div>
         <strong className="batch-progress-percent">{data.progress}%</strong>
@@ -153,7 +172,41 @@ export function PipelineProgress({
         <span style={{ width: data.progress + "%" }} />
       </div>
 
-      {data.current.stageProgress &&
+      {shared && (
+        <div style={{ marginTop: 8 }}>
+          {data.current.sharedImageValid === true
+            ? "Ảnh: ✓ Dùng ảnh chung"
+            : "Ảnh: ✕ Ảnh dùng chung không hợp lệ"}
+        </div>
+      )}
+      {request && (
+        <div style={{ marginTop: 6 }}>
+          Lời đọc {data.current.stageProgress?.current || 0}/
+          {data.current.stageProgress?.total || 1} · VieNeu Local · giới hạn
+          engine:{" "}
+          {request.engineLimit || data.current.stageProgress?.concurrency || 1}{" "}
+          luồng · đang chạy{" "}
+          {
+            data.batchJobs
+              .flatMap((j) => Object.values(j.ttsRequests || {}))
+              .filter((r) => r.state === "running").length
+          }{" "}
+          · chunk {request.chunkIndex}/{request.totalChunks} · đã chạy{" "}
+          {Math.max(
+            0,
+            Math.floor((now - Date.parse(request.startedAt)) / 1000),
+          )}{" "}
+          giây · lần {request.attempt}/3
+          {request.detail && <> · {request.detail}</>}
+          {data.current.stageProgress?.etaSeconds ? (
+            <> · ETA {formatTime(data.current.stageProgress.etaSeconds)}</>
+          ) : (
+            <> · ETA: chưa đủ dữ liệu</>
+          )}
+        </div>
+      )}
+      {!request &&
+        data.current.stageProgress &&
         !(
           data.current.snapshot.settings.imageEnabled === false &&
           data.current.status === "images"
@@ -195,174 +248,244 @@ export function PipelineProgress({
           </div>
         )}
 
-      {project.chapters
-        .filter((chapter) =>
-          data.batchJobs.some((job) => job.chapterIds.includes(chapter.id)),
-        )
-        .map((chapter) => {
-          const owningJob = data.batchJobs.find((job) =>
-            job.chapterIds.includes(chapter.id),
-          );
-          const settings = owningJob?.snapshot.settings || project.settings;
-          if (settings.imageEnabled === false)
-            return (
-              <div className="batch-progress-live" key={chapter.id}>
-                <strong>{chapter.title}</strong>
+      {detailsOpen && (
+        <div
+          className="batch-progress-details"
+          style={{ maxHeight: 320, overflowY: "auto", marginTop: 10 }}
+        >
+          {project.chapters
+            .filter((chapter) =>
+              data.batchJobs.some((job) => job.chapterIds.includes(chapter.id)),
+            )
+            .sort((a, b) => {
+              const rank = (id: string) => {
+                const j = data.batchJobs.find((j) => j.chapterIds.includes(id));
+                return j && ["audio", "images", "rendering"].includes(j.status)
+                  ? 0
+                  : j?.status === "error"
+                    ? 1
+                    : j?.status === "done"
+                      ? 2
+                      : 3;
+              };
+              const difference = rank(a.id) - rank(b.id);
+              if (difference || rank(a.id) !== 2) return difference;
+              const finished = (id: string) =>
+                Date.parse(
+                  data.batchJobs.find((j) => j.chapterIds.includes(id))
+                    ?.finishedAt || "",
+                ) || 0;
+              return finished(b.id) - finished(a.id);
+            })
+            .map((chapter) => {
+              const owningJob = data.batchJobs.find((job) =>
+                job.chapterIds.includes(chapter.id),
+              );
+              const settings = owningJob?.snapshot.settings || project.settings;
+              const activeRequest = Object.values(
+                owningJob?.ttsRequests || {},
+              ).find((r) => r.state !== "done");
+              const chapterStatus = (
                 <span>
-                  {owningJob?.sharedImageValid === true
-                    ? "Ảnh chương: ✓ Dùng ảnh chung"
-                    : "Ảnh chương: ✕ Ảnh dùng chung không hợp lệ"}
+                  {settings.imageEnabled === false &&
+                  owningJob?.status === "images"
+                    ? "Dùng ảnh chung"
+                    : owningJob?.waitingResource ||
+                      labels[owningJob?.status || "queued"]}
+                  {owningJob?.stageProgress &&
+                    !(
+                      settings.imageEnabled === false &&
+                      owningJob.status === "images"
+                    ) && (
+                      <>
+                        {" "}
+                        · {owningJob.stageProgress.label}{" "}
+                        {owningJob.stageProgress.current}/
+                        {owningJob.stageProgress.total}
+                      </>
+                    )}
+                  {activeRequest && (
+                    <>
+                      {" "}
+                      · chunk {activeRequest.chunkIndex}/
+                      {activeRequest.totalChunks} · lần {activeRequest.attempt}
+                      /3
+                    </>
+                  )}
                 </span>
-              </div>
-            );
-          const image =
-            project.settings.imageProvider === "flow-browser"
-              ? chapter.masterImage
-              : chapter.apiImage;
-          const chapterJobs = data.batchJobs.filter((job) =>
-            job.chapterIds.includes(chapter.id),
-          );
-          const rendered =
-            project.settings.imageProvider === "flow-browser"
-              ? chapter.scenes.filter((scene) => scene.flow?.status === "done")
-                  .length
-              : chapterJobs.some(
-                    (job) =>
-                      job.verified ||
-                      job.outputs?.some(
-                        (output) =>
-                          output.verified &&
-                          output.chapterIds.includes(chapter.id),
+              );
+              if (settings.imageEnabled === false)
+                return (
+                  <div className="chapter-progress-row" key={chapter.id}>
+                    <strong>{chapter.title}</strong>
+                    {chapterStatus}
+                    <span>
+                      {owningJob?.sharedImageValid === true
+                        ? "Ảnh: ✓ Dùng ảnh chung"
+                        : "Ảnh: ✕ Ảnh dùng chung không hợp lệ"}
+                    </span>
+                  </div>
+                );
+              const image =
+                project.settings.imageProvider === "flow-browser"
+                  ? chapter.masterImage
+                  : chapter.apiImage;
+              const chapterJobs = data.batchJobs.filter((job) =>
+                job.chapterIds.includes(chapter.id),
+              );
+              const rendered =
+                project.settings.imageProvider === "flow-browser"
+                  ? chapter.scenes.filter(
+                      (scene) => scene.flow?.status === "done",
+                    ).length
+                  : chapterJobs.some(
+                        (job) =>
+                          job.verified ||
+                          job.outputs?.some(
+                            (output) =>
+                              output.verified &&
+                              output.chapterIds.includes(chapter.id),
+                          ),
+                      )
+                    ? chapter.scenes.length
+                    : Math.min(
+                        chapter.scenes.length,
+                        Math.max(
+                          0,
+                          ...chapterJobs.map(
+                            (job) => job.counts?.rendered || 0,
+                          ),
+                        ),
+                      );
+              const apiStage =
+                chapter.apiImageProgress || chapter.apiImage?.stage;
+              return (
+                <div className="chapter-progress-row" key={chapter.id}>
+                  <strong>{chapter.title}</strong>
+                  {chapterStatus}
+                  <span>
+                    Ảnh master chương:{" "}
+                    {image?.status === "ready"
+                      ? "✓ Sẵn sàng"
+                      : image?.status === "error"
+                        ? "Lỗi · " + image.errorCode
+                        : image
+                          ? "Đang tạo ảnh master…"
+                          : "Đang chờ"}
+                  </span>
+                  {project.settings.imageProvider !== "flow-browser" && (
+                    <>
+                      <small>
+                        Phân tích chương → Character Bible → tạo/dùng lại
+                        portrait → tạo prompt → gọi API → lưu master image →
+                        dựng video
+                      </small>
+                      <span>
+                        {chapterJobs.some((job) => job.status === "rendering")
+                          ? "Dựng video"
+                          : apiStage?.label || "Phân tích chương"}
+                        {apiStage?.detail ? " · " + apiStage.detail : ""}
+                      </span>
+                    </>
+                  )}
+                  <span>
+                    Dựng video: {rendered}/{chapter.scenes.length} cảnh
+                  </span>
+                  {image?.status === "error" && (
+                    <details>
+                      <summary>Chi tiết lỗi ảnh chương</summary>
+                      {image.errorMessage}
+                    </details>
+                  )}
+                </div>
+              );
+            })}
+
+          {data.batchJobs.some((job) => job.sceneErrors?.length) && (
+            <details className="notice">
+              <summary>
+                Lỗi cảnh · các MP4 đã hoàn thành được giữ nguyên
+              </summary>
+              {data.batchJobs.flatMap((job) =>
+                (job.sceneErrors || [])
+                  .filter(
+                    (error) =>
+                      job.snapshot.settings.imageEnabled !== false ||
+                      !/IMAGE|CHARACTER|PROMPT/.test(
+                        error.stage + " " + error.code,
                       ),
                   )
-                ? chapter.scenes.length
-                : Math.min(
-                    chapter.scenes.length,
-                    Math.max(
-                      0,
-                      ...chapterJobs.map((job) => job.counts?.rendered || 0),
-                    ),
-                  );
-          const apiStage = chapter.apiImageProgress || chapter.apiImage?.stage;
-          return (
-            <div className="batch-progress-live" key={chapter.id}>
-              <strong>{chapter.title}</strong>
-              <span>
-                Ảnh master chương:{" "}
-                {image?.status === "ready"
-                  ? "✓ Sẵn sàng"
-                  : image?.status === "error"
-                    ? "Lỗi · " + image.errorCode
-                    : image
-                      ? "Đang tạo ảnh master…"
-                      : "Đang chờ"}
-              </span>
-              {project.settings.imageProvider !== "flow-browser" && (
-                <>
-                  <small>
-                    Phân tích chương → Character Bible → tạo/dùng lại portrait →
-                    tạo prompt → gọi API → lưu master image → dựng video
-                  </small>
-                  <span>
-                    {chapterJobs.some((job) => job.status === "rendering")
-                      ? "Dựng video"
-                      : apiStage?.label || "Phân tích chương"}
-                    {apiStage?.detail ? " · " + apiStage.detail : ""}
-                  </span>
-                </>
+                  .map((error) => (
+                    <p
+                      key={job.id + error.sceneId}
+                      role="alert"
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      {project.chapters.find((c) => c.id === error.chapterId)
+                        ?.masterImage?.status === "error" ||
+                      error.stage === "CHAPTER_IMAGE" ||
+                      (error.sceneIndex === 0 &&
+                        project.chapters.find((c) => c.id === error.chapterId)
+                          ?.apiImage?.status === "error")
+                        ? "Ảnh master chương"
+                        : `Cảnh ${error.sceneIndex}`}{" "}
+                      · <strong>{error.code}</strong> · {error.stage}
+                      <br />
+                      {error.message}
+                    </p>
+                  )),
               )}
-              <span>
-                Dựng video: {rendered}/{chapter.scenes.length} cảnh
-              </span>
-              {image?.status === "error" && (
-                <details>
-                  <summary>Chi tiết lỗi ảnh chương</summary>
-                  {image.errorMessage}
-                </details>
-              )}
-            </div>
-          );
-        })}
-
-      {data.batchJobs.some((job) => job.sceneErrors?.length) && (
-        <details className="notice">
-          <summary>Lỗi cảnh · các MP4 đã hoàn thành được giữ nguyên</summary>
-          {data.batchJobs.flatMap((job) =>
-            (job.sceneErrors || [])
-              .filter(
-                (error) =>
-                  job.snapshot.settings.imageEnabled !== false ||
-                  !/IMAGE|CHARACTER|PROMPT/.test(
-                    error.stage + " " + error.code,
-                  ),
-              )
-              .map((error) => (
-                <p
-                  key={job.id + error.sceneId}
-                  role="alert"
-                  style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-                >
-                  {project.chapters.find((c) => c.id === error.chapterId)
-                    ?.masterImage?.status === "error" ||
-                  error.stage === "CHAPTER_IMAGE" ||
-                  (error.sceneIndex === 0 &&
-                    project.chapters.find((c) => c.id === error.chapterId)
-                      ?.apiImage?.status === "error")
-                    ? "Ảnh master chương"
-                    : `Cảnh ${error.sceneIndex}`}{" "}
-                  · <strong>{error.code}</strong> · {error.stage}
-                  <br />
-                  {error.message}
-                </p>
-              )),
+            </details>
           )}
-        </details>
+          {data.failedJobs
+            .filter((job) => !job.sceneErrors?.length)
+            .map(
+              (job) =>
+                job.error && (
+                  <details
+                    key={job.id}
+                    role="alert"
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      overflowWrap: "anywhere",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    <summary>Video chưa hoàn thành · Chi tiết</summary>
+                    <pre>
+                      {job.batchIndex !== undefined
+                        ? `Video ${job.batchIndex + 1}: `
+                        : ""}
+                      {job.error}
+                    </pre>
+                  </details>
+                ),
+            )}
+        </div>
       )}
-      {data.failedJobs
-        .filter((job) => !job.sceneErrors?.length)
-        .map(
-          (job) =>
-            job.error && (
-              <details
-                key={job.id}
-                role="alert"
-                style={{
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                  fontFamily: "inherit",
-                }}
-              >
-                <summary>Video chưa hoàn thành · Chi tiết</summary>
-                <pre>
-                  {job.batchIndex !== undefined
-                    ? `Video ${job.batchIndex + 1}: `
-                    : ""}
-                  {job.error}
-                </pre>
-              </details>
-            ),
-        )}
-
       <div className="batch-progress-footer">
         <div className="batch-progress-meta">
           <span>
             ✓ {data.done}/{data.total} video đã lưu
           </span>
-          {data.running.length > 0 && (
-            <span>{data.running.length} video đang chạy song song</span>
-          )}
-          {data.queued.length > 0 && (
-            <span>{data.queued.length} video đang chờ</span>
-          )}
+          {<span>{data.running.length} video đang chạy song song</span>}
+          {<span>{data.queued.length} video đang chờ</span>}
           {data.paused.length > 0 && (
             <span>{data.paused.length} video tạm dừng</span>
           )}
-          {data.failedJobs.length > 0 && (
-            <span>{data.failedJobs.length} video lỗi riêng</span>
-          )}
+          {<span>{data.failedJobs.length} video lỗi riêng</span>}
         </div>
 
         <div className="batch-progress-actions">
+          <button
+            aria-expanded={detailsOpen}
+            onClick={() => setDetailsOpen(!detailsOpen)}
+          >
+            {detailsOpen ? "Thu gọn" : "Chi tiết"}
+          </button>
           {stoppable.length > 0 && (
             <>
               <button

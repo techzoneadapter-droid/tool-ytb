@@ -1,4 +1,5 @@
 import { writeFile, mkdir, unlink } from "node:fs/promises";
+import { fetchTTSAPI } from "./api-retry";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Settings } from "../project/types";
@@ -50,7 +51,7 @@ export async function speak(text: string, file: string, s: Settings) {
     for (const part of chunks(text, 1800)) {
       const response =
         c.provider === "azure"
-          ? await fetch(
+          ? await fetchTTSAPI(
               "https://" +
                 c.region +
                 ".tts.speech.microsoft.com/cognitiveservices/v1",
@@ -73,7 +74,7 @@ export async function speak(text: string, file: string, s: Settings) {
                 signal: AbortSignal.timeout(120000),
               },
             )
-          : await fetch("https://api.openai.com/v1/audio/speech", {
+          : await fetchTTSAPI("https://api.openai.com/v1/audio/speech", {
               method: "POST",
               headers: {
                 Authorization: "Bearer " + c.key,

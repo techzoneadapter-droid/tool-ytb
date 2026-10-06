@@ -1,3 +1,5 @@
+import { withResource, providerConcurrency } from "../pipeline/resources";
+import type { TTSRequestOptions } from "./request";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, copyFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -18,7 +20,7 @@ import { modalConfigured } from "../providers/modal/client";
 import { duration } from "../videoRender/process";
 import type { Settings } from "../project/types";
 import { publishGenerated } from "../providers/local-workers";
-import { cleanNarrationText } from "../project/parser";
+import { sanitizeNarrationText as cleanNarrationText } from "../project/parser";
 
 export function defaultTTSProvider(): TTSProvider {
   const fallback = modalConfigured("tts") ? "modal-vieneu" : "vieneu-local";
@@ -99,7 +101,7 @@ function cacheFile(
   text: string,
   file: string,
   s: Settings,
-  options: { preview?: boolean } = {},
+  options: TTSRequestOptions & { preview?: boolean } = {},
 ) {
   const hash = createHash("sha256")
     .update(
@@ -136,7 +138,7 @@ export async function speak(
   text: string,
   file: string,
   settings: Settings,
-  options: { preview?: boolean } = {},
+  options: TTSRequestOptions & { preview?: boolean } = {},
 ): Promise<number> {
   const s = resolveTTS(settings);
   assertTTS(s);
@@ -155,7 +157,7 @@ export async function speak(
         randomUUID() + path.extname(file),
       );
       try {
-        const seconds =
+        const synthesize = async () =>
           s.ttsProvider === "modal-vieneu"
             ? await speakModal(narration, temporary, s, options)
             : s.ttsProvider === "edge-online"
@@ -165,6 +167,14 @@ export async function speak(
                 : s.ttsProvider === "cloud"
                   ? await speakCloud(narration, temporary, s)
                   : await speakLocal(narration, temporary, s, options);
+        const seconds =
+          s.ttsProvider === "vieneu-local" || s.ttsProvider === "korva-local"
+            ? await synthesize()
+            : await withResource(
+                "TTS:" + s.ttsProvider,
+                providerConcurrency(s.ttsProvider!),
+                synthesize,
+              );
         await rename(temporary, cache);
         return seconds;
       } finally {
@@ -183,7 +193,8 @@ export async function speak(
   }
 }
 
-type SpeakBatchOptions = {
+type SpeakBatchOptions = TTSRequestOptions & {
+  onError?: (id: string, error: Error) => void;
   onProgress?: (event: {
     id: string;
     seconds: number;
@@ -195,13 +206,17 @@ type SpeakBatchOptions = {
 };
 
 export async function speakBatch(
-  items: { id: string; text: string; file: string }[],
+  items: { id: string; text: string; file: string; chapterId?: string }[],
   settings: Settings,
   options: SpeakBatchOptions = {},
 ) {
   const s = resolveTTS(settings);
   assertTTS(s);
   const output = new Map<string, number>();
+  items = items.map((item) => ({
+    ...item,
+    text: cleanNarrationText(item.text),
+  }));
   let completed = 0;
 
   const stopped = async () => !!(await options.shouldStop?.());
@@ -234,11 +249,17 @@ export async function speakBatch(
         if (index >= items.length) break;
         const item = items[index];
         try {
-          const seconds = await speak(item.text, item.file, s);
+          const seconds = await speak(item.text, item.file, s, {
+            ...options,
+            sceneId: item.id,
+            chapterId: item.chapterId,
+          });
           output.set(item.id, seconds);
           await report(item, seconds, concurrency);
         } catch (error) {
-          errors.push(error instanceof Error ? error : Error(String(error)));
+          const failure = error instanceof Error ? error : Error(String(error));
+          options.onError?.(item.id, failure);
+          errors.push(failure);
         }
       }
       if (errors.length) throw errors[0];
@@ -278,7 +299,7 @@ export async function speakBatch(
   }
 
   if (s.ttsProvider !== "modal-vieneu") {
-    const limit = s.ttsProvider === "pollinations" ? 3 : 2;
+    const limit = providerConcurrency(s.ttsProvider!, 8);
     return runConcurrent(limit);
   }
 
@@ -312,16 +333,24 @@ export async function speakBatch(
     });
   }
 
-  for (let offset = 0; offset < missing.length; offset += 16) {
+  const engineLimit = providerConcurrency("modal-vieneu", 8);
+  const batchSize = Math.min(16, engineLimit);
+  for (let offset = 0; offset < missing.length; offset += batchSize) {
     if (await stopped()) return output;
-    const batch = missing.slice(offset, offset + 16);
-    const durations = await speakModalBatch(
-      batch.map((item) => ({
-        id: item.id,
-        text: item.text,
-        file: item.temporary,
-      })),
-      s,
+    const batch = missing.slice(offset, offset + batchSize);
+    const durations = await withResource(
+      "TTS:modal-vieneu",
+      engineLimit,
+      () =>
+        speakModalBatch(
+          batch.map((item) => ({
+            id: item.id,
+            text: item.text,
+            file: item.temporary,
+          })),
+          s,
+        ),
+      batch.length,
     );
     for (const item of batch) {
       const seconds = durations.get(item.id);

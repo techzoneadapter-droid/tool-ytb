@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,6 +26,12 @@ jobs:
           sudo apt-get install -y ffmpeg
           ffmpeg -version | head -n 1
       - run: npm test
+      - name: Flow TypeScript tests
+        run: npm run test:flow
+      - name: Flow Python tests
+        run: |
+          python -m pip install -r workers/flow-requirements.txt
+          FLOW_PYTHON=python npm run test:flow:python
       - run: npm run build
       - name: Python syntax
         run: |

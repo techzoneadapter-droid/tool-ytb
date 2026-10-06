@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Job, Project, Scene } from "../project/types";
-import { get, mergeProjectChapters } from "../project/store";
+import { get, mergeProjectChapters, updateJob } from "../project/store";
 import { assetExists } from "../project/media";
 import { speak, ttsSource } from "../tts";
 import { makeFlowImageBuffer } from "../imagePrompt";
@@ -75,6 +75,23 @@ export function processProjectFlowScenes(
           scene.text,
           path.join(assets, file),
           settings,
+          {
+            sceneId: scene.id,
+            chapterId: project.chapters.find((c) =>
+              c.scenes.some((s) => s.id === scene.id),
+            )?.id,
+            onRequestProgress: (event) => {
+              const current = get<Job>(job.id, "job");
+              if (["paused", "cancelled"].includes(current.status)) return;
+              updateJob(job.id, {
+                ttsRequests: { ...current.ttsRequests, [scene.id]: event },
+                waitingResource:
+                  event.state === "waiting"
+                    ? "Đang chờ lượt VieNeu"
+                    : undefined,
+              });
+            },
+          },
         );
         scene.audio = file;
         scene.audioSource = ttsSource(settings);

@@ -18,7 +18,7 @@ export function cleanNarrationText(input: string): string {
     .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
     .replace(/https?:\/\/\S+|www\.\S+/giu, " ")
     .replace(/[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/giu, " ")
-    .replace(/^\s{0,3}#{1,6}\s+/gmu, "")
+    .replace(/^\s{0,3}#{1,6}\s*/gmu, "")
     .replace(/^\s*>+\s?/gmu, "")
     .replace(/^\s*[-+*•▪◦‣⁃]+\s+/gmu, "")
     .replace(/^\s*\d+[.)]\s+/gmu, "")
@@ -52,6 +52,11 @@ export function cleanNarrationText(input: string): string {
     .trim();
 }
 
+export function sanitizeNarrationText(input: string) {
+  const cleaned = cleanNarrationText(input);
+  if (cleaned !== input) console.debug(`TEXT_SANITIZED inputLength=${input.length} outputLength=${cleaned.length} removed=${Math.max(0, input.length - cleaned.length)}`);
+  return cleaned;
+}
 export function chunks(text: string, max = 550): string[] {
   const cleaned = cleanNarrationText(text);
   const sentences =
@@ -117,7 +122,7 @@ export function parseChapters(input: string): Chapter[] {
   for (const line of text.split("\n")) {
     const marker = line
       .trim()
-      .replace(/^#{1,6}\s+/, "")
+      .replace(/^#{1,6}\s*/, "")
       .replace(/^(\*\*|__)(.*?)\1$/u, "$2")
       .trim();
     const end = ending.exec(marker);

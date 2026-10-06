@@ -12,7 +12,7 @@ import {
   parseChapters,
   plan,
   chunks,
-  cleanNarrationText,
+  sanitizeNarrationText as cleanNarrationText,
 } from "@/modules/project/parser";
 import { sceneSchema, settingsSchema } from "@/modules/project/validation";
 import { rewrite } from "@/modules/project/ai";
@@ -279,6 +279,8 @@ export async function POST(req: NextRequest) {
               : "Đã xếp lại hàng đợi — tài nguyên hợp lệ sẽ được dùng lại",
           progress: 0,
           stageProgress: undefined,
+          ttsRequests: undefined,
+          waitingResource: undefined,
           verified: false,
           output: undefined,
           outputs: undefined,

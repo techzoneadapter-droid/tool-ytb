@@ -155,13 +155,15 @@ export function ImageAPIConnection({
             <input
               value={customModel}
               disabled={busy}
-              placeholder="Mã model hỗ trợ /images/generations"
+              placeholder="Ví dụ: gemini-3.1-flash-lite-image"
               onChange={(event) => setCustomModel(event.target.value)}
             />
           </label>
           <p className="notice">
-            API cần hỗ trợ /models và /images/generations; reference cần
-            /images/edits. Chỉ chọn model có khả năng tạo ảnh.
+            API thông thường cần /models và /images/generations (ảnh
+            tham chiếu dùng /images/edits). Riêng Experiential Labs dùng
+            /models và /chat/completions. Kết nối thành công chưa đảm bảo
+            model xuất được ảnh: hãy thử tạo 1 ảnh trước khi chạy hàng loạt.
           </p>
         </>
       )}
@@ -245,7 +247,7 @@ export function ImageAPIConnection({
             ? "Ultra: reference ảnh đơn + seed + negative prompt."
             : "Core: Character Bible text + seed + negative prompt; không có reference input."
           : provider === "api-compatible"
-            ? "Bật capability bên dưới theo tài liệu model của API riêng."
+            ? "Experiential: app tự gửi ảnh reference qua chat khi model hỗ trợ; các API khác cần bật capability theo tài liệu."
             : "GPT Image/Gemini image: portrait reference; seed không được gửi."}
       </p>
       <details>

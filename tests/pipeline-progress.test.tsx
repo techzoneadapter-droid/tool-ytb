@@ -64,6 +64,7 @@ test("progress recognizes API and legacy chapter masters; chapter error never sa
         project={project}
         jobs={[job]}
         busy={false}
+        initialDetailsOpen
         act={() => {}}
       />,
     );
@@ -72,7 +73,7 @@ test("progress recognizes API and legacy chapter masters; chapter error never sa
   job.imageMode = "shared";
   job.sharedImageValid = true;
   const shared = render();
-  assert.ok(shared.includes("Ảnh chương: ✓ Dùng ảnh chung"));
+  assert.ok(shared.includes("Ảnh: ✓ Dùng ảnh chung"));
   for (const forbidden of [
     "Ảnh master chương",
     "Phân tích chương",

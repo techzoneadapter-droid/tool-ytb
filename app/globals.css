@@ -1776,6 +1776,7 @@ progress::-webkit-progress-value {
 
 /* Compact batch progress: one horizontal bar no matter how many chapters run. */
 .batch-progress {
+  min-height: 150px;
   margin: -4px 0 20px;
   padding: 15px 18px 14px;
   border: 1px solid var(--border);
@@ -1907,14 +1908,24 @@ progress::-webkit-progress-value {
 
 .batch-progress-live {
   margin-top: 10px;
-  padding: 10px 12px;
+  padding: 6px 10px;
   display: grid;
-  gap: 5px;
+  gap: 3px;
   border: 1px solid #eceaf7;
   border-radius: 9px;
   background: #faf9ff;
   font-size: 11px;
 }
+.chapter-progress-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.chapter-progress-row small { flex-basis: 100%; color: var(--muted); }
 .batch-progress-live > div {
   min-width: 0;
   display: grid;

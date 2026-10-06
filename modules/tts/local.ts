@@ -3,7 +3,9 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile, unlink, rename } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { TTSError, safeTTSErrorBody } from "./errors";
+import { TTSError } from "./errors";
+import { fetchTTSChunk, type TTSRequestOptions } from "./request";
+import { resourceGate } from "../pipeline/resources";
 import type { Settings } from "../project/types";
 import { chunks } from "../project/parser";
 import { run, duration } from "../videoRender/process";
@@ -184,7 +186,7 @@ export async function speakLocal(
   text: string,
   file: string,
   s: Settings,
-  options: { preview?: boolean } = {},
+  options: TTSRequestOptions & { preview?: boolean } = {},
 ) {
   if (s.ttsProvider === "tts-studio-local")
     throw Error("Vietnamese TTS Studio - Clone giọng local - đang phát triển");
@@ -241,76 +243,47 @@ export async function speakLocal(
         continue;
       }
       if (s.ttsProvider === "vieneu-local") {
-        let response: Response;
-        for (let attempt = 0; ; attempt++) {
-          try {
-            response = await fetch(vieneuURL() + "/v1/audio/speech", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              redirect: "error",
-              body: JSON.stringify({
-                model: "vieneu-v3-turbo",
-                input: part,
-                voice,
-                response_format: "wav",
-                sample_rate: 24000,
-                max_chars: 512,
-              }),
-              signal: AbortSignal.timeout(600000),
-            });
-          } catch (error) {
-            if (attempt < 2) continue;
-            throw new TTSError(
-              "VieNeu Local",
-              voice,
-              part.length,
-              chunkIndex + 1,
-              parts.length,
-              error instanceof Error
-                ? error.message +
-                    (error.cause instanceof Error
-                      ? ": " + error.cause.message
-                      : "")
-                : vieneuMissing,
-            );
-          }
-          if (!response.ok) {
-            const body = safeTTSErrorBody(await response.text());
-            if (
-              attempt < 2 &&
-              (response.status === 429 || response.status >= 500)
-            ) {
-              await new Promise((resolve) =>
-                setTimeout(resolve, 500 * (attempt + 1)),
-              );
-              continue;
-            }
-            throw new TTSError(
-              "VieNeu Local",
-              voice,
-              part.length,
-              chunkIndex + 1,
-              parts.length,
-              body,
-              response.status,
-            );
-          }
-          break;
-        }
-        const bytes = Buffer.from(await response.arrayBuffer());
-        if (
-          bytes.toString("ascii", 0, 4) !== "RIFF" ||
-          bytes.toString("ascii", 8, 12) !== "WAVE"
-        )
-          throw new TTSError(
-            "VieNeu Local",
+        const bytes = await fetchTTSChunk(
+          vieneuURL() + "/v1/audio/speech",
+          {
+            model: "vieneu-v3-turbo",
+            input: part,
             voice,
-            part.length,
-            chunkIndex + 1,
-            parts.length,
-            "Không trả về WAV hợp lệ",
-            response.status,
-          );
+            response_format: "wav",
+            sample_rate: 24000,
+            max_chars: 512,
+          },
+          voice,
+          part,
+          chunkIndex + 1,
+          parts.length,
+          {
+            ...options,
+            acquire: async (onWait) => {
+              let health = await vieneuHealth();
+              onWait(health.maxStreams);
+              const release = await resourceGate("VieNeu").acquire(
+                health.maxStreams,
+                () => onWait(health.maxStreams),
+              );
+              const deadline = Date.now() + 600000;
+              try {
+                while (true) {
+                  health = await vieneuHealth();
+                  if (health.active < health.maxStreams && health.waiting === 0)
+                    return release;
+                  onWait(health.maxStreams);
+                  if (Date.now() > deadline)
+                    throw Error("VieNeu hết thời gian chờ lượt engine");
+                  await new Promise((resolve) => setTimeout(resolve, 500));
+                }
+              } catch (error) {
+                release();
+                throw error;
+              }
+            },
+          },
+        );
         await writeFile(raw, bytes);
       } else {
         await startService("korva");

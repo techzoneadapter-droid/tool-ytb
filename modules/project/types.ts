@@ -224,7 +224,16 @@ export type ChapterAPIImage = {
     height?: number;
   };
 };
+export type TTSRequestProgress = {
+  provider: string; voice: string; sceneId?: string; chapterId?: string;
+  chunkIndex: number; totalChunks: number; textLength: number; attempt: number;
+  startedAt: string; lastProgressAt: string; timeoutMs: number;
+  state: "waiting" | "running" | "retry" | "done" | "error";
+  detail?: string; engineLimit?: number;
+};
 export type Job = {
+  waitingResource?: string;
+  ttsRequests?: Record<string, TTSRequestProgress>;
   imageMode?: "shared";
   sharedImageValid?: boolean;
   videoLibraryDeleted?: boolean;

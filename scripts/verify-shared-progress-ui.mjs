@@ -21,7 +21,7 @@ try {
   await page.getByRole("button", {name: "Tạo video", exact: true}).click();
   await page.getByLabel("Chọn dự án truyện").selectOption(projectId);
   const panel = page.locator(".batch-progress");
-  await expect(panel).toContainText("Ảnh chương: ✓ Dùng ảnh chung");
+  await expect(panel).toContainText("Ảnh: ✓ Dùng ảnh chung");
   const text = await panel.innerText();
   for (const forbidden of ["Ảnh master chương", "Phân tích chương", "Character Bible", "portrait", "gọi API"]) assert.ok(!text.includes(forbidden), forbidden);
   console.log("shared-image progress browser PASS");

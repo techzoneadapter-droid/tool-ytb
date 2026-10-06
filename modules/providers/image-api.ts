@@ -164,10 +164,22 @@ export async function generateAPIImage(
   const label = imageAPIOptions.find(
     (option) => option.id === config.provider,
   )!.label;
+  // Experiential is a Chat Completions gateway, not an OpenAI Images endpoint.
+  const isExperientialGateway =
+    config.provider === "api-compatible" &&
+    /^https:\/\/api\.experientiallabs\.ai\/(?:api\/)?v1\/?$/.test(
+      config.baseURL || "",
+    );
   const capabilities = imageCapabilities(
     config.provider,
     config.model,
-    input.options,
+    isExperientialGateway
+      ? {
+          ...input.options,
+          supportsReferenceImages: true,
+          supportsMultiImageInput: true,
+        }
+      : input.options,
   );
   const references =
     capabilities.supportsReferenceImages && input.options?.references !== false
@@ -248,6 +260,30 @@ export async function generateAPIImage(
           delivery: "inline",
         },
       });
+    } else if (isExperientialGateway) {
+      // The gateway documents Chat Completions and Responses, not /images/*.
+      // Omit unsupported sampling fields (notably modalities and seed).
+      url = `${validateImageBaseURL(config.baseURL || "")}/chat/completions`;
+      headers.Authorization = `Bearer ${config.key}`;
+      body = JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "user",
+            content: references.length
+              ? [
+                  { type: "text", text: composed },
+                  ...references.map((ref) => ({
+                    type: "image_url",
+                    image_url: {
+                      url: `data:${ref.mime};base64,${ref.bytes.toString("base64")}`,
+                    },
+                  })),
+                ]
+              : composed,
+          },
+        ],
+      });
     } else {
       const baseURL =
         config.provider === "api-compatible"
@@ -324,6 +360,43 @@ export async function generateAPIImage(
               part.data,
           );
           bytes = decodeImage(image?.data, label);
+        } else if (isExperientialGateway) {
+          // OpenAI-compatible image-enabled chat responses may carry image_url
+          // in message.images or message.content; text alone is never a result.
+          const message = result.choices?.[0]?.message;
+          const parts = [
+            ...(Array.isArray(message?.images) ? message.images : []),
+            ...(Array.isArray(message?.content) ? message.content : []),
+          ];
+          const source = parts
+            .map(
+              (part: {
+                image_url?: string | { url?: string };
+                url?: string;
+                data?: string;
+                mime_type?: string;
+              } | null) =>
+                typeof part?.image_url === "string"
+                  ? part.image_url
+                  : part?.image_url?.url ||
+                    part?.url ||
+                    (part?.data && part.mime_type?.startsWith("image/")
+                      ? `data:${part.mime_type};base64,${part.data}`
+                      : undefined),
+            )
+            .find((item: string | undefined) => !!item);
+          if (!source)
+            throw new ImagePipelineError(
+              "IMAGE_API_FAILED",
+              "Experiential trả về nội dung nhưng không có ảnh. Gateway hoặc model có thể chưa hỗ trợ xuất ảnh qua Chat Completions; hãy kiểm tra model bằng một request thử trước khi chạy hàng loạt.",
+            );
+          if (source.startsWith("data:")) {
+            const match =
+              /^data:image\/(?:png|jpeg|jpg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(
+                source,
+              );
+            bytes = decodeImage(match?.[1], label);
+          } else bytes = await downloadImage(source, config.baseURL);
         } else
           bytes = result.data?.[0]?.url
             ? await downloadImage(result.data[0].url, config.baseURL)

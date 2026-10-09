@@ -17,9 +17,15 @@ Write-Output 'STORYFLOW_SETUP:python'
 if (-not (Test-Path -LiteralPath $uv)) {
   $zip = Join-Path $tools 'uv-0.12.24.zip'
   Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/astral-sh/uv/releases/download/0.12.24/uv-x86_64-pc-windows-msvc.zip' -OutFile $zip
-  if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '7c38608c8a18ee137d748a1773053b07ec8f3a30fab49aebaa6f4e4efeceb019') { throw 'UV checksum mismatch' }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  $stream = [IO.File]::OpenRead($zip)
+  try { $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
+  finally { $stream.Dispose(); $sha.Dispose() }
+  if ($hash -ne '7c38608c8a18ee137d748a1773053b07ec8f3a30fab49aebaa6f4e4efeceb019') { throw 'UV checksum mismatch' }
   $extract = Join-Path $tools 'uv-extract'
-  Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  if ([IO.Directory]::Exists($extract)) { [IO.Directory]::Delete($extract,$true) }
+  [IO.Compression.ZipFile]::ExtractToDirectory($zip,$extract)
   $downloaded = Get-ChildItem -LiteralPath $extract -Filter uv.exe -Recurse | Select-Object -First 1
   if (-not $downloaded) { throw 'UV executable missing' }
   Copy-Item -LiteralPath $downloaded.FullName -Destination $uv -Force

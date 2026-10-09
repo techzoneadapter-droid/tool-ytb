@@ -71,6 +71,8 @@ async function main() {
           {
             windowsHide: true,
             shell: false,
+            // Do not inherit PowerShell 7's module search path into Windows PowerShell 5.
+            env: { ...process.env, PSModulePath: undefined },
             stdio: ["ignore", "pipe", "pipe"],
           },
         );

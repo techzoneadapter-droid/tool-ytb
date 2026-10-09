@@ -34,8 +34,9 @@ async function control(route, method = 'GET') {
   const response = await fetch(url + '/_storyflow/' + route, {
     method, headers: { 'x-storyflow-token': token }, signal: AbortSignal.timeout(20000),
   });
-  if (!response.ok) throw Error('Chưa chuẩn bị được dữ liệu để cập nhật.');
-  return response.json();
+  const result = await response.json();
+  if (!response.ok) throw Error(result.error || 'Chưa chuẩn bị được dữ liệu để cập nhật.');
+  return result;
 }
 async function stopServer() {
   if (!server || server.exitCode !== null) return;
@@ -99,13 +100,15 @@ async function start() {
   ipcMain.handle('storyflow:update', event => { trusted(event); void updates.request(); return state(); });
   ipcMain.handle('storyflow:workspace', async event => {
     trusted(event);
-    if ((await control('status')).activeJobs > 0) { dialog.showErrorBox('StoryFlow', 'Đợi tác vụ hoàn thành trước khi đổi thư mục dữ liệu.'); return; }
+    if ((await control('status')).activeJobs > 0) throw Error('Có tác vụ đang chạy hoặc chờ xử lý. Hoàn tất hoặc hủy tác vụ trước khi đổi thư mục dữ liệu.');
     const selected = await dialog.showOpenDialog(window, { title: 'Chọn thư mục dự án cũ hoặc thư mục lưu dữ liệu', defaultPath: workspace, properties: ['openDirectory', 'createDirectory'] });
     if (selected.canceled) return;
     const chosen = validateWorkspace(selected.filePaths[0], path.dirname(app.getPath('exe')));
     if (chosen === workspace) return;
     await control('prepare-update', 'POST');
     saveWorkspace(app.getPath('userData'), chosen, path.dirname(app.getPath('exe')));
+    // Relaunch inherits environment overrides; do not let the old path win.
+    process.env.STORYFLOW_WORKSPACE = chosen;
     installing = true; await stopServer(); quitting = true; app.relaunch(); app.quit();
   });
   const rgba = Buffer.alloc(32 * 32 * 4);

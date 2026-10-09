@@ -20,9 +20,12 @@ async function stopWorker() {
   const lock = path.join(workspace, 'data/worker.lock');
   if (!fs.existsSync(lock)) return;
   const pid = Number(fs.readFileSync(lock, 'utf8'));
-  const health = JSON.parse(fs.readFileSync(path.join(workspace, 'data/worker.health.json'), 'utf8'));
-  if (!Number.isInteger(pid) || pid <= 0 || health.pid !== pid) throw Error('Không xác minh được worker.');
+  if (!Number.isInteger(pid) || pid <= 0) throw Error('Không xác minh được worker.');
   try { process.kill(pid, 0); } catch (e) { if (e.code === 'ESRCH') { fs.rmSync(lock, { force: true }); return; } throw e; }
+  const healthFile = path.join(workspace, 'data/worker.health.json');
+  if (!fs.existsSync(healthFile)) throw Error('Worker còn chạy nhưng thiếu heartbeat. Hãy thoát và mở lại app rồi thử lại.');
+  const health = JSON.parse(fs.readFileSync(healthFile, 'utf8'));
+  if (health.pid !== pid) throw Error('Không xác minh được worker. Hãy thoát và mở lại app rồi thử lại.');
   if (!health.time || Date.now() - health.time > 30000) throw Error('Worker heartbeat đã cũ.');
   try { process.kill(pid, 'SIGTERM'); } catch (e) { if (e.code !== 'ESRCH') throw e; }
   for (let i = 0; i < 100; i++) {
@@ -66,7 +69,7 @@ async function main() {
         else if (route === '/_storyflow/prepare-update' && req.method === 'POST') result = { ok: true, backup: await prepareUpdate() };
         else { res.writeHead(404); res.end(); return; }
         res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result));
-      } catch { res.writeHead(409); res.end(JSON.stringify({ ok: false, error: 'Chưa chuẩn bị được cập nhật.' })); }
+      } catch (error) { res.writeHead(409, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: error.message || 'Chưa chuẩn bị được cập nhật.' })); }
       return;
     }
     if (preparingUpdate && req.method !== 'GET') {
@@ -83,4 +86,4 @@ async function main() {
   for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => server.close(() => process.exit(0)));
 }
 if (require.main === module) main().catch(error => { console.error(error); process.exit(1); });
-module.exports = { activeJobs, prepareUpdate };
+module.exports = { activeJobs, prepareUpdate, stopWorker };

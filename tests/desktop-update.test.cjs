@@ -4,6 +4,7 @@ const {EventEmitter}=require('node:events');
 const {mkdtempSync,rmSync,writeFileSync,readFileSync}=require('node:fs');
 const path=require('node:path');
 const os=require('node:os');
+const {execFileSync}=require('node:child_process');
 const {DesktopUpdates}=require('../desktop/update-controller.cjs');
 const {resolveWorkspace,saveWorkspace}=require('../desktop/workspace.cjs');
 function fixture(options={}){
@@ -38,5 +39,32 @@ test('workspace preference survives installs without modifying existing story fi
     const chosen=saveWorkspace(prefs,legacy,install);writeFileSync(path.join(chosen,'story.txt'),'existing content');
     assert.equal(resolveWorkspace(prefs,path.join(directory,'new-installation')),chosen);assert.equal(readFileSync(path.join(chosen,'story.txt'),'utf8'),'existing content');
     assert.throws(()=>saveWorkspace(prefs,path.join(install,'data'),install),/bên ngoài/);
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+test('update exposes the actual preparation failure and clears it on retry',async()=>{
+  let fail=true;
+  const f=fixture({prepareInstall:async()=>{if(fail)throw Error('Worker heartbeat đã cũ.');}});
+  await f.controller.request();await until(()=>f.controller.state.phase==='error');
+  assert.match(f.controller.state.error,/heartbeat/);
+  fail=false;await f.controller.request();await until(()=>f.counts().installs===1);
+  assert.equal(f.controller.state.error,undefined);f.controller.dispose();
+});
+test('dead worker locks can be recovered even when heartbeat is missing or malformed',()=>{
+  const directory=mkdtempSync(path.join(os.tmpdir(),'storyflow-dead-worker-'));
+  try{
+    const server=path.resolve(__dirname,'../desktop/server.cjs');
+    execFileSync(process.execPath,['-e',`
+      const fs=require('node:fs'),assert=require('node:assert/strict');
+      fs.mkdirSync('data');
+      const {stopWorker}=require(${JSON.stringify(server)});
+      process.kill=()=>{const error=Error('dead');error.code='ESRCH';throw error;};
+      (async()=>{
+        for(const health of [undefined,'malformed']){
+          fs.writeFileSync('data/worker.lock','12345');
+          if(health)fs.writeFileSync('data/worker.health.json',health);
+          await stopWorker();assert.equal(fs.existsSync('data/worker.lock'),false);
+        }
+      })().catch(error=>{console.error(error);process.exit(1);});
+    `],{cwd:directory,stdio:'pipe'});
   }finally{rmSync(directory,{recursive:true,force:true});}
 });

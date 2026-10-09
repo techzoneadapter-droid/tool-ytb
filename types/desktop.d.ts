@@ -22,6 +22,7 @@ declare global {
     nextVersion?: string;
     percent: number;
     message: string;
+    error?: string;
     workspace: string;
   }
 }

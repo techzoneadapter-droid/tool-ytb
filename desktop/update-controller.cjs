@@ -17,14 +17,16 @@ class DesktopUpdates extends EventEmitter {
   fail(error) {
     this.emit('failure', error);
     clearTimeout(this.timer); this.requested = false;
-    this.set({ phase: 'error', message: 'Chưa cập nhật được. Kiểm tra mạng rồi bấm thử lại; dữ liệu hiện tại được giữ nguyên.' });
+    const detail = String(error?.message || error || 'Không rõ nguyên nhân.').slice(0, 1000);
+    this.set({ phase: 'error', message: 'Chưa cập nhật được. Bấm thử lại; dữ liệu hiện tại được giữ nguyên.', error: detail });
   }
   async request() {
     if (!this.installed || ['checking', 'downloading', 'waiting', 'installing'].includes(this.state.phase)) return this.state;
     this.requested = true;
+    this.set({ error: undefined });
     if (this.downloaded) { void this.tryInstall(); return this.state; }
     this.available = undefined;
-    this.set({ phase: 'checking', percent: 0, message: 'Đang kiểm tra bản phát hành trên GitHub…' });
+    this.set({ phase: 'checking', percent: 0, error: undefined, message: 'Đang kiểm tra bản phát hành trên GitHub…' });
     try {
       await this.updater.checkForUpdates();
       if (this.available && this.requested) {

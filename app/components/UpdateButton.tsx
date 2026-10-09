@@ -28,8 +28,12 @@ export function UpdateButton() {
     setError("");
     try {
       await window.storyflowDesktop?.update();
-    } catch {
-      setError("Chưa cập nhật được. Bấm thử lại.");
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Chưa cập nhật được. Bấm thử lại.",
+      );
     }
   }
   return (
@@ -60,14 +64,27 @@ export function UpdateButton() {
       <p role="status" aria-live="polite">
         {error || state.message}
       </p>
+      {state.error && (
+        <details>
+          <summary>Chi tiết lỗi cập nhật</summary>
+          <pre>{state.error}</pre>
+        </details>
+      )}
       <button
         className="text-button"
         disabled={busy}
-        onClick={() =>
+        onClick={() => {
+          setError("");
           void window.storyflowDesktop
             ?.chooseWorkspace()
-            .catch(() => setError("Chưa đổi được thư mục dữ liệu."))
-        }
+            .catch((cause) =>
+              setError(
+                cause instanceof Error
+                  ? cause.message
+                  : "Chưa đổi được thư mục dữ liệu.",
+              ),
+            );
+        }}
       >
         Chọn thư mục dữ liệu
       </button>

@@ -2,9 +2,11 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { codePath } from "../project/code-path";
+import { pathToFileURL } from "node:url";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu" | "flow";
-export const WORKER_PROTOCOL = 20;
+export const WORKER_PROTOCOL = 21;
 export const FLOW_PROTOCOL = 23;
 export async function alive(file: string) {
   try {
@@ -195,7 +197,7 @@ async function startFlowService(options: { replaceFlowSession?: boolean }) {
     const log = await open(path.resolve("data/flow.log"), "a");
     let failure = "";
     try {
-      const child = spawn(/* turbopackIgnore: true */ command, [path.resolve("workers/flow_server.py")], {
+      const child = spawn(/* turbopackIgnore: true */ command, [codePath("workers/flow_server.py")], {
         env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
         shell: false, windowsHide: true, detached: true, stdio: ["ignore", log.fd, log.fd],
       });
@@ -275,7 +277,7 @@ async function start(service: Exclude<Service, "flow">) {
     let command: string, args: string[], cwd: string | undefined;
     if (service === "worker") {
       command = process.execPath;
-      args = ["--import", "tsx", path.resolve("scripts/worker.ts")];
+      args = ["--import", pathToFileURL(codePath("node_modules/tsx/dist/loader.mjs")).href, codePath("scripts/worker.ts")];
     } else if (service === "vieneu") {
       cwd =
         process.env.VIENEU_REPO_DIR ||
@@ -330,7 +332,7 @@ async function start(service: Exclude<Service, "flow">) {
         );
       const url = serviceURL(service);
       args = [
-        path.resolve(
+        codePath(
           service === "korva"
             ? "workers/korva_server.py"
             : "workers/local_ai.py",

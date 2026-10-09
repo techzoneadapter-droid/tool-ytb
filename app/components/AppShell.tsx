@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { BookOpen, Clapperboard, Film, Radio, Layers } from "lucide-react";
+import { UpdateButton } from "./UpdateButton";
 import { useStudioData } from "./useStudioData";
 import { StoryImportPage } from "./story/StoryImportPage";
 import { VideoCreatePage } from "./video/VideoCreatePage";
@@ -69,6 +70,7 @@ export default function AppShell() {
             </button>
           ))}
         </nav>
+        <UpdateButton />
         <div className="sidebar-footer">
           <span className={"dot " + (ready ? "green" : "amber")} />
           {!data.providers

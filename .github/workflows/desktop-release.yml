@@ -1,0 +1,66 @@
+name: StoryFlow Windows installer
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: storyflow-windows-release
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Prepare bundled Node and verified FFmpeg
+        shell: pwsh
+        run: ./desktop/prepare-windows.ps1
+      - run: npm test
+      - run: npm run test:desktop
+      - name: Assign release version
+        shell: pwsh
+        run: npm version "1.0.${{ github.run_number }}" --no-git-tag-version
+      - name: Build Windows installer
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Build an older installer for the real update test
+        run: npx electron-builder --win nsis --x64 --publish never --config.extraMetadata.version=0.9.0 --config.directories.output=dist-fixture
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Install and upgrade through the app button on Windows
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist-fixture/*.exe | Select-Object -First 1).FullName
+          $install = Join-Path $env:RUNNER_TEMP "StoryFlowInstalled"
+          Start-Process -FilePath $setup -ArgumentList "/S", "/D=$install" -Wait
+          $env:STORYFLOW_SMOKE_EXE = Join-Path $install "StoryFlow.exe"
+          npm run smoke:desktop
+          if ($LASTEXITCODE -ne 0) { throw "Installed update smoke failed" }
+      - name: Publish only the tested installer and update manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          git tag "v$version"
+          git push origin "v$version"
+          gh release create "v$version" dist/*.exe dist/*.blockmap dist/latest.yml dist/desktop-smoke/before-update.png dist/desktop-smoke/after-update.png --title "StoryFlow $version" --notes "Bộ cài Windows x64, kèm Node.js và FFmpeg. Dùng một ảnh tải lên cho toàn bộ video. Có nút cập nhật trong app, sao lưu trước khi nâng cấp và giữ dữ liệu ngoài thư mục cài. Đã kiểm thử cài đặt, dựng MP4 bằng FFmpeg, cập nhật qua nút trong app và giữ dữ liệu sau nâng cấp."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: StoryFlow-Windows
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
+            dist/desktop-smoke/**

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, open, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isSameOrigin } from "@/modules/project/request";
+import { codePath } from "@/modules/project/code-path";
 import { alive } from "@/modules/providers/services";
 export const runtime = "nodejs";
 const statusFile = path.resolve("data/ai-setup-status.json");
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        path.resolve("scripts/setup-local-ai.ps1"),
+        codePath("scripts/setup-local-ai.ps1"),
         ...(b.action === "download" ? ["-DownloadModel"] : []),
       ],
       { windowsHide: true, shell: false, stdio: ["ignore", log.fd, log.fd] },

@@ -2006,3 +2006,9 @@ progress::-webkit-progress-value {
     display: none;
   }
 }
+
+.desktop-update { padding: 12px 0; margin-top: auto; border-top: 1px solid var(--border, #e5e7eb); }
+.desktop-update p { font-size: 12px; line-height: 1.5; margin: 6px 12px; color: #64748b; }
+.desktop-update small { display: block; margin: 6px 12px; font-size: 11px; }
+.desktop-workspace { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-update .text-button { margin: 0 12px; font-size: 12px; }

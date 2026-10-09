@@ -1,3 +1,4 @@
+import { codePath } from "../project/code-path";
 import { spawn } from "node:child_process";
 import { access, mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -30,10 +31,6 @@ function percent(value: number) {
   return rounded > 0 ? "+" + rounded + "%" : rounded + "%";
 }
 
-function npxCommand() {
-  return process.platform === "win32" ? "npx.cmd" : "npx";
-}
-
 async function runEdge(
   text: string,
   file: string,
@@ -44,8 +41,7 @@ async function runEdge(
   const pitch = percent(settings.pitch * 6);
   const volume = percent((settings.volume - 1) * 100);
   const args = [
-    "--yes",
-    "node-edge-tts@1.2.10",
+    codePath("node_modules/node-edge-tts/bin.js"),
     "-t",
     text,
     "-f",
@@ -65,7 +61,7 @@ async function runEdge(
   ];
 
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(npxCommand(), args, {
+    const child = spawn(process.execPath, args, {
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "ignore", "pipe"],

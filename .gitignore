@@ -16,3 +16,6 @@ build-error.txt
 .flow-venv/
 cookies.json
 cookies.json.tmp
+
+.desktop-payload/
+dist/

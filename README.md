@@ -8,6 +8,14 @@ Trong **Tạo video → Ảnh cho toàn bộ video**, tải một ảnh PNG/JPG/
 
 Ứng dụng không tạo ảnh bằng API, Flow hay engine local. Giao diện kết nối/tạo ảnh đã bỏ; endpoint ảnh cũ trả HTTP 410 và hàng đợi cũ cũng chuyển sang ảnh tải lên. Giọng đọc, phụ đề, nhạc, logo, intro/outro, tỷ lệ khung hình, ảnh động tùy chọn, tiến độ, retry, xuất từng chương/gộp video được giữ nguyên. Các mục Flow/API ảnh và báo cáo cũ bên dưới là tài liệu của phiên bản trước, không còn là hướng dẫn sử dụng tính năng tạo ảnh trong app hiện tại.
 
+## Bộ cài Windows và cập nhật
+
+Tải `StoryFlow-Setup-<version>-x64.exe` ở [GitHub Releases](https://github.com/techzoneadapter-droid/tool-ytb/releases/latest), chạy bộ cài rồi mở StoryFlow từ Desktop/Start Menu. Bộ cài kèm Node.js và FFmpeg/FFprobe; Edge TTS dùng thư viện đã đóng gói, không chạy npx hay tải npm lúc đọc. Các engine VieNeu/Korva/Wan local vẫn dùng môi trường/model đã thiết lập của bạn.
+
+Nút **Cập nhật** ở thanh bên kiểm tra bản phát hành ổn định, tải bản mới có kiểm tra SHA512, chờ các tác vụ đang chạy hoàn thành, sao lưu SQLite rồi cài và mở lại app. Dữ liệu mặc định nằm tại `%APPDATA%/StoryFlow/workspace/data`, tệp sao lưu tại `workspace/backups`. Để dùng lại bản chạy mã nguồn, bấm **Chọn thư mục dữ liệu** và chọn thư mục repo cũ chứa `data/storyflow.sqlite` cùng `.env.local`/các môi trường Python của bạn; không cần chuyển hay xóa dữ liệu.
+
+Mỗi lần sửa code trên `main`, GitHub Actions tạo phiên bản `1.0.<số lần chạy>`, build, cài một bản cũ trên Windows, dựng MP4 bằng FFmpeg rồi nâng cấp qua chính nút trong app. Chỉ khi kiểm tra giữ dữ liệu sau nâng cấp đạt, quy trình mới phát hành EXE, blockmap và `latest.yml`. Cập nhật nhận bản phát hành, không cài trực tiếp các commit chưa build.
+
 ## Chạy
 
 Cần Node.js 22.13+ (khuyên dùng 24), FFmpeg và ffprobe trên PATH, FFmpeg có libx264/libass.

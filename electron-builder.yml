@@ -1,0 +1,34 @@
+appId: com.techzone.storyflow
+productName: StoryFlow
+asar: true
+npmRebuild: false
+directories:
+  app: .desktop-payload/shell
+  output: dist
+  buildResources: .desktop-payload/icons
+files:
+  - desktop/**
+  - package.json
+  - node_modules/**
+extraResources:
+  - from: .desktop-payload/runtime
+    to: runtime
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: .desktop-payload/icons/icon.ico
+  artifactName: StoryFlow-Setup-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+publish:
+  provider: github
+  owner: techzoneadapter-droid
+  repo: tool-ytb
+  releaseType: release

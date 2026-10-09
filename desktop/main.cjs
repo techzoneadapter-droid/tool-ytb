@@ -52,7 +52,7 @@ async function start() {
   if (!fs.existsSync(path.join(codeRoot, '.next/BUILD_ID'))) throw Error('Chưa có bản build giao diện.');
   fs.mkdirSync(path.join(workspace, 'data'), { recursive: true });
   log = fs.openSync(path.join(workspace, 'data/desktop.log'), 'a');
-  const env = { ...process.env, STORYFLOW_CODE_ROOT: codeRoot, STORYFLOW_DESKTOP_TOKEN: token,
+  const env = { ...process.env, STORYFLOW_CODE_ROOT: codeRoot, STORYFLOW_DESKTOP_TOKEN: token, STORYFLOW_WORKSPACE: workspace,
     TSX_TSCONFIG_PATH: path.join(codeRoot, 'tsconfig.json'), ELECTRON_RUN_AS_NODE: '1' };
   if (app.isPackaged) {
     env.FFMPEG_PATH = path.join(process.resourcesPath, 'runtime/bin/ffmpeg.exe');
@@ -78,7 +78,7 @@ async function start() {
   updates = new DesktopUpdates({ updater: autoUpdater, version: app.getVersion(), installed: app.isPackaged && process.platform === 'win32',
     isBusy: async () => (await control('status')).activeJobs > 0,
     prepareInstall: () => control('prepare-update', 'POST'),
-    install: async () => { installing = true; await stopServer(); quitting = true; autoUpdater.quitAndInstall(false, true); },
+    install: async () => { installing = true; await stopServer(); quitting = true; autoUpdater.quitAndInstall(true, true); },
   });
   if (smoke) updates.on('failure', error => fs.writeFileSync(path.join(process.env.STORYFLOW_SMOKE_DIR, 'error.txt'), String(error?.stack || error || 'Update failed')));
   window = new BrowserWindow({ show: !smoke, width: 1440, height: 950, minWidth: 1000, minHeight: 650, title: 'StoryFlow',

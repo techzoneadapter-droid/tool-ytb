@@ -40,6 +40,8 @@ jobs:
             node --import $loader (Join-Path $repo 'scripts/setup-vieneu.ts')
             if ($LASTEXITCODE -ne 0) {
               Get-Content data/vieneu-setup.log -Tail 100
+              Get-Content data/vieneu-setup.json
+              if (Test-Path data/vieneu.log) { Get-Content data/vieneu.log -Tail 100 }
               throw 'VieNeu setup failed'
             }
             node --import $loader (Join-Path $repo 'scripts/smoke-vieneu-install.ts')

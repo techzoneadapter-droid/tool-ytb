@@ -291,7 +291,9 @@ async function start(service: Exclude<Service, "flow">) {
         throw Error(
           "VieNeu dùng cổng tùy chỉnh; cần cấu hình engine ngoài ứng dụng.",
         );
-      args = ["-m", "apps.openai_speech"];
+      args = runtime.managed
+        ? [codePath("workers/vieneu_server.py")]
+        : ["-m", "apps.openai_speech"];
     } else {
       const environment = service === "korva" ? ".tts-venv" : ".ai-venv";
       const fromCLI =
@@ -358,7 +360,8 @@ async function start(service: Exclude<Service, "flow">) {
           ...(vieneuPaths().managed ? {
             VIENEU_BACKEND: process.env.VIENEU_BACKEND || "onnx",
             VIENEU_DEVICE: process.env.VIENEU_DEVICE || "cpu",
-            VIENEU_PRECISION: process.env.VIENEU_PRECISION || "int8",
+            VIENEU_PRECISION: process.env.VIENEU_PRECISION || "fp32",
+            STORYFLOW_VIENEU_MODELS: path.resolve("data/ai/vieneu/models"),
             HF_HOME: process.env.HF_HOME || path.resolve("data/huggingface"),
           } : {}),
         } : {}),

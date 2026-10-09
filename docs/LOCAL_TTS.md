@@ -1,6 +1,6 @@
 ## Desktop: tự cài VieNeu sau cập nhật
 
-Bản desktop tự thiết lập VieNeu khi mở dự án đã chọn `vieneu-local`: tải Python riêng, cài VieNeu 3.8.3 và tải/nạp model CPU ONNX int8. Không cần cài Git, Python, uv hay chạy PowerShell thủ công. Có nút **Cài và khởi động VieNeu** và nhật ký/tiến độ từng giai đoạn trong Tạo video. Lần đầu cần Internet và có thể mất nhiều phút; app chỉ báo sẵn sàng sau khi engine trả danh sách giọng thực tế.
+Bản desktop tự thiết lập VieNeu khi mở dự án đã chọn `vieneu-local`: tải Python riêng, cài VieNeu 3.8.3 và tải/nạp model CPU ONNX fp32. Không cần cài Git, Python, uv hay chạy PowerShell thủ công. Có nút **Cài và khởi động VieNeu** và nhật ký/tiến độ từng giai đoạn trong Tạo video. Lần đầu cần Internet và có thể mất nhiều phút; app chỉ báo sẵn sàng sau khi engine trả danh sách giọng thực tế.
 
 Môi trường nằm trong `<thư mục dữ liệu>/data/ai/vieneu`, Python/uv riêng trong `data/ai/tools`, model trong `data/huggingface` (hoặc `HF_HOME` đã cấu hình). Cập nhật app giữ các thư mục này. Nếu cài đặt bị gián đoạn, bấm nút cài lại để tiếp tục, không xóa truyện. App chờ thiết lập xong trước khi cài bản cập nhật hoặc đổi thư mục dữ liệu.
 

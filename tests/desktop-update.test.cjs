@@ -68,3 +68,16 @@ test('dead worker locks can be recovered even when heartbeat is missing or malfo
     `],{cwd:directory,stdio:'pipe'});
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
+test('desktop cannot replace code or workspace while a live VieNeu installer owns the setup lock',()=>{
+  const directory=mkdtempSync(path.join(os.tmpdir(),'storyflow-ai-install-'));
+  try{
+    const server=path.resolve(__dirname,'../desktop/server.cjs');
+    execFileSync(process.execPath,['-e',`
+      const fs=require('node:fs'),assert=require('node:assert/strict');
+      fs.mkdirSync('data');fs.writeFileSync('data/vieneu-setup.lock',String(process.pid));
+      const {activeJobs,prepareUpdate}=require(${JSON.stringify(server)});
+      assert.equal(activeJobs(),1);
+      assert.rejects(prepareUpdate(),/Tác vụ đang chạy/).catch(error=>{console.error(error);process.exit(1);});
+    `],{cwd:directory,stdio:'pipe'});
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});

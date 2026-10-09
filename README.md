@@ -16,6 +16,10 @@ Nút **Cập nhật** ở thanh bên kiểm tra bản phát hành ổn định, 
 
 Mỗi lần sửa code trên `main`, GitHub Actions tạo phiên bản `1.0.<số lần chạy>`, build, cài một bản cũ trên Windows, dựng MP4 bằng FFmpeg rồi nâng cấp qua chính nút trong app. Chỉ khi kiểm tra giữ dữ liệu sau nâng cấp đạt, quy trình mới phát hành EXE, blockmap và `latest.yml`. Cập nhật nhận bản phát hành, không cài trực tiếp các commit chưa build.
 
+## Tự cài VieNeu trên desktop
+
+Sau cập nhật, dự án chọn VieNeu Local được tự thiết lập Python, thư viện và model khi mở app. Tiến độ từng giai đoạn hiển thị tại Tạo video; có nút **Cài và khởi động VieNeu** để thử lại. Lần đầu cần mạng để tải model; các lần sau dùng môi trường/model đã lưu trong thư mục dữ liệu. Cấu hình mặc định chạy CPU ONNX int8. Xem [LOCAL_TTS.md](docs/LOCAL_TTS.md).
+
 ## Chạy
 
 Cần Node.js 22.13+ (khuyên dùng 24), FFmpeg và ffprobe trên PATH, FFmpeg có libx264/libass.

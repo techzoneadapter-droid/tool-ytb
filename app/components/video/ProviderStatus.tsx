@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Settings } from "@/modules/project/types";
 import type { StudioData } from "../studio-api";
 import { request } from "../studio-api";
-import { imageAPIOptions, isImageAPIProvider } from "@/modules/providers/image-api-options";
+import {
+  imageAPIOptions,
+  isImageAPIProvider,
+} from "@/modules/providers/image-api-options";
 
 export function ProviderStatus({
   providers: p,
@@ -17,6 +20,36 @@ export function ProviderStatus({
 }) {
   const [busy, setBusy] = useState("");
   const [detail, setDetail] = useState("");
+  const [ttsSetup, setTtsSetup] = useState<{
+    state: string;
+    stage?: string;
+    detail?: string;
+    log?: string;
+  }>();
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  useEffect(() => {
+    let active = true;
+    let lastState = "";
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/tts/setup");
+        if (!response.ok) return;
+        const result = await response.json();
+        if (!active) return;
+        setTtsSetup(result);
+        if (result.state === "done" && lastState !== "done")
+          await refreshRef.current();
+        lastState = result.state;
+      } catch {}
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 2500);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
   const [setup, setSetup] = useState(false);
   const [install, setInstall] = useState<{
     state: string;
@@ -46,7 +79,9 @@ export function ProviderStatus({
     } else if (p?.flow?.generationReady) {
       pendingFlow.current = false;
       setWaitingFlow(false);
-      void afterFlow.current?.().catch(error => setDetail((error as Error).message));
+      void afterFlow
+        .current?.()
+        .catch((error) => setDetail((error as Error).message));
     }
   }, [p?.flow?.generationReady, p?.flow?.state, p?.flow?.lastError]);
 
@@ -85,6 +120,11 @@ export function ProviderStatus({
     setBusy(service);
     setDetail("");
     try {
+      if (service === "vieneu") {
+        await request({ action: "install" }, "/api/tts/setup");
+        setTtsSetup({ state: "running", stage: "python" });
+        return;
+      }
       await request({ action: "startService", service });
       await refresh();
     } catch (error) {
@@ -99,7 +139,13 @@ export function ProviderStatus({
     setDetail("");
     try {
       pendingFlow.current = true;
-      const result = await request<{ status: NonNullable<StudioData["providers"]>["flow"] }>({ action: "initializeFlowSession", cookieJson, projectUrl: flowProjectUrl });
+      const result = await request<{
+        status: NonNullable<StudioData["providers"]>["flow"];
+      }>({
+        action: "initializeFlowSession",
+        cookieJson,
+        projectUrl: flowProjectUrl,
+      });
       setCookieJson("");
       if (result.status.generationReady) {
         pendingFlow.current = false;
@@ -135,37 +181,36 @@ export function ProviderStatus({
               configured: true,
               service: "",
             }
-        : ttsProvider === "pollinations"
-          ? {
-              label: "Pollinations TTS",
-              ready: !!p?.freeCloud?.pollinations?.ready,
-              configured: !!p?.freeCloud?.pollinations?.configured,
-              service: "",
-            }
-        : ttsProvider === "korva-local"
-          ? {
-              label: "Korva Local",
-              ready: !!p?.local.korva.ready,
-              configured: true,
-              service: "korva",
-            }
-          : {
-              label: "VieNeu Local",
-              ready: !!p?.local.vieneu.ready,
-              configured: true,
-              service: "vieneu",
-            };
+          : ttsProvider === "pollinations"
+            ? {
+                label: "Pollinations TTS",
+                ready: !!p?.freeCloud?.pollinations?.ready,
+                configured: !!p?.freeCloud?.pollinations?.configured,
+                service: "",
+              }
+            : ttsProvider === "korva-local"
+              ? {
+                  label: "Korva Local",
+                  ready: !!p?.local.korva.ready,
+                  configured: true,
+                  service: "korva",
+                }
+              : {
+                  label: "VieNeu Local",
+                  ready: !!p?.local.vieneu.ready,
+                  configured: true,
+                  service: "vieneu",
+                };
 
     const provider = settings.imageProvider || "flux2-local";
-    const imageRaw =
-      isImageAPIProvider(provider)
-        ? {
-            label: `${imageAPIOptions.find(option => option.id === provider)!.label} · ${settings.imageModel || p?.imageAPIs?.[provider]?.model || "API key"}`,
-            ready: !!p?.imageAPIs?.[provider]?.connected,
-            configured: !!p?.imageAPIs?.[provider]?.configured,
-            service: "",
-          }
-        : provider === "flow-browser"
+    const imageRaw = isImageAPIProvider(provider)
+      ? {
+          label: `${imageAPIOptions.find((option) => option.id === provider)!.label} · ${settings.imageModel || p?.imageAPIs?.[provider]?.model || "API key"}`,
+          ready: !!p?.imageAPIs?.[provider]?.connected,
+          configured: !!p?.imageAPIs?.[provider]?.configured,
+          service: "",
+        }
+      : provider === "flow-browser"
         ? {
             label: `Google Flow · ${p?.flow?.model || "model của project"} · tài khoản của bạn`,
             ready: !!p?.flow?.generationReady,
@@ -173,42 +218,42 @@ export function ProviderStatus({
             service: "flow",
           }
         : provider === "aihorde"
-        ? {
-            label: "AI Horde · miễn phí cộng đồng",
-            ready: !!p?.freeCloud?.aiHorde?.ready,
-            configured: true,
-            service: "",
-          }
-        : provider === "pollinations"
           ? {
-              label: "Pollinations Image · anonymous",
-              ready: !!p?.freeCloud?.pollinations?.imageReady,
+              label: "AI Horde · miễn phí cộng đồng",
+              ready: !!p?.freeCloud?.aiHorde?.ready,
               configured: true,
               service: "",
             }
-        : provider === "modal-story" || provider === "modal-reference"
-        ? {
-            label:
-              provider === "modal-reference"
-                ? "Reference AI Cloud"
-                : "Story AI Cloud",
-            ready: !!p?.modal?.image?.ready,
-            configured: !!p?.modal?.image?.configured,
-            service: "",
-          }
-        : provider === "local-fast" || provider === "auto-local"
-          ? {
-              label: "Local Fast",
-              ready: !!p?.runtime.fast,
-              configured: true,
-              service: "fast",
-            }
-          : {
-              label: "FLUX.2 Local",
-              ready: !!p?.runtime.flux,
-              configured: true,
-              service: "flux",
-            };
+          : provider === "pollinations"
+            ? {
+                label: "Pollinations Image · anonymous",
+                ready: !!p?.freeCloud?.pollinations?.imageReady,
+                configured: true,
+                service: "",
+              }
+            : provider === "modal-story" || provider === "modal-reference"
+              ? {
+                  label:
+                    provider === "modal-reference"
+                      ? "Reference AI Cloud"
+                      : "Story AI Cloud",
+                  ready: !!p?.modal?.image?.ready,
+                  configured: !!p?.modal?.image?.configured,
+                  service: "",
+                }
+              : provider === "local-fast" || provider === "auto-local"
+                ? {
+                    label: "Local Fast",
+                    ready: !!p?.runtime.fast,
+                    configured: true,
+                    service: "fast",
+                  }
+                : {
+                    label: "FLUX.2 Local",
+                    ready: !!p?.runtime.flux,
+                    configured: true,
+                    service: "flux",
+                  };
 
     const fallback =
       settings.imageEnabled !== false &&
@@ -218,7 +263,9 @@ export function ProviderStatus({
     const image =
       settings.imageEnabled === false
         ? {
-            label: settings.fallbackImage ? "Ảnh dùng chung" : "Chưa tải ảnh dùng chung",
+            label: settings.fallbackImage
+              ? "Ảnh dùng chung"
+              : "Chưa tải ảnh dùng chung",
             ready: !!settings.fallbackImage,
             configured: true,
             service: "",
@@ -299,18 +346,31 @@ export function ProviderStatus({
               {!p
                 ? "Đang kiểm tra"
                 : row.ready
-                  ? settings.imageEnabled !== false && row.name === "Hình ảnh" && isImageAPIProvider(settings.imageProvider) ? "Đã kết nối" : "Sẵn sàng"
-                  : settings.imageEnabled !== false && row.name === "Hình ảnh" && isImageAPIProvider(settings.imageProvider) ? "Chưa kết nối"
-                  : row.service === "flow" && ["starting", "restoring"].includes(p?.flow?.state || "")
-                    ? "Đang khôi phục phiên Flow..."
-                  : row.configured
-                    ? "Chưa chạy"
-                    : "Chưa cấu hình"}
+                  ? settings.imageEnabled !== false &&
+                    row.name === "Hình ảnh" &&
+                    isImageAPIProvider(settings.imageProvider)
+                    ? "Đã kết nối"
+                    : "Sẵn sàng"
+                  : settings.imageEnabled !== false &&
+                      row.name === "Hình ảnh" &&
+                      isImageAPIProvider(settings.imageProvider)
+                    ? "Chưa kết nối"
+                    : row.service === "flow" &&
+                        ["starting", "restoring"].includes(p?.flow?.state || "")
+                      ? "Đang khôi phục phiên Flow..."
+                      : row.configured
+                        ? "Chưa chạy"
+                        : "Chưa cấu hình"}
             </span>
             {!row.ready && row.service && (
               <button
                 className="text-button"
-                disabled={!!busy || !p || (row.service === "flow" && !cookieJson.trim())}
+                disabled={
+                  !!busy ||
+                  !p ||
+                  (row.service === "vieneu" && ttsSetup?.state === "running") ||
+                  (row.service === "flow" && !cookieJson.trim())
+                }
                 onClick={() =>
                   row.service === "flow"
                     ? void openFlow()
@@ -321,9 +381,13 @@ export function ProviderStatus({
               >
                 {busy === row.service
                   ? "Đang mở…"
-                  : row.service === "flow"
-                    ? "Kết nối Flow"
-                    : "Khởi động"}
+                  : row.service === "vieneu"
+                    ? ttsSetup?.state === "running"
+                      ? "Đang thiết lập…"
+                      : "Cài và khởi động VieNeu"
+                    : row.service === "flow"
+                      ? "Kết nối Flow"
+                      : "Khởi động"}
               </button>
             )}
           </div>
@@ -345,34 +409,75 @@ export function ProviderStatus({
       )}
       {!current.image.configured && !current.image.fallback && (
         <p className="notice">
-          AI ảnh cloud đang được chọn nhưng chưa đủ cấu hình API key hoặc endpoint.
-          Thêm cấu hình tương ứng vào .env.local và khởi động lại server/worker.
+          AI ảnh cloud đang được chọn nhưng chưa đủ cấu hình API key hoặc
+          endpoint. Thêm cấu hình tương ứng vào .env.local và khởi động lại
+          server/worker.
         </p>
       )}
-      {settings.imageEnabled !== false && settings.imageProvider === "flow-browser" && !p?.flow?.generationReady && (
-        <p className="notice">
-          {["starting", "restoring"].includes(p?.flow?.state || "")
-            ? p?.flow?.lastStage === "FLOW_PROJECT_OPEN" ? "Đang mở dự án Flow..." : p?.flow?.lastStage === "FLOW_COMPOSER_WAIT" ? "Đang chờ trình tạo ảnh..." : "Đang khôi phục phiên Flow..."
-            : p?.flow?.lastError ? "Phiên Flow chưa sẵn sàng. Xem Chi tiết." : p?.flow?.message || "Dán JSON Cookie và URL dự án Flow để kết nối chạy ẩn."}
-          {onFlowConnected && " Kết nối xong sẽ tự tạo ảnh và dựng video cho các chương đang chọn."}
-        </p>
-      )}
-      {settings.imageEnabled !== false && settings.imageProvider === "flow-browser" && (
-        <div className="field">
-          <label htmlFor="flow-cookie-json">JSON Cookie (EditThisCookie)</label>
-          <textarea id="flow-cookie-json" value={cookieJson} autoComplete="off" spellCheck={false}
-            disabled={!!busy} onChange={event => setCookieJson(event.target.value)} rows={5} />
-          <label htmlFor="flow-project-url">URL project Flow</label>
-          <input id="flow-project-url" type="url" value={flowProjectUrl} disabled={!!busy}
-            placeholder="https://labs.google/fx/vi/tools/flow/project/..."
-            onChange={event => setFlowProjectUrl(event.target.value)} />
-          <button className="text-button" disabled={!!busy || !cookieJson.trim()} onClick={() => void openFlow()}>
-            {busy === "flow" ? "Đang kết nối chạy ẩn…" : "Kết nối bằng cookie"}
-          </button>
-          <p className="notice">Cookie được lưu cục bộ để khôi phục phiên, không đưa lên Git. Trình duyệt chạy headless. Project Flow giữ cấu hình model/tỷ lệ hiện tại.</p>
-          <p className="notice">Phiên: {p?.flow?.sessionReady ? "✓" : "chưa kết nối"} · Composer: {p?.flow?.composerReady ? "✓" : "chưa tìm thấy"} · Tạo ảnh: {p?.flow?.generationReady ? "sẵn sàng" : "chưa sẵn sàng"}{p?.flow?.lastStage ? ` · ${p.flow.lastStage}` : ""}</p>
-        </div>
-      )}
+      {settings.imageEnabled !== false &&
+        settings.imageProvider === "flow-browser" &&
+        !p?.flow?.generationReady && (
+          <p className="notice">
+            {["starting", "restoring"].includes(p?.flow?.state || "")
+              ? p?.flow?.lastStage === "FLOW_PROJECT_OPEN"
+                ? "Đang mở dự án Flow..."
+                : p?.flow?.lastStage === "FLOW_COMPOSER_WAIT"
+                  ? "Đang chờ trình tạo ảnh..."
+                  : "Đang khôi phục phiên Flow..."
+              : p?.flow?.lastError
+                ? "Phiên Flow chưa sẵn sàng. Xem Chi tiết."
+                : p?.flow?.message ||
+                  "Dán JSON Cookie và URL dự án Flow để kết nối chạy ẩn."}
+            {onFlowConnected &&
+              " Kết nối xong sẽ tự tạo ảnh và dựng video cho các chương đang chọn."}
+          </p>
+        )}
+      {settings.imageEnabled !== false &&
+        settings.imageProvider === "flow-browser" && (
+          <div className="field">
+            <label htmlFor="flow-cookie-json">
+              JSON Cookie (EditThisCookie)
+            </label>
+            <textarea
+              id="flow-cookie-json"
+              value={cookieJson}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={!!busy}
+              onChange={(event) => setCookieJson(event.target.value)}
+              rows={5}
+            />
+            <label htmlFor="flow-project-url">URL project Flow</label>
+            <input
+              id="flow-project-url"
+              type="url"
+              value={flowProjectUrl}
+              disabled={!!busy}
+              placeholder="https://labs.google/fx/vi/tools/flow/project/..."
+              onChange={(event) => setFlowProjectUrl(event.target.value)}
+            />
+            <button
+              className="text-button"
+              disabled={!!busy || !cookieJson.trim()}
+              onClick={() => void openFlow()}
+            >
+              {busy === "flow"
+                ? "Đang kết nối chạy ẩn…"
+                : "Kết nối bằng cookie"}
+            </button>
+            <p className="notice">
+              Cookie được lưu cục bộ để khôi phục phiên, không đưa lên Git.
+              Trình duyệt chạy headless. Project Flow giữ cấu hình model/tỷ lệ
+              hiện tại.
+            </p>
+            <p className="notice">
+              Phiên: {p?.flow?.sessionReady ? "✓" : "chưa kết nối"} · Composer:{" "}
+              {p?.flow?.composerReady ? "✓" : "chưa tìm thấy"} · Tạo ảnh:{" "}
+              {p?.flow?.generationReady ? "sẵn sàng" : "chưa sẵn sàng"}
+              {p?.flow?.lastStage ? ` · ${p.flow.lastStage}` : ""}
+            </p>
+          </div>
+        )}
 
       <details className="local-services">
         <summary>Engine khác / dự phòng</summary>
@@ -395,6 +500,32 @@ export function ProviderStatus({
         </div>
       </details>
 
+      {settings.ttsProvider === "vieneu-local" &&
+        ttsSetup &&
+        ttsSetup.state !== "idle" && (
+          <div
+            className={
+              "notice " +
+              (["error", "interrupted"].includes(ttsSetup.state) ? "error" : "")
+            }
+            role="status"
+            aria-live="polite"
+          >
+            {ttsSetup.state === "running"
+              ? {
+                  python: "Đang tải và thiết lập Python riêng cho VieNeu…",
+                  dependencies: "Đang cài thư viện giọng đọc…",
+                  model:
+                    "Đang tải/nạp model VieNeu. Lần đầu có thể mất nhiều phút…",
+                  verify: "Đang kiểm tra engine và danh sách giọng…",
+                }[ttsSetup.stage || "python"] || "Đang thiết lập VieNeu…"
+              : ttsSetup.detail}
+            <details>
+              <summary>Nhật ký cài VieNeu</summary>
+              <pre>{ttsSetup.log || "Đang chờ nhật ký…"}</pre>
+            </details>
+          </div>
+        )}
       {detail && (
         <div className="notice error" role="alert">
           Chưa khởi động được engine.
@@ -405,7 +536,10 @@ export function ProviderStatus({
         </div>
       )}
       {settings.imageEnabled !== false && p?.flow?.lastError && !detail && (
-        <details className="notice"><summary>Chi tiết Flow</summary><pre>{p.flow.lastError}</pre></details>
+        <details className="notice">
+          <summary>Chi tiết Flow</summary>
+          <pre>{p.flow.lastError}</pre>
+        </details>
       )}
 
       {setup && (

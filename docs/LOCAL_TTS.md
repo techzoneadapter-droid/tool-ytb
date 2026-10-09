@@ -1,3 +1,11 @@
+## Desktop: tự cài VieNeu sau cập nhật
+
+Bản desktop tự thiết lập VieNeu khi mở dự án đã chọn `vieneu-local`: tải Python riêng, cài VieNeu 3.8.3 và tải/nạp model CPU ONNX int8. Không cần cài Git, Python, uv hay chạy PowerShell thủ công. Có nút **Cài và khởi động VieNeu** và nhật ký/tiến độ từng giai đoạn trong Tạo video. Lần đầu cần Internet và có thể mất nhiều phút; app chỉ báo sẵn sàng sau khi engine trả danh sách giọng thực tế.
+
+Môi trường nằm trong `<thư mục dữ liệu>/data/ai/vieneu`, Python/uv riêng trong `data/ai/tools`, model trong `data/huggingface` (hoặc `HF_HOME` đã cấu hình). Cập nhật app giữ các thư mục này. Nếu cài đặt bị gián đoạn, bấm nút cài lại để tiếp tục, không xóa truyện. App chờ thiết lập xong trước khi cài bản cập nhật hoặc đổi thư mục dữ liệu.
+
+Môi trường VieNeu bên ngoài qua `VIENEU_REPO_DIR` và repo cũ đã cài vẫn được ưu tiên khi có cấu hình. Cấu hình managed mặc định dùng CPU, không bắt buộc card NVIDIA; người dùng có môi trường GPU riêng vẫn dùng cấu hình cũ. VieNeu được cài từ PyPI; uv 0.12.24 tải từ bản phát hành chính thức, kiểm tra SHA256 trước khi chạy. Phần dưới là tài liệu thao tác thủ công/lịch sử cho bản mã nguồn.
+
 # TTS local miễn phí cho StoryFlow
 
 > Cập nhật workflow 02/10/2026: `npm run dev` (hoặc `npm run app`) và `npm start` tự khởi động worker. Không cần terminal thứ hai. Trang Tạo video chạy toàn bộ pipeline; tài liệu/lệnh thủ công bên dưới dùng để cài đặt hoặc chẩn đoán nâng cao. Korva giữ model trong `workers/korva_server.py`; VieNeu tự khởi động từ `VIENEU_REPO_DIR` (mặc định repo VieNeu-TTS cạnh StoryFlow). Nút **Khởi động AI Engine** không tự cài dependencies. Các kết quả cũ bên dưới là lịch sử, xem README cho kết quả mới nhất.

@@ -9,11 +9,18 @@ require(path.join(codeRoot, 'node_modules/dotenv')).config({ path: '.env.local',
 require(path.join(codeRoot, 'node_modules/dotenv')).config({ quiet: true });
 let preparingUpdate = false;
 function activeJobs() {
+  const setupCount = ['vieneu-setup.lock', 'ai-setup.pid'].filter(name => {
+    try {
+      const pid = Number(fs.readFileSync(path.join(workspace, 'data', name), 'utf8'));
+      if (!Number.isInteger(pid) || pid <= 0) return false;
+      process.kill(pid, 0); return true;
+    } catch { return false; }
+  }).length;
   const file = path.join(workspace, 'data/storyflow.sqlite');
-  if (!fs.existsSync(file)) return 0;
+  if (!fs.existsSync(file)) return setupCount;
   const db = new DatabaseSync(file, { readOnly: true });
   try {
-    return db.prepare("SELECT body FROM records WHERE kind='job'").all().filter(row => ['queued', 'audio', 'images', 'rendering'].includes(JSON.parse(row.body).status)).length;
+    return setupCount + db.prepare("SELECT body FROM records WHERE kind='job'").all().filter(row => ['queued', 'audio', 'images', 'rendering'].includes(JSON.parse(row.body).status)).length;
   } finally { db.close(); }
 }
 async function stopWorker() {
@@ -82,6 +89,20 @@ async function main() {
     const port = server.address().port;
     process.send?.({ type: 'ready', port });
     console.log('STORYFLOW_READY port=' + port);
+    // Existing VieNeu projects become usable after updating without a terminal.
+    if (process.platform === 'win32') {
+      const file = path.join(workspace, 'data/storyflow.sqlite');
+      if (fs.existsSync(file)) {
+        const db = new DatabaseSync(file, { readOnly: true });
+        let needsVieNeu = false;
+        try { needsVieNeu = db.prepare("SELECT body FROM records WHERE kind='project'").all().some(row => JSON.parse(row.body).settings?.ttsProvider === 'vieneu-local'); }
+        finally { db.close(); }
+        if (needsVieNeu) {
+          const { launchVieneuSetup } = require(path.join(codeRoot, 'modules/providers/vieneu-setup.ts'));
+          void launchVieneuSetup().catch(error => console.error('VieNeu setup:', error.message));
+        }
+      }
+    }
   });
   for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => server.close(() => process.exit(0)));
 }

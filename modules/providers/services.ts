@@ -4,6 +4,7 @@ import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises
 import path from "node:path";
 import { codePath } from "../project/code-path";
 import { pathToFileURL } from "node:url";
+import { vieneuPaths } from "./vieneu-paths";
 
 export type Service = "worker" | "korva" | "flux" | "fast" | "wan" | "vieneu" | "flow";
 export const WORKER_PROTOCOL = 21;
@@ -279,17 +280,12 @@ async function start(service: Exclude<Service, "flow">) {
       command = process.execPath;
       args = ["--import", pathToFileURL(codePath("node_modules/tsx/dist/loader.mjs")).href, codePath("scripts/worker.ts")];
     } else if (service === "vieneu") {
-      cwd =
-        process.env.VIENEU_REPO_DIR ||
-        path.resolve(/* turbopackIgnore: true */ "..", "VieNeu-TTS");
-      command = path.join(
-        cwd,
-        ".venv",
-        process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
-      );
+      const runtime = vieneuPaths();
+      cwd = runtime.directory;
+      command = runtime.python;
       if (!existsSync(/* turbopackIgnore: true */ command))
         throw Error(
-          "VieNeu-TTS chưa cài môi trường Python. Xem Chi tiết / LOCAL_TTS.md.",
+          "VieNeu-TTS chưa cài môi trường Python. Bấm Cài và khởi động VieNeu để app tự thiết lập.",
         );
       if (serviceURL(service).port !== "8000")
         throw Error(
@@ -357,7 +353,15 @@ async function start(service: Exclude<Service, "flow">) {
         HOST: "127.0.0.1",
         PYTHONUTF8: "1",
         PYTHONIOENCODING: "utf-8",
-        ...(service === "vieneu" ? { PORT: "8000" } : {}),
+        ...(service === "vieneu" ? {
+          PORT: "8000",
+          ...(vieneuPaths().managed ? {
+            VIENEU_BACKEND: process.env.VIENEU_BACKEND || "onnx",
+            VIENEU_DEVICE: process.env.VIENEU_DEVICE || "cpu",
+            VIENEU_PRECISION: process.env.VIENEU_PRECISION || "int8",
+            HF_HOME: process.env.HF_HOME || path.resolve("data/huggingface"),
+          } : {}),
+        } : {}),
       },
       shell: false,
       windowsHide: true,
@@ -374,7 +378,8 @@ async function start(service: Exclude<Service, "flow">) {
     if (child.pid && service !== "worker")
       await writeFile(pidFile, String(child.pid));
     await log.close();
-    for (let i = 0; i < 240; i++) {
+    // First launch downloads the model; installation runs outside the HTTP request.
+    for (let i = 0; i < (service === "vieneu" ? 3600 : 240); i++) {
       if (await ready(service)) return;
       if (failure) break;
       await new Promise((r) => setTimeout(r, 500));

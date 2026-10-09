@@ -12,7 +12,7 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,6 +25,28 @@ jobs:
         run: ./desktop/prepare-windows.ps1
       - run: npm test
       - run: npm run test:desktop
+      - name: Install VieNeu on fresh Windows and verify real Ngoc Huyen audio
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          $repo = (Get-Location).Path
+          $workspace = Join-Path $env:RUNNER_TEMP 'StoryFlowVieNeu'
+          New-Item -ItemType Directory -Force -Path $workspace | Out-Null
+          $env:STORYFLOW_CODE_ROOT = $repo
+          $env:TSX_TSCONFIG_PATH = Join-Path $repo 'tsconfig.json'
+          $loader = ([System.Uri](Join-Path $repo 'node_modules/tsx/dist/loader.mjs')).AbsoluteUri
+          Push-Location $workspace
+          try {
+            node --import $loader (Join-Path $repo 'scripts/setup-vieneu.ts')
+            if ($LASTEXITCODE -ne 0) {
+              Get-Content data/vieneu-setup.log -Tail 100
+              throw 'VieNeu setup failed'
+            }
+            node --import $loader (Join-Path $repo 'scripts/smoke-vieneu-install.ts')
+            if ($LASTEXITCODE -ne 0) { throw 'VieNeu speech test failed' }
+          } finally { Pop-Location }
+          Remove-Item Env:STORYFLOW_CODE_ROOT
+          Remove-Item Env:TSX_TSCONFIG_PATH
       - name: Assign release version
         shell: pwsh
         run: npm version "1.0.${{ github.run_number }}" --no-git-tag-version
@@ -64,3 +86,5 @@ jobs:
             dist/*.blockmap
             dist/latest.yml
             dist/desktop-smoke/**
+            ${{ runner.temp }}/StoryFlowVieNeu/data/vieneu-setup.*
+            ${{ runner.temp }}/StoryFlowVieNeu/data/vieneu-install-smoke.wav

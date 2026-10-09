@@ -47,8 +47,7 @@ const projectNameSchema = z
 const storySchema = z
   .string({ error: "Vui lòng nhập nội dung truyện." })
   .trim()
-  .min(1, "Vui lòng nhập nội dung truyện.")
-  .max(2000000, "Nội dung không được vượt quá 2 triệu ký tự.");
+  .min(1, "Vui lòng nhập nội dung truyện.");
 export const runtime = "nodejs";
 export async function GET() {
   return NextResponse.json({
@@ -446,11 +445,6 @@ export async function POST(req: NextRequest) {
         throw Error(
           "Nội dung chương không còn văn bản hợp lệ sau khi làm sạch.",
         );
-      if (
-        p.chapters.reduce((n, c) => n + c.text.length, 0) + text.length >
-        2000000
-      )
-        throw Error("Tổng nội dung dự án không được vượt quá 2 triệu ký tự.");
       const scenes = plan(text, p.settings.style);
       for (const scene of scenes)
         if (p.settings.customPrompt)

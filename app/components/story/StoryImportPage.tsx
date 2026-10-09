@@ -154,7 +154,7 @@ export function StoryImportPage({
             <Upload size={24} />
             <div>
               <strong>Kéo thả truyện vào đây</strong>
-              <span>TXT hoặc DOCX · Tối đa 30 MB</span>
+              <span>TXT hoặc DOCX · Không giới hạn số ký tự</span>
             </div>
             <label className="button secondary">
               Tải file truyện
@@ -184,7 +184,6 @@ export function StoryImportPage({
               className="story-text"
               placeholder="Dán toàn bộ truyện vào đây…"
               value={text}
-              maxLength={2000000}
               onChange={(e) => {
                 setText(e.target.value);
                 setFile(undefined);

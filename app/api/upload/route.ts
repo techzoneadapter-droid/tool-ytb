@@ -19,9 +19,10 @@ export async function POST(req: NextRequest) {
       );
     const form = await req.formData();
     const file = form.get("file");
-    if (!(file instanceof File) || file.size > 30 * 1024 * 1024)
-      throw Error("Vui lòng chọn tệp có kích thước tối đa 30 MB.");
+    if (!(file instanceof File)) throw Error("Vui lòng chọn tệp cần tải lên.");
     const ext = path.extname(file.name).toLowerCase();
+    if (![".txt", ".docx"].includes(ext) && file.size > 30 * 1024 * 1024)
+      throw Error("Vui lòng chọn tệp có kích thước tối đa 30 MB.");
     const buffer = Buffer.from(await file.arrayBuffer());
     if (ext === ".txt")
       return NextResponse.json({ text: buffer.toString("utf8") });

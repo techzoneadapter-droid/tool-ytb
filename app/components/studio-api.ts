@@ -11,7 +11,7 @@ export const initialSettings: Settings = {
   ttsProvider: "vieneu-local",
   voice: "ngoc_huyen",
   imageProvider: "aihorde",
-  imageEnabled: true,
+  imageEnabled: false,
   audioEnabled: true,
   motionMode: "off",
 };

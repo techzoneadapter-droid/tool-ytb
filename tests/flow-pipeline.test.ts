@@ -70,7 +70,8 @@ test("scene 2 failure preserves scene 1/3, publishes immediately, retries only f
   await promisify(execFile)(
     process.execPath,
     [
-      path.join(originalCwd, "node_modules/tsx/dist/cli.mjs"),
+      "--import",
+      path.join(originalCwd, "node_modules/tsx/dist/loader.mjs"),
       path.join(originalCwd, "tests/helpers/flow-pipeline-integration.ts"),
     ],
     { cwd: directory, windowsHide: true },

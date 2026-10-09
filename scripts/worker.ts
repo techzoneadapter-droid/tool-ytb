@@ -22,6 +22,10 @@ import {
 } from "../modules/project/store";
 import type { Job, Project, Settings } from "../modules/project/types";
 import {
+  uploadedImageSettings,
+  imageGenerationRemoved,
+} from "../modules/project/uploaded-image";
+import {
   pipelineConcurrency,
   providerConcurrency,
   withResourceContext,
@@ -143,7 +147,19 @@ async function main() {
             const saveProject = () => {
               mergeProjectChapters(p, job.chapterIds);
             };
-            const s = job.snapshot.settings;
+            // Also migrate queued snapshots created before image generation was removed.
+            if (job.snapshot.settings.imageEnabled !== false)
+              for (const chapter of p.chapters.filter((c) =>
+                job.chapterIds.includes(c.id),
+              ))
+                for (const scene of chapter.scenes) {
+                  scene.motion = undefined;
+                  scene.motionStatus = undefined;
+                  scene.motionError = undefined;
+                }
+            const s = uploadedImageSettings(job.snapshot.settings);
+            job.snapshot.settings = s;
+            updateJob(job.id, { snapshot: job.snapshot });
             if (s.imageEnabled !== false)
               for (const chapter of p.chapters.filter((c) =>
                 job.chapterIds.includes(c.id),
@@ -158,6 +174,7 @@ async function main() {
                 (scene) => !job.sceneIds || job.sceneIds.includes(scene.id),
               );
             const kind = job.kind || (job.prepare ? "prepare" : "render");
+            if (kind === "image") throw Error(imageGenerationRemoved);
             if (s.imageEnabled === false) {
               console.log(
                 `job=${job.id} IMAGE_MODE=SHARED fallbackImage=${s.fallbackImage || "missing"} imageGenerationSkipped=true`,
@@ -477,9 +494,7 @@ async function main() {
                         ? ["motion"]
                         : []),
                     ]
-                  : kind === "image" && s.imageEnabled === false
-                    ? []
-                    : [kind];
+                  : [kind];
               const imageChapters = p.chapters.filter(
                 (chapter) =>
                   job.chapterIds.includes(chapter.id) &&

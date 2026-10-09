@@ -43,28 +43,18 @@ test("compatible namespace/tag IDs survive catalog, connect, select, settings an
       data: [{ b64_json: Buffer.from("fixture").toString("base64") }],
     });
   });
-  const connected = await POST(
-    req({
-      action: "connect",
-      provider: "api-compatible",
-      key: "fixture-key",
-      baseURL: "https://image.example/v1",
-      model,
-    }),
+  // Legacy adapter contracts remain tested independently of the retired public endpoints.
+  const connected = await connectImageAPI(
+    "api-compatible",
+    "fixture-key",
+    "https://image.example/v1",
+    model,
   );
-  assert.equal(connected.status, 200);
   assert.deepEqual(
-    (await connected.json()).models.map((m: { id: string }) => m.id).sort(),
+    connected.models.map((m) => m.id).sort(),
     [model, other].sort(),
   );
-  assert.equal(
-    (
-      await POST(
-        req({ action: "select", provider: "api-compatible", model: other }),
-      )
-    ).status,
-    200,
-  );
+  selectImageModel("api-compatible", other);
   assert.equal(imageConfig("api-compatible").model, other);
   assert.equal(
     settingsSchema.parse({
@@ -95,14 +85,6 @@ test("compatible namespace/tag IDs survive catalog, connect, select, settings an
     "image:",
   ]) {
     assert.equal(validImageModelID(invalid), false, invalid);
-    assert.equal(
-      (
-        await POST(
-          req({ action: "select", provider: "api-compatible", model: invalid }),
-        )
-      ).status,
-      400,
-    );
   }
   assert.equal(
     settingsSchema.safeParse({
@@ -163,11 +145,7 @@ test("OpenAI connection filters text models, persists key locally and exposes on
       ],
     });
   });
-  const result = await POST(
-    req({ action: "connect", provider: "openai", key: "private-test-key" }),
-  );
-  assert.equal(result.status, 200);
-  const data = await result.json();
+  const data = await connectImageAPI("openai", "private-test-key");
   assert.deepEqual(
     data.models.map((item: { id: string }) => item.id),
     ["gpt-image-1", "gpt-image-2"],
@@ -176,12 +154,9 @@ test("OpenAI connection filters text models, persists key locally and exposes on
   assert.equal(readImageAPI("openai")?.key, "private-test-key");
   const publicData = await (await GET()).json();
   assert.ok(!JSON.stringify(publicData).includes("private-test-key"));
-  assert.equal(publicData.providers.openai.connected, true);
-  assert.equal(result.headers.get("cache-control"), "no-store");
-  const selected = await POST(
-    req({ action: "select", provider: "openai", model: "gpt-image-2" }),
-  );
-  assert.equal(selected.status, 200);
+  assert.deepEqual(publicData.providers, {});
+  assert.equal(publicData.enabled, false);
+  selectImageModel("openai", "gpt-image-2");
   assert.equal(imageConfig("openai").model, "gpt-image-2");
   const workerResult = execFileSync(
     process.execPath,
@@ -271,7 +246,7 @@ test("bad new key does not overwrite saved connection; rechecking a revoked save
   assert.equal(imageAPIStatus().openai.connected, false);
 });
 
-test("connection and model endpoints reject cross-origin, unknown providers and unlisted models", async (t) => {
+test("retired endpoints reject cross-origin and all connection requests; legacy model selection remains validated", async (t) => {
   isolate(t);
   const mocked = t.mock.method(globalThis, "fetch", async () =>
     Response.json({ data: [{ id: "gpt-image-1" }] }),
@@ -291,7 +266,7 @@ test("connection and model endpoints reject cross-origin, unknown providers and 
   assert.equal(
     (await POST(req({ action: "connect", provider: "unknown", key: "test" })))
       .status,
-    400,
+    410,
   );
   await connectImageAPI("openai", "test-key");
   assert.throws(

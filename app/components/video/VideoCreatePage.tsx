@@ -2,11 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Clapperboard, ImagePlus } from "lucide-react";
 import type { Settings } from "@/modules/project/types";
-import { imageStyles } from "@/modules/imagePrompt/styles";
 import {
-  imageAPIOptions,
-  isImageAPIProvider,
-} from "@/modules/providers/image-api-options";
+  uploadedImageSettings,
+  uploadedImageRequired,
+} from "@/modules/project/uploaded-image";
 import {
   initialSettings,
   request,
@@ -17,10 +16,8 @@ import {
 } from "../studio-api";
 import { VoiceSelector } from "./VoiceSelector";
 import { AdvancedOptions } from "./AdvancedOptions";
-import { VisualProfiles } from "./VisualProfiles";
 import { ProviderStatus } from "./ProviderStatus";
 import { PipelineProgress } from "./PipelineProgress";
-import { ImageAPIConnection } from "./ImageAPIConnection";
 export function VideoCreatePage({
   data,
   projectId,
@@ -47,7 +44,9 @@ export function VideoCreatePage({
     [error, setError] = useState("");
   useEffect(() => {
     if (project) {
-      setSettings({ ...initialSettings, ...project.settings });
+      setSettings(
+        uploadedImageSettings({ ...initialSettings, ...project.settings }),
+      );
       setSelected(project.chapters.map((c) => c.id));
       setMotion(
         project.chapters
@@ -72,6 +71,7 @@ export function VideoCreatePage({
     setBusy(true);
     setError("");
     try {
+      if (!settings.fallbackImage) throw Error(uploadedImageRequired);
       if (
         ![
           "modal-vieneu",
@@ -163,29 +163,28 @@ export function VideoCreatePage({
       setBusy(false);
     }
   }
-  async function addReferences(files?: FileList | null) {
-    if (!files?.length) return;
+  async function saveSharedImage(asset?: string) {
+    const next = uploadedImageSettings({ ...settings, fallbackImage: asset });
+    if (project)
+      await request({
+        action: "settings",
+        projectId: project.id,
+        settings: next,
+      });
+    setSettings(next);
+    await refresh();
+  }
+  async function removeSharedImage() {
     setBusy(true);
     setError("");
     try {
-      const current = settings.referenceImages || [];
-      const next = [...current];
-      for (const file of Array.from(files).slice(
-        0,
-        Math.max(0, 10 - current.length),
-      )) {
-        const result = await upload(file);
-        if (!result.asset) throw Error("Ảnh tham chiếu không hợp lệ.");
-        next.push(result.asset);
-      }
-      change({ referenceImages: next });
+      await saveSharedImage();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
-
   async function fallback(file?: File) {
     if (!file) return;
     setBusy(true);
@@ -193,7 +192,7 @@ export function VideoCreatePage({
     try {
       const d = await upload(file);
       if (!d.asset) throw Error("Chọn tệp ảnh PNG, JPG hoặc WebP.");
-      change({ fallbackImage: d.asset, fallbackOnImageError: true });
+      await saveSharedImage(d.asset);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -231,6 +230,7 @@ export function VideoCreatePage({
               Chọn dự án truyện
               <select
                 value={project?.id || ""}
+                disabled={busy}
                 onChange={(e) => onProject(e.target.value)}
               >
                 {!project && <option value="">Chưa có dự án</option>}
@@ -347,11 +347,6 @@ export function VideoCreatePage({
                           hint: "Đọc câu chuyện bằng giọng bạn chọn.",
                         },
                         {
-                          key: "imageEnabled",
-                          name: "Tự động tạo ảnh minh họa",
-                          hint: "Hình ảnh phù hợp với nội dung truyện.",
-                        },
-                        {
                           key: "burnSubtitles",
                           name: "Tự động thêm phụ đề",
                           hint: "Giúp người xem theo dõi câu chuyện.",
@@ -390,191 +385,26 @@ export function VideoCreatePage({
                       />
                     </label>
                   </div>
-                  {settings.imageEnabled !== false ? (
-                    <div className="inset">
-                      <div className="row between">
-                        <h3>Ảnh minh họa</h3>
-                        <span className="badge">
-                          {settings.imageProvider?.startsWith("modal-")
-                            ? "Cloud GPU"
-                            : settings.imageProvider === "flow-browser"
-                              ? "Flow Plus"
-                              : ["aihorde", "pollinations"].includes(
-                                    settings.imageProvider || "",
-                                  )
-                                ? "Cloud miễn phí"
-                                : isImageAPIProvider(settings.imageProvider)
-                                  ? "API key"
-                                  : "Local"}
-                        </span>
-                      </div>
-                      <label>
-                        Engine ảnh
-                        <select
-                          value={settings.imageProvider || "flux2-local"}
-                          onChange={(e) =>
-                            change({
-                              imageProvider: e.target
-                                .value as Settings["imageProvider"],
-                              imageModel: undefined,
-                            })
-                          }
-                        >
-                          <option value="modal-story">
-                            Story AI Cloud · Đồng nhất theo chương
-                          </option>
-                          <option value="modal-reference">
-                            Reference AI Cloud · Ảnh tham chiếu
-                          </option>
-                          <option value="flow-browser">
-                            Google Flow · Nano Banana Pro · tài khoản của bạn
-                          </option>
-                          <option value="aihorde">
-                            AI Horde · Miễn phí cộng đồng
-                          </option>
-                          <option value="pollinations">
-                            Pollinations · Cloud API
-                          </option>
-                          {imageAPIOptions.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.label} · API key
-                            </option>
-                          ))}
-                          <option value="flux2-local">
-                            FLUX.2 Local · Chất lượng
-                          </option>
-                          <option value="local-fast">
-                            Local Fast · GPU thấp (cần test)
-                          </option>
-                          <option value="auto-local">
-                            Auto · Chỉ engine đã test
-                          </option>
-                        </select>
-                      </label>
-                      {isImageAPIProvider(settings.imageProvider) && (
-                        <ImageAPIConnection
-                          key={settings.imageProvider}
-                          provider={settings.imageProvider}
-                          status={
-                            data.providers?.imageAPIs?.[settings.imageProvider]
-                          }
-                          model={settings.imageModel}
-                          options={settings.imageAPIOptions}
-                          onOptions={(imageAPIOptions) =>
-                            change({ imageAPIOptions })
-                          }
-                          onModel={(model) => change({ imageModel: model })}
-                          refresh={refresh}
-                        />
-                      )}
-                      {!isImageAPIProvider(settings.imageProvider) && (
-                        <p className="notice">
-                          1 chương = 1 ảnh master · tất cả cảnh trong chương
-                          dùng chung ảnh.
-                        </p>
-                      )}
-                      <label>
-                        Phong cách ảnh
-                        <select
-                          value={settings.style}
-                          onChange={(e) => change({ style: e.target.value })}
-                        >
-                          {imageStyles.map((s) => (
-                            <option key={s.name}>{s.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                      {settings.imageProvider === "modal-reference" && (
-                        <div className="reference-box">
-                          <div className="row between">
-                            <div>
-                              <strong>Ảnh tham chiếu nhân vật</strong>
-                              <small>
-                                Tối đa 10 ảnh. Nên dùng nhiều góc của cùng nhân
-                                vật.
-                              </small>
-                            </div>
-                            <label className="button">
-                              <ImagePlus size={16} />
-                              Thêm ảnh
-                              <input
-                                type="file"
-                                accept=".png,.jpg,.jpeg,.webp"
-                                multiple
-                                hidden
-                                onChange={(e) => {
-                                  void addReferences(e.target.files);
-                                  e.target.value = "";
-                                }}
-                              />
-                            </label>
-                          </div>
-                          <div className="reference-list">
-                            {(settings.referenceImages || []).map(
-                              (image, index) => (
-                                <div className="reference-thumb" key={image}>
-                                  <img
-                                    src={fileURL(image)}
-                                    alt={"Tham chiếu " + (index + 1)}
-                                  />
-                                  <button
-                                    type="button"
-                                    aria-label={
-                                      "Xóa ảnh tham chiếu " + (index + 1)
-                                    }
-                                    onClick={() =>
-                                      change({
-                                        referenceImages: (
-                                          settings.referenceImages || []
-                                        ).filter((item) => item !== image),
-                                      })
-                                    }
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              ),
-                            )}
-                          </div>
-                          {!settings.referenceImages?.length && (
-                            <p className="muted">
-                              Reference AI chỉ chạy khi đã có ít nhất một ảnh
-                              tham chiếu thật.
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-                  <div className="inset">
-                    {settings.imageEnabled !== false && (
-                      <label className="check">
-                        <input
-                          type="checkbox"
-                          checked={!!settings.fallbackOnImageError}
-                          onChange={(e) =>
-                            change({ fallbackOnImageError: e.target.checked })
-                          }
-                        />
-                        Nếu AI tạo ảnh lỗi, dùng ảnh chung thay thế
-                      </label>
-                    )}
-                  </div>
                   {
                     <div className="inset">
+                      <h3>Ảnh cho toàn bộ video</h3>
                       <p>
-                        Dùng ảnh đã có hoặc tải một ảnh chung cho các cảnh còn
-                        thiếu.
+                        Một ảnh bạn tải lên được dùng cho tất cả cảnh và chương
+                        đã chọn. Ảnh được lưu riêng theo dự án.
                       </p>
                       <label className="button">
                         <ImagePlus size={17} />
                         Ảnh dùng chung
                         <input
                           aria-label="Ảnh dùng chung"
+                          disabled={active}
                           type="file"
                           accept=".png,.jpg,.jpeg,.webp"
                           hidden
-                          onChange={(e) => void fallback(e.target.files?.[0])}
+                          onChange={(e) => {
+                            void fallback(e.target.files?.[0]);
+                            e.target.value = "";
+                          }}
                         />
                       </label>
                       {settings.fallbackImage && (
@@ -586,7 +416,8 @@ export function VideoCreatePage({
                           />
                           <button
                             type="button"
-                            onClick={() => change({ fallbackImage: undefined })}
+                            onClick={() => void removeSharedImage()}
+                            disabled={active}
                           >
                             Xóa ảnh
                           </button>
@@ -734,12 +565,6 @@ export function VideoCreatePage({
                   change={change}
                   onError={setError}
                 />
-                <fieldset
-                  disabled={active}
-                  style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
-                >
-                  <VisualProfiles project={project} refresh={refresh} />
-                </fieldset>
               </fieldset>
               {error && (
                 <div className="notice error" role="alert">

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -17,7 +17,7 @@ import {
 } from "../modules/project/types";
 
 test(
-  "real worker isolates chapter errors, merges concurrent portraits, publishes each MP4 immediately and retries only failed images",
+  "real worker migrates legacy API jobs to one upload, isolates a missing image, and retries without any image API calls",
   { timeout: 60000 },
   async (t) => {
     const workspace = await mkdtemp(
@@ -33,34 +33,14 @@ test(
     })
       .png()
       .toBuffer();
-    let fail = true;
-    let portraits = 0;
-    const masters = new Map<string, number>();
-    const referencePayloads: Buffer[] = [];
-    const server = createServer(async (req, res) => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      const raw = Buffer.concat(chunks);
-      const json = req.headers["content-type"]?.includes("application/json")
-        ? JSON.parse(raw.toString())
-        : undefined;
-      const prompt = json?.prompt || raw.toString();
-      if (prompt.includes("Canonical character reference portrait"))
-        portraits++;
-      else {
-        const title = /Chapter [123]/.exec(prompt)?.[0] || "unknown";
-        masters.set(title, (masters.get(title) || 0) + 1);
-        referencePayloads.push(raw);
-        if (fail && title === "Chapter 1") {
-          res.writeHead(400);
-          res.end("private-upstream-echo");
-          return;
-        }
-      }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({ data: [{ b64_json: bytes.toString("base64") }] }),
-      );
+    await mkdir(path.join(workspace, "data/assets"), { recursive: true });
+    const shared = randomUUID() + ".png";
+    await writeFile(path.join(workspace, "data/assets", shared), bytes);
+    let imageCalls = 0;
+    const server = createServer((_req, res) => {
+      imageCalls++;
+      res.writeHead(500);
+      res.end("Image API must never be called");
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -101,7 +81,8 @@ test(
       settings: {
         ...defaults,
         audioEnabled: false,
-        imageEnabled: true,
+        imageEnabled: true, // Simulate an old saved project and queued job.
+        fallbackImage: shared,
         burnSubtitles: true,
         imageProvider: "api-compatible",
         imageModel: "fixture-image",
@@ -136,7 +117,12 @@ test(
       progress: 0,
       createdAt: new Date().toISOString(),
       message: "fixture",
-      snapshot: { settings: project.settings },
+      snapshot: {
+        settings: {
+          ...project.settings,
+          fallbackImage: chapter === project.chapters[0] ? undefined : shared,
+        },
+      },
     }));
     cli(
       "const f=JSON.parse(process.env.FIXTURE_DATA);s.put('project',f.project);for(const j of f.jobs)s.put('job',j);",
@@ -185,89 +171,34 @@ test(
       assert.equal(first.jobs.filter((job) => job.status === "done").length, 2);
       assert.equal(first.videos.length, 2);
       const failedJob = first.jobs.find((job) => job.status === "error")!;
-      assert.equal(
-        failedJob.counts?.failed,
-        1,
-        "a failed chapter with three scenes is one image error",
-      );
-      assert.equal(failedJob.counts?.imageTotal, 1);
-      assert.equal(failedJob.sceneErrors?.length, 1);
-      for (const job of first.jobs.filter((job) => job.status === "done")) {
-        assert.equal(job.counts?.image, 1);
-        assert.equal(job.counts?.imageTotal, 1);
-        assert.equal(
-          job.completedItems?.filter((key) => key.endsWith(":image")).length,
-          1,
-        );
+      assert.match(failedJob.error || "", /ảnh/i);
+      assert.equal(imageCalls, 0);
+      for (const job of first.jobs) {
+        assert.equal(job.snapshot.settings.imageEnabled, false);
+        assert.equal(job.snapshot.settings.voice, project.settings.voice);
+        assert.equal(job.snapshot.settings.burnSubtitles, true);
       }
-      assert.equal(portraits, 1);
-      assert.match(
-        first.jobs.find((job) => job.status === "error")!.sceneErrors![0].code,
-        /IMAGE_API_FAILED/,
+      assert.equal(first.project.characterBible, undefined);
+      assert.ok(
+        first.project.chapters.every(
+          (chapter) => !chapter.apiImage && !chapter.masterImage,
+        ),
       );
-      assert.ok(!JSON.stringify(first.jobs).includes("private-upstream-echo"));
-      for (const chapter of first.project.chapters.slice(1)) {
-        assert.equal(
-          new Set(chapter.scenes.map((scene) => scene.image)).size,
-          1,
-        );
-        assert.equal(
-          chapter.apiImage!.referenceFiles[0],
-          first.project.characterBible!.characters[0].portrait!.file,
-        );
-      }
       const failedId = first.jobs.find((job) => job.status === "error")!.id;
-      fail = false;
       cli(
-        `s.updateJob(${JSON.stringify(failedId)},{status:'queued',error:undefined,completedItems:[]});`,
+        `s.updateJob(${JSON.stringify(failedId)},{status:'queued',error:undefined,completedItems:[],snapshot:{settings:${JSON.stringify(project.settings)}}});`,
       );
       const second = await waitFinished();
       assert.equal(second.videos.length, 3);
-      assert.equal(portraits, 1);
-      assert.deepEqual([...masters.entries()].sort(), [
-        ["Chapter 1", 2],
-        ["Chapter 2", 1],
-        ["Chapter 3", 1],
-      ]);
-      for (const payload of referencePayloads)
-        assert.ok(
-          payload.includes(bytes),
-          "Each chapter edit receives the same canonical portrait bytes",
-        );
+      assert.equal(imageCalls, 0);
+      assert.ok(
+        second.jobs.every((job) => job.status === "done" && job.verified),
+      );
       for (const video of second.videos)
         assert.ok(
           (await readFile(path.join(workspace, "data/assets", video.output)))
             .length > 1000,
         );
-      // A shared fallback permits rendering but does not erase the one failed master task.
-      fail = true;
-      const fallbackProject = structuredClone(project);
-      fallbackProject.id = randomUUID();
-      fallbackProject.chapters = [structuredClone(project.chapters[0])];
-      fallbackProject.settings.fallbackOnImageError = true;
-      fallbackProject.settings.fallbackImage =
-        second.project.chapters[1].apiImage!.file;
-      const fallbackJob: Job = {
-        id: randomUUID(),
-        projectId: fallbackProject.id,
-        chapterIds: [fallbackProject.chapters[0].id],
-        kind: "pipeline",
-        outputMode: "separate",
-        status: "queued",
-        progress: 0,
-        message: "fallback test",
-        createdAt: new Date().toISOString(),
-        snapshot: { settings: fallbackProject.settings },
-      };
-      cli(
-        `s.put('project', ${JSON.stringify(fallbackProject)});s.put('job', ${JSON.stringify(fallbackJob)});`,
-      );
-      const third = await waitFinished();
-      const fallbackDone = third.jobs.find((job) => job.id === fallbackJob.id)!;
-      assert.equal(fallbackDone.status, "done");
-      assert.equal(fallbackDone.counts?.failed, 1);
-      assert.equal(fallbackDone.counts?.imageTotal, 1);
-      assert.equal(fallbackDone.sceneErrors?.length, 1);
     } finally {
       worker.kill();
       if (worker.exitCode === null) await once(worker, "exit");

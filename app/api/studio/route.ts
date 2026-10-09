@@ -16,7 +16,7 @@ import {
 } from "@/modules/project/parser";
 import { sceneSchema, settingsSchema } from "@/modules/project/validation";
 import { rewrite } from "@/modules/project/ai";
-import { providerStatus, requireImage } from "@/modules/providers/config";
+import { providerStatus } from "@/modules/providers/config";
 import { assertTTS, defaultTTSProvider } from "@/modules/tts";
 import { localVoiceId } from "@/modules/tts/local-voices";
 import { usesMotion } from "@/modules/providers/local-workers";
@@ -34,7 +34,11 @@ import { runtimeStatus } from "@/modules/providers/runtime-status";
 import { startService } from "@/modules/providers/services";
 import { initializeFlowSession } from "@/modules/providers/flow-browser";
 import { removeProjectRecords } from "@/modules/videoLibrary";
-import { modalConfigured } from "@/modules/providers/modal/client";
+import {
+  uploadedImageSettings,
+  uploadedImageRequired,
+  imageGenerationRemoved,
+} from "@/modules/project/uploaded-image";
 const projectNameSchema = z
   .string({ error: "Vui lòng nhập tên dự án." })
   .trim()
@@ -50,6 +54,7 @@ export async function GET() {
   return NextResponse.json({
     projects: list<Project>("project").map((p) => ({
       ...p,
+      settings: uploadedImageSettings(p.settings),
       chapters: p.chapters.map((c) => ({
         ...c,
         scenes: c.scenes.map(verifiedScene),
@@ -58,14 +63,12 @@ export async function GET() {
     jobs: await Promise.all(
       list<Job>("job").map(async (job) => ({
         ...verifiedJob(job),
-        ...(job.snapshot.settings.imageEnabled === false
-          ? {
-              sharedImageValid: await validImage(
-                job.snapshot.settings.fallbackImage,
-              ),
-              imageMode: "shared",
-            }
-          : {}),
+        snapshot: {
+          ...job.snapshot,
+          settings: uploadedImageSettings(job.snapshot.settings),
+        },
+        sharedImageValid: await validImage(job.snapshot.settings.fallbackImage),
+        imageMode: "shared",
       })),
     ),
     providers: await providerStatus(),
@@ -136,13 +139,13 @@ export async function POST(req: NextRequest) {
           defaultProvider === "modal-vieneu"
             ? configuredVoice
             : localVoiceId(configuredVoice),
-        imageEnabled: true,
-        imageProvider: modalConfigured("image") ? "modal-story" : "aihorde",
+        imageEnabled: false,
         motionMode: "off",
       };
       const settings = settingsSchema.parse({
         ...baseSettings,
         ...(b.settings && typeof b.settings === "object" ? b.settings : {}),
+        imageEnabled: false,
       });
       if (
         settings.fallbackImage &&
@@ -152,6 +155,11 @@ export async function POST(req: NextRequest) {
           ))
       )
         throw Error("Ảnh dùng chung chưa được tải lên hợp lệ.");
+      if (
+        b.action === "createVideo" &&
+        !(await validImage(settings.fallbackImage))
+      )
+        throw Error(uploadedImageRequired);
       const parsedChapters =
         b.splitChapters === false
           ? [{ id: randomUUID(), title: "Chương 1", text, scenes: [] }]
@@ -269,6 +277,17 @@ export async function POST(req: NextRequest) {
         ["resume", "retry", "restart"].includes(b.action) &&
         ["paused", "error", "cancelled"].includes(j.status)
       ) {
+        if (j.kind === "image") throw Error(imageGenerationRemoved);
+        const settings = uploadedImageSettings(
+          get<Project>(j.projectId, "project").settings,
+        );
+        if (
+          ["pipeline", "prepare", "render", "motion"].includes(
+            j.kind || (j.prepare ? "prepare" : "render"),
+          ) &&
+          !(await validImage(settings.fallbackImage))
+        )
+          throw Error(uploadedImageRequired);
         updateJob(j.id, {
           status: "queued",
           error: undefined,
@@ -286,9 +305,7 @@ export async function POST(req: NextRequest) {
           outputs: undefined,
           finishedAt: undefined,
           snapshot: {
-            settings: structuredClone(
-              get<Project>(j.projectId, "project").settings,
-            ),
+            settings: structuredClone(settings),
           },
         });
         await startService("worker");
@@ -296,6 +313,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
     const p = get<Project>(z.string().uuid().parse(b.projectId), "project");
+    const previousImageEnabled = p.settings.imageEnabled;
+    p.settings = uploadedImageSettings(p.settings);
     if (b.action === "characterBible") {
       if (
         list<Job>("job").some(
@@ -464,7 +483,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(p);
     }
     if (b.action === "settings") {
-      const settings = settingsSchema.parse(b.settings);
+      const settings = uploadedImageSettings(settingsSchema.parse(b.settings));
       if (
         settings.ttsProvider === "vieneu-local" ||
         settings.ttsProvider === "korva-local"
@@ -504,6 +523,8 @@ export async function POST(req: NextRequest) {
             scene.approved = false;
           }
       if (
+        previousImageEnabled !== false ||
+        settings.fallbackImage !== p.settings.fallbackImage ||
         settings.style !== p.settings.style ||
         settings.customPrompt !== p.settings.customPrompt ||
         settings.imageProvider !== p.settings.imageProvider ||
@@ -656,6 +677,9 @@ export async function POST(req: NextRequest) {
       const kind = z
         .enum(["audio", "image", "motion", "prepare", "render", "pipeline"])
         .parse(b.kind || (prepare ? "prepare" : "render"));
+      if (kind === "image") throw Error(imageGenerationRemoved);
+      if (kind !== "audio" && !(await validImage(p.settings.fallbackImage)))
+        throw Error(uploadedImageRequired);
       const selected = p.chapters.filter((c) => ids.includes(c.id));
       if (kind === "pipeline") {
         for (const chapter of selected)
@@ -701,30 +725,8 @@ export async function POST(req: NextRequest) {
         sceneIds?.some((id) => !scenes.some((s) => s.id === id))
       )
         throw Error("Không tìm thấy cảnh cần xử lý.");
-      if (
-        kind === "audio" ||
-        kind === "prepare" ||
-        kind === "pipeline" ||
-        (kind === "image" && p.settings.imageProvider === "flow-browser")
-      )
+      if (kind === "audio" || kind === "prepare" || kind === "pipeline")
         assertTTS(p.settings);
-      if (kind === "image" && p.settings.imageEnabled === false)
-        throw Error("Tạo ảnh đang tắt. Hãy bật tạo ảnh hoặc tải ảnh lên.");
-      if (
-        (kind === "image" ||
-          (kind === "prepare" && p.settings.imageEnabled !== false)) &&
-        ![
-          "modal-story",
-          "modal-reference",
-          "aihorde",
-          "pollinations",
-          "flux2-local",
-          "local-fast",
-          "auto-local",
-          "flow-browser",
-        ].includes(p.settings.imageProvider || "")
-      )
-        requireImage(p.settings.imageProvider);
       if (kind === "motion") {
         if (!p.settings.motionMode || p.settings.motionMode === "off")
           throw Error("Ảnh động đang tắt. Chọn chế độ ảnh động trước.");

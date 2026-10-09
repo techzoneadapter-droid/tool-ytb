@@ -218,7 +218,7 @@ export function ProviderStatus({
     const image =
       settings.imageEnabled === false
         ? {
-            label: settings.fallbackImage ? "Ảnh dùng chung" : "Ảnh có sẵn",
+            label: settings.fallbackImage ? "Ảnh dùng chung" : "Chưa tải ảnh dùng chung",
             ready: !!settings.fallbackImage,
             configured: true,
             service: "",
@@ -299,8 +299,8 @@ export function ProviderStatus({
               {!p
                 ? "Đang kiểm tra"
                 : row.ready
-                  ? row.name === "Hình ảnh" && isImageAPIProvider(settings.imageProvider) ? "Đã kết nối" : "Sẵn sàng"
-                  : row.name === "Hình ảnh" && isImageAPIProvider(settings.imageProvider) ? "Chưa kết nối"
+                  ? settings.imageEnabled !== false && row.name === "Hình ảnh" && isImageAPIProvider(settings.imageProvider) ? "Đã kết nối" : "Sẵn sàng"
+                  : settings.imageEnabled !== false && row.name === "Hình ảnh" && isImageAPIProvider(settings.imageProvider) ? "Chưa kết nối"
                   : row.service === "flow" && ["starting", "restoring"].includes(p?.flow?.state || "")
                     ? "Đang khôi phục phiên Flow..."
                   : row.configured
@@ -349,7 +349,7 @@ export function ProviderStatus({
           Thêm cấu hình tương ứng vào .env.local và khởi động lại server/worker.
         </p>
       )}
-      {settings.imageProvider === "flow-browser" && !p?.flow?.generationReady && (
+      {settings.imageEnabled !== false && settings.imageProvider === "flow-browser" && !p?.flow?.generationReady && (
         <p className="notice">
           {["starting", "restoring"].includes(p?.flow?.state || "")
             ? p?.flow?.lastStage === "FLOW_PROJECT_OPEN" ? "Đang mở dự án Flow..." : p?.flow?.lastStage === "FLOW_COMPOSER_WAIT" ? "Đang chờ trình tạo ảnh..." : "Đang khôi phục phiên Flow..."
@@ -357,7 +357,7 @@ export function ProviderStatus({
           {onFlowConnected && " Kết nối xong sẽ tự tạo ảnh và dựng video cho các chương đang chọn."}
         </p>
       )}
-      {settings.imageProvider === "flow-browser" && (
+      {settings.imageEnabled !== false && settings.imageProvider === "flow-browser" && (
         <div className="field">
           <label htmlFor="flow-cookie-json">JSON Cookie (EditThisCookie)</label>
           <textarea id="flow-cookie-json" value={cookieJson} autoComplete="off" spellCheck={false}
@@ -380,15 +380,8 @@ export function ProviderStatus({
           {[
             ["VieNeu Cloud", !!p?.modal?.tts?.ready],
             ["Edge TTS Online", true],
-            ["Story AI Cloud", !!p?.modal?.image?.ready],
-            ["Google Flow", !!p?.flow?.generationReady],
-            ...imageAPIOptions.map(option => [option.label, !!p?.imageAPIs?.[option.id]?.connected]),
-            ["AI Horde", !!p?.freeCloud?.aiHorde?.ready],
-            ["Pollinations Image", !!p?.freeCloud?.pollinations?.imageReady],
             ["VieNeu Local", !!p?.local.vieneu.ready],
             ["Korva Local", !!p?.local.korva.ready],
-            ["FLUX.2 Local", !!p?.runtime.flux],
-            ["Local Fast", !!p?.runtime.fast],
             ["Wan2.2", !!p?.runtime.wan],
           ].map(([name, ready]) => (
             <div className="service-row compact" key={String(name)}>
@@ -411,7 +404,7 @@ export function ProviderStatus({
           </details>
         </div>
       )}
-      {p?.flow?.lastError && !detail && (
+      {settings.imageEnabled !== false && p?.flow?.lastError && !detail && (
         <details className="notice"><summary>Chi tiết Flow</summary><pre>{p.flow.lastError}</pre></details>
       )}
 

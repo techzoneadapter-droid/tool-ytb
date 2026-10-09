@@ -12,6 +12,12 @@ import {
 } from "@/modules/videoLibrary";
 import { startService } from "@/modules/providers/services";
 
+import {
+  uploadedImageSettings,
+  uploadedImageRequired,
+} from "@/modules/project/uploaded-image";
+import { validImage } from "@/modules/project/media";
+
 export const runtime = "nodejs";
 
 export async function GET() {
@@ -88,6 +94,9 @@ export async function POST(req: NextRequest) {
         throw Error(
           "Chương này đang có tác vụ. Chờ tác vụ hiện tại kết thúc để tránh tạo trùng cảnh.",
         );
+      project.settings = uploadedImageSettings(project.settings);
+      if (!(await validImage(project.settings.fallbackImage)))
+        throw Error(uploadedImageRequired);
       const regenerateResources = body.regenerateResources === true;
       const job: Job = {
         id: randomUUID(),

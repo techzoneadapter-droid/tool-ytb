@@ -2,6 +2,12 @@
 
 Next.js + TypeScript, SQLite, FFmpeg. Không tự tạo dự án mẫu; không có nhánh tạo giọng im lặng hay ảnh màu giả lập. Chức năng tách chương được giữ nguyên.
 
+## Chế độ hiện tại: một ảnh tải lên cho toàn bộ video
+
+Trong **Tạo video → Ảnh cho toàn bộ video**, tải một ảnh PNG/JPG/WebP. App lưu ảnh theo từng dự án và sử dụng ảnh đó cho tất cả cảnh, chương và video của dự án; có thể thay hoặc xóa ảnh tại đây. Phải chọn ảnh hợp lệ trước khi chạy. Đổi ảnh sẽ làm mất hiệu lực cache video/ảnh động cũ khi dựng lại, audio hợp lệ được giữ lại.
+
+Ứng dụng không tạo ảnh bằng API, Flow hay engine local. Giao diện kết nối/tạo ảnh đã bỏ; endpoint ảnh cũ trả HTTP 410 và hàng đợi cũ cũng chuyển sang ảnh tải lên. Giọng đọc, phụ đề, nhạc, logo, intro/outro, tỷ lệ khung hình, ảnh động tùy chọn, tiến độ, retry, xuất từng chương/gộp video được giữ nguyên. Các mục Flow/API ảnh và báo cáo cũ bên dưới là tài liệu của phiên bản trước, không còn là hướng dẫn sử dụng tính năng tạo ảnh trong app hiện tại.
+
 ## Chạy
 
 Cần Node.js 22.13+ (khuyên dùng 24), FFmpeg và ffprobe trên PATH, FFmpeg có libx264/libass.
@@ -104,12 +110,12 @@ Tài liệu chính thức: [OpenAI TTS](https://developers.openai.com/api/docs/g
 ## Workflow mới — 3 tab
 
 1. **Nhập truyện**: dán nội dung hoặc kéo/thả TXT/DOCX, xem trước chương rồi tạo dự án. Không chạy AI tại bước này. Danh sách dự án có mở, đổi tên và xóa có xác nhận; xóa bản ghi không xóa tệp dùng chung.
-2. **Tạo video**: chọn dự án/chương, VieNeu hoặc Korva, nghe thử, bật/tắt lời đọc, ảnh, phụ đề và ảnh động. Mặc định VieNeu/Ngọc Huyền, FLUX.2, phụ đề bật và Wan tắt. Chọn 16:9 hoặc 9:16, xuất riêng từng chương hoặc gộp theo thứ tự truyện.
+2. **Tạo video**: chọn dự án/chương, VieNeu hoặc Korva, nghe thử, tải một ảnh dùng chung, bật/tắt lời đọc, phụ đề và ảnh động. Mặc định VieNeu/Ngọc Huyền, phụ đề bật và Wan tắt. Chọn 16:9 hoặc 9:16, xuất riêng từng chương hoặc gộp theo thứ tự truyện.
 3. **Quản lý kênh**: YouTube/Facebook ghi rõ Đang phát triển; chưa có liên kết hoặc OAuth.
 
 **Bắt đầu tạo video** lưu tùy chọn rồi chạy pipeline trên worker. Audio, ảnh và motion hợp lệ được tái sử dụng. Tiến trình lấy từ tác vụ/cảnh và FFmpeg. Lỗi có Chi tiết; retry giữ phần đã xong. Duyệt thủ công nằm trong Thiết lập nâng cao, mặc định tắt. MP4 chỉ hoàn thành sau ffprobe; player và tải MP4/SRT nằm ngay dưới cấu hình.
 
-Tắt tạo ảnh: dùng ảnh đã có hoặc tải Ảnh dùng chung cho cảnh thiếu ảnh. Tắt lời đọc: dùng audio đã có, báo lỗi khi thiếu. Engine local lỗi không chuyển sang dịch vụ trả phí. Thiết lập nâng cao giữ pitch, volume, pause, prompt, phụ đề, intro/outro, logo và nhạc nền.
+Ảnh dùng chung tải lên là nguồn ảnh duy nhất cho mọi cảnh và chương. Tắt lời đọc: dùng audio đã có, báo lỗi khi thiếu. Engine local lỗi không chuyển sang dịch vụ trả phí. Thiết lập nâng cao giữ pitch, volume, pause, prompt, phụ đề, intro/outro, logo và nhạc nền.
 
 `npm run app`, `npm run dev` và `npm start` dùng launcher chung, giữ worker lock và heartbeat. Không chạy thêm terminal worker. FLUX/Wan cần được cài và tải model trước; FLUX chỉ đọc model có sẵn, không tự tải hàng chục GB. Xem `docs/LOCAL_AI_WORKERS.md` và `docs/LOCAL_TTS.md`.
 ## Lưu trữ, phạm vi

@@ -9,7 +9,7 @@
     "build": "next build",
     "start": "tsx scripts/app.ts --production",
     "worker": "tsx scripts/worker.ts",
-    "test": "tsx --test tests/core.test.ts tests/flow-pipeline.test.ts tests/flow-chapter.test.ts tests/image-api.test.ts tests/image-api-connect.test.ts tests/chapter-images.test.ts tests/chapter-worker.test.ts tests/bulk-delete.test.ts tests/pipeline-progress.test.tsx tests/shared-image.test.ts tests/adaptive-pipeline.test.tsx",
+    "test": "tsx --test tests/core.test.ts tests/flow-pipeline.test.ts tests/flow-chapter.test.ts tests/image-api.test.ts tests/image-api-connect.test.ts tests/chapter-images.test.ts tests/chapter-worker.test.ts tests/bulk-delete.test.ts tests/pipeline-progress.test.tsx tests/shared-image.test.ts tests/adaptive-pipeline.test.tsx tests/uploaded-image.test.tsx",
     "test:flow": "tsx --test tests/flow.test.ts tests/flow-session.test.ts tests/flow-bridge.test.ts",
     "test:flow:python": "node scripts/test-flow-python.cjs",
     "smoke:flow:scene": "tsx scripts/smoke-flow-scene.ts",

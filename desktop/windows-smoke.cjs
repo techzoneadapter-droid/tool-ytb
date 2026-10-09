@@ -27,7 +27,11 @@ async function main(){
     const deadline=Date.now()+240000;
     while(!fs.existsSync(path.join(directory,'result.json'))){
       if(fs.existsSync(path.join(directory,'error.txt')))throw Error(fs.readFileSync(path.join(directory,'error.txt'),'utf8'));
-      if(Date.now()>deadline)throw Error('Installed app/update smoke timed out; see workspace/data/desktop.log');
+      if(Date.now()>deadline){
+        const userData=path.join(process.env.APPDATA,'StoryFlow');
+        for(const name of ['desktop-settings.json','desktop-smoke-handoff.json','workspace/data/desktop.log']){const f=path.join(userData,name);if(fs.existsSync(f))console.error(name,fs.readFileSync(f,'utf8').slice(-4000));}
+        throw Error('Installed app/update smoke timed out; see workspace/data/desktop.log');
+      }
       await new Promise(resolve=>setTimeout(resolve,500));
     }
     const result=JSON.parse(fs.readFileSync(path.join(directory,'result.json')));

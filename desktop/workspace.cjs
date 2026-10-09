@@ -25,4 +25,4 @@ function saveWorkspace(userData, workspace, installRoot) {
   fs.renameSync(file + '.tmp', file);
   return chosen;
 }
-module.exports = { inside, resolveWorkspace, saveWorkspace };
+module.exports = { inside, validateWorkspace, resolveWorkspace, saveWorkspace };

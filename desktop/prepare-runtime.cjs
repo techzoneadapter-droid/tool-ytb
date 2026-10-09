@@ -30,7 +30,7 @@ async function main() {
   const png=await sharp(Buffer.from(svg)).png().toBuffer();const header=Buffer.alloc(22);header.writeUInt16LE(1,2);header.writeUInt16LE(1,4);header[6]=0;header[7]=0;header.writeUInt16LE(1,10);header.writeUInt16LE(32,12);header.writeUInt32LE(png.length,14);header.writeUInt32LE(22,18);
   fs.writeFileSync(path.join(stage,'icons/icon.ico'),Buffer.concat([header,png]));
   const bin=path.join(stage,'runtime/bin');fs.mkdirSync(bin,{recursive:true});
-  if(process.platform==='win32')fs.copyFileSync(process.execPath,path.join(bin,'node.exe'));
+  if(process.platform==='win32' && path.resolve(process.execPath).toLowerCase() !== path.join(bin,'node.exe').toLowerCase())fs.copyFileSync(process.execPath,path.join(bin,'node.exe'));
   for(const name of ['node.exe','ffmpeg.exe','ffprobe.exe'])if(!fs.existsSync(path.join(bin,name)))throw Error('Thiếu runtime '+name+'; chạy desktop/prepare-windows.ps1.');
   console.log('DESKTOP_PAYLOAD_READY');
 }

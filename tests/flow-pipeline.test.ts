@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -71,7 +72,8 @@ test("scene 2 failure preserves scene 1/3, publishes immediately, retries only f
     process.execPath,
     [
       "--import",
-      path.join(originalCwd, "node_modules/tsx/dist/loader.mjs"),
+      pathToFileURL(path.join(originalCwd, "node_modules/tsx/dist/loader.mjs"))
+        .href,
       path.join(originalCwd, "tests/helpers/flow-pipeline-integration.ts"),
     ],
     { cwd: directory, windowsHide: true },

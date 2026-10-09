@@ -1,4 +1,5 @@
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -136,7 +137,7 @@ test("studio rejects missing images before queueing and persists each project's 
       process.execPath,
       [
         "--import",
-        path.join(repo, "node_modules/tsx/dist/loader.mjs"),
+        pathToFileURL(path.join(repo, "node_modules/tsx/dist/loader.mjs")).href,
         path.join(repo, "tests/helpers/uploaded-studio-integration.ts"),
       ],
       {

@@ -115,6 +115,26 @@ export function VideoCreatePage({
       setBusy(false);
     }
   }
+  async function createSynopsisVideo() {
+    if (!project?.synopsis?.trim() || busy || active) return;
+    creating.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await request<{ projectId: string }>({
+        action: "createSynopsisVideo",
+        projectId: project.id,
+        settings,
+      });
+      await refresh();
+      onProject(response.projectId);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      creating.current = false;
+      setBusy(false);
+    }
+  }
   async function act(action: string, id: string, chapterIds?: string[]) {
     setBusy(true);
     setError("");
@@ -561,6 +581,21 @@ export function VideoCreatePage({
                     </label>
                   </div>
                 </section>
+                {project.synopsis?.trim() && (
+                  <section className="card" aria-label="Video giới thiệu truyện">
+                    <h2>Video giới thiệu / tóm tắt truyện</h2>
+                    <p className="muted">Tạo một video độc lập từ phần tóm tắt đã lưu ({project.synopsis.length.toLocaleString("vi-VN")} ký tự). Dùng ảnh chung và giọng đọc đang chọn; không thay đổi 504 chương truyện.</p>
+                    <details>
+                      <summary>Xem nội dung tóm tắt</summary>
+                      <p style={{ whiteSpace: "pre-wrap", maxHeight: 180, overflowY: "auto" }}>{project.synopsis}</p>
+                    </details>
+                    <button className="primary" type="button" disabled={busy || active || !settings.fallbackImage} onClick={() => void createSynopsisVideo()}>
+                      <Clapperboard size={18} />
+                      {busy ? "Đang xử lý…" : "Tạo video tóm tắt truyện"}
+                    </button>
+                    <small>Video sẽ được lưu trong một dự án giới thiệu riêng để không làm thay đổi thứ tự và số lượng chương gốc.</small>
+                  </section>
+                )}
                 <YoutubePublishPanel project={project} selectedIds={selected} merged={merge} />
                 <AdvancedOptions
                   settings={settings}

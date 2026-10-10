@@ -59,29 +59,46 @@ export function sanitizeNarrationText(input: string) {
 }
 export function chunks(text: string, max = 550): string[] {
   const cleaned = cleanNarrationText(text);
-  const sentences =
-    cleaned.match(/[^.!?\n]+[.!?]*/gu) ||
-    (cleaned.trim() ? [cleaned.trim()] : []);
+  if (!cleaned) return [];
+  // Prefer complete spoken sentences. Unlike the old word loop, this keeps
+  // punctuation attached and never cuts through a Vietnamese word.
+  const sentences = cleaned.match(/[^.!?…\n]+[.!?…]*|[.!?…]+/gu) || [];
   const out: string[] = [];
   let current = "";
-  for (const sentence of sentences) {
-    const words = sentence.trim().split(/\s+/);
-    for (const word of words) {
-      if (current.length + word.length + 1 > max && current) {
-        out.push(current);
-        current = "";
-      }
-      if (word.length > max) {
-        if (current) {
-          out.push(current);
-          current = "";
-        }
-        for (let i = 0; i < word.length; i += max)
-          out.push(word.slice(i, i + max));
-      } else current += (current ? " " : "") + word;
+  const flush = () => {
+    if (current.trim()) out.push(current.trim());
+    current = "";
+  };
+  const add = (part: string) => {
+    part = part.trim();
+    if (!part) return;
+    if (!current) current = part;
+    else if (current.length + part.length + 1 <= max) current += " " + part;
+    else {
+      flush();
+      current = part;
     }
+  };
+  for (const sentence of sentences) {
+    const value = sentence.trim();
+    if (!value) continue;
+    if (value.length <= max) {
+      add(value);
+      continue;
+    }
+    // Only an unusually long sentence is split, at whitespace boundaries.
+    // Preserve its original punctuation and spelling for narration.
+    for (const word of value.split(/\s+/u)) {
+      if (word.length > max) {
+        flush();
+        // Never truncate/cut names or URLs: send the word intact to the
+        // provider, which will report a size error if it cannot handle it.
+        out.push(word);
+      } else add(word);
+    }
+    flush();
   }
-  if (current) out.push(current);
+  flush();
   return out;
 }
 export function plan(text: string, style = "Điện ảnh"): Scene[] {

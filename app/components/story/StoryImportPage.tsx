@@ -22,6 +22,7 @@ export function StoryImportPage({
     [text, setText] = useState(""),
     [split, setSplit] = useState(true),
     [chapters, setChapters] = useState<{ title: string }[]>([]),
+    [synopsis, setSynopsis] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [created, setCreated] = useState<Project>(),
@@ -30,15 +31,19 @@ export function StoryImportPage({
   useEffect(() => {
     let active = true;
     setChapters([]);
+    setSynopsis("");
     if (!text.trim()) return;
     const timer = setTimeout(() => {
-      request<{ title: string }[]>({
-        action: "previewChapters",
+      request<{ chapters: { title: string }[]; synopsis: string }>({
+        action: "previewStructure",
         text,
         splitChapters: split,
       })
-        .then((c) => {
-          if (active) setChapters(c);
+        .then((result) => {
+          if (active) {
+            setChapters(result.chapters);
+            setSynopsis(result.synopsis);
+          }
         })
         .catch((e) => {
           if (active) setError(e.message);
@@ -202,6 +207,13 @@ export function StoryImportPage({
             </label>
             <small>{text.length.toLocaleString("vi-VN")} ký tự</small>
           </div>
+          {synopsis && (
+            <details className="chapter-preview">
+              <summary>✓ Đã nhận diện tóm tắt truyện riêng ({synopsis.length.toLocaleString("vi-VN")} ký tự)</summary>
+              <p style={{ whiteSpace: "pre-wrap", maxHeight: 180, overflowY: "auto" }}>{synopsis}</p>
+              <small>Phần này được lưu cho video giới thiệu, không đưa vào lời đọc chương 1.</small>
+            </details>
+          )}
           {chapters.length > 0 && (
             <details className="chapter-preview">
               <summary>Đã phát hiện {chapters.length} chương</summary>

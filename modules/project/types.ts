@@ -108,6 +108,8 @@ export type Settings = {
   brandColor: string;
 };
 export type Project = {
+  synopsis?: string;
+  storyTitle?: string;
   characterBible?: CharacterBible;
   id: string;
   name: string;

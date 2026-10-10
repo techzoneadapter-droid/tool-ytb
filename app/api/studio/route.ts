@@ -540,6 +540,20 @@ export async function POST(req: NextRequest) {
       put("project", p);
       return NextResponse.json(p);
     }
+    if (b.action === "repairDuplicateChapters") {
+      const first = p.chapters[0];
+      const next = p.chapters[1];
+      if (!first || !next ||
+          !/^chương\s*1\s*$/iu.test(first.title) ||
+          !/^chương\s*1\s*[:：.\-–—]\s*\S/iu.test(next.title) ||
+          cleanNarrationText(first.text).length > 400)
+        throw Error("Không tìm thấy chương 1 giả ngắn đứng trước chương 1 thật. Dữ liệu được giữ nguyên.");
+      if (list<Job>("job").some((job) => job.projectId === p.id && ["queued", "audio", "images", "rendering", "paused"].includes(job.status)))
+        throw Error("Hãy đợi tác vụ đang chạy kết thúc trước khi sửa danh sách chương.");
+      p.chapters = p.chapters.slice(1);
+      put("project", p);
+      return NextResponse.json({ ok: true, removedTitle: first.title, chapters: p.chapters.length });
+    }
     if (b.action === "settings") {
       const settings = uploadedImageSettings(settingsSchema.parse(b.settings));
       if (

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseChapters, chunks, cleanNarrationText } from "../modules/project/parser";
+import { parseChapters, chunks, cleanNarrationText, extractStoryStructure } from "../modules/project/parser";
 import { defaults } from "../modules/project/types";
 import { settingsSchema } from "../modules/project/validation";
 import { isSameOrigin } from "../modules/project/request";
@@ -390,4 +390,24 @@ test("TTS chunker never splits a long character name", () => {
   const parts = chunks("Xin chào " + name + "!", 64);
   assert.ok(parts.some((part) => part.includes(name)));
   assert.ok(parts.join(" ").includes(name));
+});
+
+test("story synopsis is stored separately from chapter narration", () => {
+  const raw = "Tên truyện: Linh Khí Khôi Phục\nTóm tắt truyện:\nĐây là câu chuyện về một thế giới mới.\n\nChương 1: Mất Điện Dưới Lòng Đất\nNgày đầu tiên trời tối.\nChương 2: Khởi Đầu\nMọi người tỉnh dậy.";
+  const structure = extractStoryStructure(raw);
+  assert.equal(structure.title, "Linh Khí Khôi Phục");
+  assert.match(structure.summary, /thế giới mới/);
+  assert.equal(structure.hasSummary, true);
+  const chapters = parseChapters(structure.body);
+  assert.equal(chapters.length, 2);
+  assert.match(chapters[0].text, /Ngày đầu tiên/);
+  assert.doesNotMatch(chapters[0].text, /Đây là câu chuyện/);
+  assert.doesNotMatch(chapters[0].text, /Tên truyện/);
+});
+
+test("unlabelled story preface is not silently thrown away", () => {
+  const raw = "Lời mở đầu chưa có nhãn.\nChương 1: Bắt đầu\nNội dung chương.";
+  const structure = extractStoryStructure(raw);
+  assert.equal(structure.summary, "");
+  assert.match(structure.body, /Lời mở đầu/);
 });

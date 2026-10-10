@@ -52,7 +52,7 @@ export function PipelineProgress({
     );
     const focus =
       sorted.find(isActive) ||
-      sorted.find((job) => ["error", "cancelled"].includes(job.status));
+      sorted[0];
     if (!focus) return null;
 
     const batchJobs = focus.batchId
@@ -523,6 +523,20 @@ export function PipelineProgress({
             >
               <Play size={15} />
               Tiếp tục lô
+            </button>
+          )}
+
+          {retryable.length > 0 && !stoppable.length && !resumable.length && (
+            <button
+              className="danger-outline"
+              disabled={busy}
+              onClick={() => {
+                if (confirm("Xóa tác vụ lỗi/đã hủy khỏi lịch sử? Các video đã hoàn tất vẫn được giữ nguyên."))
+                  invokeMany("deleteJob", retryable);
+              }}
+            >
+              <XCircle size={15} />
+              Xóa tác vụ lỗi
             </button>
           )}
 

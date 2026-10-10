@@ -487,31 +487,32 @@ export function PipelineProgress({
             {detailsOpen ? "Thu gọn" : "Chi tiết"}
           </button>
           {stoppable.length > 0 && (
-            <>
-              <button
-                disabled={busy}
-                onClick={() => invokeMany("pause", stoppable)}
-                title="Tạm dừng toàn bộ lô; video đã hoàn thành vẫn được giữ"
-              >
-                <Pause size={15} />
-                Tạm dừng lô
-              </button>
-              <button
-                className="danger-outline"
-                disabled={busy}
-                onClick={() => {
-                  if (
-                    confirm(
-                      "Hủy các video chưa hoàn thành? Video đã tạo xong vẫn nằm trong Quản lý video.",
-                    )
+            <button
+              disabled={busy}
+              onClick={() => invokeMany("pause", stoppable)}
+              title="Tạm dừng toàn bộ lô; video đã hoàn thành vẫn được giữ"
+            >
+              <Pause size={15} />
+              Tạm dừng lô
+            </button>
+          )}
+
+          {(stoppable.length > 0 || resumable.length > 0) && (
+            <button
+              className="danger-outline"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  confirm(
+                    "Hủy toàn bộ video chưa hoàn thành trong lô này? Video đã tạo xong vẫn nằm trong Quản lý video.",
                   )
-                    invokeMany("cancel", stoppable);
-                }}
-              >
-                <XCircle size={15} />
-                Hủy phần còn lại
-              </button>
-            </>
+                )
+                  invokeMany("cancel", [...stoppable, ...resumable]);
+              }}
+            >
+              <XCircle size={15} />
+              Hủy phần còn lại
+            </button>
           )}
 
           {resumable.length > 0 && !stoppable.length && (

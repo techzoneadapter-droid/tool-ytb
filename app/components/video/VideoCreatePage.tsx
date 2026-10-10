@@ -18,6 +18,7 @@ import { VoiceSelector } from "./VoiceSelector";
 import { AdvancedOptions } from "./AdvancedOptions";
 import { ProviderStatus } from "./ProviderStatus";
 import { PipelineProgress } from "./PipelineProgress";
+import { YoutubePublishPanel } from "./YoutubePublishPanel";
 export function VideoCreatePage({
   data,
   projectId,
@@ -560,6 +561,7 @@ export function VideoCreatePage({
                     </label>
                   </div>
                 </section>
+                <YoutubePublishPanel project={project} selectedIds={selected} merged={merge} />
                 <AdvancedOptions
                   settings={settings}
                   change={change}

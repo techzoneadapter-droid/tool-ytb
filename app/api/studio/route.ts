@@ -10,6 +10,7 @@ import { get, list, put, remove, updateJob } from "@/modules/project/store";
 import { defaults, type Project, type Job } from "@/modules/project/types";
 import {
   parseChapters,
+  extractStoryStructure,
   plan,
   chunks,
   sanitizeNarrationText as cleanNarrationText,
@@ -104,13 +105,15 @@ export async function POST(req: NextRequest) {
       const result = await removeProjectRecords([...new Set(ids)]);
       return NextResponse.json({ ok: true, ...result });
     }
-    if (b.action === "previewChapters") {
-      const text = cleanNarrationText(storySchema.parse(b.text));
-      return NextResponse.json(
-        b.splitChapters === false
-          ? [{ title: "Chương 1" }]
-          : parseChapters(text).map((c) => ({ title: c.title })),
-      );
+    if (b.action === "previewChapters" || b.action === "previewStructure") {
+      const structure = extractStoryStructure(storySchema.parse(b.text));
+      const text = cleanNarrationText(structure.body);
+      const chapters = b.splitChapters === false
+        ? [{ title: "Chương 1" }]
+        : parseChapters(text).map((c) => ({ title: c.title }));
+      return NextResponse.json(b.action === "previewStructure"
+        ? { chapters, synopsis: structure.summary, storyTitle: structure.title }
+        : chapters);
     }
     if (b.action === "startService") {
       await startService(
@@ -132,7 +135,8 @@ export async function POST(req: NextRequest) {
     }
     if (b.action === "create" || b.action === "createVideo") {
       const rawText = storySchema.parse(b.text);
-      const text = cleanNarrationText(rawText);
+      const structure = extractStoryStructure(rawText);
+      const text = cleanNarrationText(structure.body);
       if (!text)
         throw Error(
           "Nội dung truyện không còn văn bản hợp lệ sau khi làm sạch.",
@@ -201,6 +205,8 @@ export async function POST(req: NextRequest) {
       const project: Project = {
         id: randomUUID(),
         name: projectNameSchema.parse(b.name),
+        storyTitle: structure.title || projectNameSchema.parse(b.name),
+        synopsis: structure.summary,
         createdAt: new Date().toISOString(),
         chapters,
         settings,

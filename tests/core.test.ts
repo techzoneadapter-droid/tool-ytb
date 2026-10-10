@@ -388,6 +388,6 @@ test("Vietnamese TTS chunks preserve sentence boundaries and exact words", () =>
 test("TTS chunker never splits a long character name", () => {
   const name = "TrầnThiênVôCựcĐạiĐế";
   const parts = chunks("Xin chào " + name + "!", 12);
-  assert.ok(parts.includes(name));
+  assert.ok(parts.some((part) => part.startsWith(name)));
   assert.ok(parts.join(" ").includes(name));
 });

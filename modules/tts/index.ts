@@ -106,7 +106,7 @@ function cacheFile(
   const hash = createHash("sha256")
     .update(
       JSON.stringify([
-        "tts-cache-v4",
+        "tts-cache-v5",
         ...(options.preview ? ["preview-short"] : []),
         identity(s),
         s.ttsProvider,

@@ -187,6 +187,15 @@ export function parseChapters(input: string): Chapter[] {
   // Even a document made solely of headings must not produce a zero-chapter project.
   if (!groups.length)
     groups.push({ title: "Chương 1", text: [cleanNarrationText(text) || text] });
+  // Documents may contain a short preface labelled "Chương 1" before
+  // the actual "Chương 1: Title". Never turn that duplicate into a video.
+  // Keep prose prefaces intact when there is no duplicate real chapter.
+  while (
+    groups.length > 1 &&
+    /^chương\\s*1\\s*$/iu.test(groups[0].title || "") &&
+    /^chương\\s*1\\s*[:：.\\-–—]\\s*\\S/iu.test(groups[1].title || "") &&
+    cleanNarrationText(groups[0].text.join("\n")).length <= 400
+  ) groups.shift();
   return groups.map((g, i) => {
     const chapterText = cleanNarrationText(g.text.join("\n"));
     return {

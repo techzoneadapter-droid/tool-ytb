@@ -192,8 +192,8 @@ export function parseChapters(input: string): Chapter[] {
   // Keep prose prefaces intact when there is no duplicate real chapter.
   while (
     groups.length > 1 &&
-    /^chương\\s*1\\s*$/iu.test(groups[0].title || "") &&
-    /^chương\\s*1\\s*[:：.\\-–—]\\s*\\S/iu.test(groups[1].title || "") &&
+    /^chương\s*1\s*$/iu.test(groups[0].title || "") &&
+    /^chương\s*1\s*[:：.\-–—]\s*\S/iu.test(groups[1].title || "") &&
     cleanNarrationText(groups[0].text.join("\n")).length <= 400
   ) groups.shift();
   return groups.map((g, i) => {

@@ -91,9 +91,11 @@ export function chunks(text: string, max = 550): string[] {
     for (const word of value.split(/\s+/u)) {
       if (word.length > max) {
         flush();
-        // Never truncate/cut names or URLs: send the word intact to the
-        // provider, which will report a size error if it cannot handle it.
-        out.push(word);
+        // Protect the engine's strict character limit even when importing
+        // malformed text with no spaces. Split only this exceptional case;
+        // never drop characters.
+        for (let i = 0; i < word.length; i += max)
+          out.push(word.slice(i, i + max));
       } else add(word);
     }
     flush();

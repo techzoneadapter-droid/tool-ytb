@@ -1036,10 +1036,10 @@ async function main() {
                 );
                 if (!chapterScenes.length) continue;
                 const chapterNumber = p.chapters.indexOf(chapter) + 1;
-                const heading = /^chương\\s+\\d+/iu.test(chapter.title)
-                  ? chapter.title.replace(/\\s*[:：]\\s*/u, ". ")
+                const heading = /^(?:chương|chapter)\s+\d+/iu.test(chapter.title)
+                  ? chapter.title.replace(/\s*[:：]\s*/u, ". ")
                   : `Chương ${chapterNumber}. ${chapter.title}`;
-                const text = `${p.name}. ${heading}.`.replace(/\\.{2,}/gu, ".");
+                const text = `${p.storyTitle || p.name}. ${heading}.`.replace(/\.{2,}/gu, ".");
                 const file = randomUUID() + ".mp3";
                 const seconds = await speak(text, path.join(assets, file), s);
                 const first = chapterScenes[0];

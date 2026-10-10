@@ -133,6 +133,55 @@ export async function POST(req: NextRequest) {
       const status = await initializeFlowSession(cookieJson, projectUrl);
       return NextResponse.json({ ok: true, status });
     }
+    if (b.action === "createSynopsisVideo") {
+      const source = get<Project>(z.string().uuid().parse(b.projectId), "project");
+      const synopsis = cleanNarrationText(source.synopsis || "");
+      if (!synopsis) throw Error("Dự án chưa lưu nội dung tóm tắt. Hãy nhập lại truyện với mục TÓM TẮT TRUYỆN.");
+      const settings = uploadedImageSettings(settingsSchema.parse({
+        ...source.settings,
+        ...(b.settings && typeof b.settings === "object" ? b.settings : {}),
+        imageEnabled: false,
+        motionMode: "off",
+      }));
+      if (!(await validImage(settings.fallbackImage))) throw Error(uploadedImageRequired);
+      assertTTS(settings);
+      const heading = "Giới thiệu truyện";
+      const title = source.storyTitle || source.name;
+      const chapter = {
+        id: randomUUID(),
+        title: heading,
+        text: synopsis,
+        scenes: plan(synopsis, settings.style).map((scene) => ({ ...scene, prompt: "" })),
+      };
+      const project: Project = {
+        id: randomUUID(),
+        name: `${title.slice(0, 94)} - Video giới thiệu`,
+        storyTitle: title,
+        synopsis,
+        createdAt: new Date().toISOString(),
+        chapters: [chapter],
+        settings,
+      };
+      const job: Job = {
+        id: randomUUID(),
+        projectId: project.id,
+        chapterIds: [chapter.id],
+        kind: "pipeline",
+        outputMode: "separate",
+        status: "queued",
+        progress: 0,
+        message: "Video giới thiệu truyện đang chờ xử lý",
+        createdAt: new Date().toISOString(),
+        snapshot: { settings: structuredClone(settings) },
+      };
+      put("project", project);
+      put("job", job);
+      try { await startService("worker"); }
+      catch (e) {
+        updateJob(job.id, { status: "error", error: String(e), message: "Worker chưa khởi động được" });
+      }
+      return NextResponse.json({ ok: true, projectId: project.id, jobId: job.id });
+    }
     if (b.action === "create" || b.action === "createVideo") {
       const rawText = storySchema.parse(b.text);
       const structure = extractStoryStructure(rawText);

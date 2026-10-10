@@ -130,6 +130,7 @@ export function PipelineProgress({
   const stoppable = [...data.running, ...data.queued];
   const resumable = data.paused;
   const retryable = [...data.failedJobs, ...data.cancelledJobs];
+  const clearable = jobs.filter((job) => job.status === "error" || job.status === "cancelled");
   const request = Object.values(data.current.ttsRequests || {})
     .filter((r) => r.state !== "done")
     .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0];
@@ -526,17 +527,17 @@ export function PipelineProgress({
             </button>
           )}
 
-          {retryable.length > 0 && !stoppable.length && !resumable.length && (
+          {clearable.length > 0 && (
             <button
               className="danger-outline"
               disabled={busy}
               onClick={() => {
-                if (confirm("Xóa tác vụ lỗi/đã hủy khỏi lịch sử? Các video đã hoàn tất vẫn được giữ nguyên."))
-                  invokeMany("deleteJob", retryable);
+                if (confirm("Xóa toàn bộ tác vụ lỗi/đã hủy trong dự án? Video đã hoàn tất vẫn được giữ nguyên."))
+                  invokeMany("deleteJob", clearable);
               }}
             >
               <XCircle size={15} />
-              Xóa tác vụ lỗi
+              Xóa tất cả tác vụ lỗi
             </button>
           )}
 

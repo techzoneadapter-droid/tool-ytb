@@ -6,7 +6,7 @@ import { findEngineVoice, voiceKey } from "@/modules/tts/catalog";
 import { localStatus } from "@/modules/tts/local";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { get, list, put, updateJob } from "@/modules/project/store";
+import { get, list, put, remove, updateJob } from "@/modules/project/store";
 import { defaults, type Project, type Job } from "@/modules/project/types";
 import {
   parseChapters,
@@ -86,6 +86,15 @@ export async function POST(req: NextRequest) {
         { status: 403 },
       );
     const b = await req.json();
+    if (b.action === "deleteJob") {
+      const id = z.string().uuid().parse(b.id);
+      const job = get<Job>(id, "job");
+      if (!["error", "cancelled"].includes(job.status))
+        throw Error("Chỉ xóa được tác vụ lỗi hoặc đã hủy. Không xóa tác vụ đang chạy hay video hoàn thành.");
+      // Delete only the job record. Never unlink shared audio or finished videos.
+      remove("job", id);
+      return NextResponse.json({ ok: true });
+    }
     if (b.action === "deleteProjects") {
       const ids = z
         .array(z.string().uuid())

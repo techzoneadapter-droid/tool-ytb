@@ -136,7 +136,8 @@ export function extractStoryStructure(input: string) {
   }
   if (summaryStart < 0) return { title, summary: "", body: normalized.trim(), hasSummary: false };
   const summary = cleanNarrationText([inline, ...lines.slice(summaryStart + 1, cutoff)].join("\n"));
-  const body = [...lines.slice(0, summaryStart), ...lines.slice(cutoff)].join("\n").trim();
+  const preamble = lines.slice(0, summaryStart).filter((line) => !titleHeading.test(line.trim()));
+  const body = [...preamble, ...lines.slice(cutoff)].join("\n").trim();
   return { title, summary, body, hasSummary: Boolean(summary) };
 }
 

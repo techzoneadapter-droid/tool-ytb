@@ -53,7 +53,7 @@ export function PipelineProgress({
     const focus =
       sorted.find(isActive) ||
       sorted[0];
-    if (!focus) return null;
+    if (!focus || (!sorted.some(isActive) && !sorted.some((job) => job.status === "error" || job.status === "cancelled"))) return null;
 
     const batchJobs = focus.batchId
       ? sorted

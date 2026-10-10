@@ -1025,6 +1025,38 @@ async function main() {
               });
               return;
             }
+            // Spoken chapter heading is an independent render-time scene.
+            // Existing narration audio, voice settings and story text stay intact.
+            const addSpokenHeadings = async (selected: typeof scenes) => {
+              if (s.audioEnabled === false) return selected;
+              const result: typeof scenes = [];
+              for (const chapter of p.chapters) {
+                const chapterScenes = selected.filter((scene) =>
+                  chapter.scenes.some((original) => original.id === scene.id),
+                );
+                if (!chapterScenes.length) continue;
+                const chapterNumber = p.chapters.indexOf(chapter) + 1;
+                const heading = /^chương\\s+\\d+/iu.test(chapter.title)
+                  ? chapter.title.replace(/\\s*[:：]\\s*/u, ". ")
+                  : `Chương ${chapterNumber}. ${chapter.title}`;
+                const text = `${p.name}. ${heading}.`.replace(/\\.{2,}/gu, ".");
+                const file = randomUUID() + ".mp3";
+                const seconds = await speak(text, path.join(assets, file), s);
+                const first = chapterScenes[0];
+                result.push({
+                  ...first,
+                  id: randomUUID(),
+                  text,
+                  audio: file,
+                  audioSource: ttsSource(s),
+                  duration: seconds,
+                  approved: true,
+                });
+                result.push(...chapterScenes);
+              }
+              return result;
+            };
+
             if (kind === "pipeline" && job.outputMode === "separate") {
               const chapters = p.chapters.filter((chapter) =>
                 job.chapterIds.includes(chapter.id),
@@ -1055,7 +1087,8 @@ async function main() {
                   1,
                   Math.floor(base),
                 );
-                const result = await render(chapterScenes, s, (n) => {
+                const narrationScenes = await addSpokenHeadings(chapterScenes);
+                const result = await render(narrationScenes, s, (n) => {
                   if (n >= 0.65 && s.burnSubtitles && !subtitlesReady) {
                     updateJob(job.id, { subtitlesReady: true });
                     subtitlesReady = true;
@@ -1164,7 +1197,8 @@ async function main() {
               kind === "pipeline" ? 75 : 0,
             );
             let subtitlesReady = false;
-            const result = await render(scenes, s, (n) => {
+            const narrationScenes = kind === "pipeline" ? await addSpokenHeadings(scenes) : scenes;
+            const result = await render(narrationScenes, s, (n) => {
               if (n >= 0.65 && s.burnSubtitles && !subtitlesReady) {
                 updateJob(job.id, { subtitlesReady: true });
                 subtitlesReady = true;

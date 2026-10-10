@@ -411,3 +411,12 @@ test("unlabelled story preface is not silently thrown away", () => {
   assert.equal(structure.summary, "");
   assert.match(structure.body, /Lời mở đầu/);
 });
+
+test("duplicate short chapter-one preface never becomes a second chapter one", () => {
+  const raw = "Chương 1\nGiới thiệu ngắn.\n\nChương 1: Mất Điện Dưới Lòng Đất\nNgày đầu tiên trời tối.\nChương 2: Tiếp nối\nMọi người tỉnh dậy.";
+  const chapters = parseChapters(raw);
+  assert.equal(chapters.length, 2);
+  assert.equal(chapters[0].title, "Chương 1: Mất Điện Dưới Lòng Đất");
+  assert.match(chapters[0].text, /Ngày đầu tiên trời tối/);
+  assert.doesNotMatch(chapters[0].text, /Giới thiệu ngắn/);
+});

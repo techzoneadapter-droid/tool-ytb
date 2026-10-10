@@ -112,6 +112,34 @@ export function plan(text: string, style = "Điện ảnh"): Scene[] {
     approved: false,
   }));
 }
+// Extract explicitly labelled synopsis text before chapter parsing. It is
+// project metadata, not chapter narration. Unlabelled prefaces stay untouched.
+export function extractStoryStructure(input: string) {
+  const normalized = input.replace(/^\uFEFF/u, "").replace(/\r\n?/gu, "\n").normalize("NFC");
+  const lines = normalized.split("\n");
+  const chapterHeading = /^\s*(?:#{1,6}\s*)?(?:chương|chapter|tập|phần)\s+(?:\d+|[IVXLCDM]+|một|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười)(?=\s|[:.\-–—]|$)/iu;
+  const synopsisHeading = /^\s*(?:#{1,6}\s*)?(?:tóm\s*tắt(?:\s+(?:nội\s*dung|truyện))?|nội\s*dung\s*tóm\s*tắt|giới\s*thiệu(?:\s*truyện)?|văn\s*án|synopsis)\s*[:：-]?\s*(.*)$/iu;
+  const titleHeading = /^\s*(?:tên\s*truyện|tựa\s*truyện)\s*[:：]\s*(.+)$/iu;
+  const firstChapter = lines.findIndex((line) => chapterHeading.test(line.trim().replace(/^\*\*(.*?)\*\*$/u, "$1")));
+  const cutoff = firstChapter >= 0 ? firstChapter : lines.length;
+  let summaryStart = -1;
+  let inline = "";
+  let title: string | undefined;
+  for (let i = 0; i < cutoff; i++) {
+    const line = lines[i].trim().replace(/^\*\*(.*?)\*\*$/u, "$1");
+    if (summaryStart < 0) {
+      const t = titleHeading.exec(line);
+      if (t) title = cleanNarrationText(t[1]);
+      const match = synopsisHeading.exec(line);
+      if (match) { summaryStart = i; inline = match[1]; }
+    }
+  }
+  if (summaryStart < 0) return { title, summary: "", body: normalized.trim(), hasSummary: false };
+  const summary = cleanNarrationText([inline, ...lines.slice(summaryStart + 1, cutoff)].join("\n"));
+  const body = [...lines.slice(0, summaryStart), ...lines.slice(cutoff)].join("\n").trim();
+  return { title, summary, body, hasSummary: Boolean(summary) };
+}
+
 export function parseChapters(input: string): Chapter[] {
   const text = input
     .replace(/^\uFEFF/, "")

@@ -135,6 +135,19 @@ export function VideoCreatePage({
       setBusy(false);
     }
   }
+  async function repairDuplicateChapter() {
+    if (!project || active || busy) return;
+    if (!window.confirm("Xóa chương 1 giả ngắn khỏi danh sách dự án? Chương 1 thật, nội dung và các video đã hoàn thành sẽ được giữ nguyên.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request({ action: "repairDuplicateChapters", projectId: project.id });
+      await refresh();
+      setSelected((ids) => ids.filter((id) => id !== project.chapters[0]?.id));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally { setBusy(false); }
+  }
   async function act(action: string, id: string, chapterIds?: string[]) {
     setBusy(true);
     setError("");
@@ -247,6 +260,18 @@ export function VideoCreatePage({
                 <span className="badge">{project.chapters.length} chương</span>
               )}
             </div>
+            {project && project.chapters.length > 1 &&
+              /^chương\s*1\s*$/iu.test(project.chapters[0].title) &&
+              /^chương\s*1\s*[:：.\-–—]\s*\S/iu.test(project.chapters[1].title) &&
+              project.chapters[0].text.length <= 400 && (
+                <div className="notice error">
+                  <strong>Phát hiện chương 1 giả đứng trước chương 1 thật.</strong>
+                  <p>Hãy sửa danh sách trước khi tạo video để tránh đọc trùng chương và sai số thứ tự.</p>
+                  <button type="button" className="secondary" disabled={busy || active} onClick={() => void repairDuplicateChapter()}>
+                    Sửa chương trùng trong dự án
+                  </button>
+                </div>
+              )}
             <label>
               Chọn dự án truyện
               <select

@@ -374,3 +374,20 @@ test("all ten image presets have distinct system prompts including xianxia", () 
   ])
     assert.ok(imageStyles.some((style) => style.name === name));
 });
+
+test("Vietnamese TTS chunks preserve sentence boundaries and exact words", () => {
+  const source = "Ngọc Huyền bước vào phòng. Cô ấy nói: Xin chào mọi người! Một cơn mưa đổ xuống rất nhanh.";
+  const parts = chunks(source, 52);
+  assert.ok(parts.length >= 2);
+  assert.equal(parts.join(" "), cleanNarrationText(source));
+  assert.ok(parts.every((part) => part.length <= 52));
+  assert.ok(parts.some((part) => part.endsWith(".")));
+  assert.ok(parts.some((part) => part.endsWith("!")));
+});
+
+test("TTS chunker never splits a long character name", () => {
+  const name = "TrầnThiênVôCựcĐạiĐế";
+  const parts = chunks("Xin chào " + name + "!", 12);
+  assert.ok(parts.includes(name));
+  assert.ok(parts.join(" ").includes(name));
+});

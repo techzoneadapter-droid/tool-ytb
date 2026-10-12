@@ -65,7 +65,7 @@ async function main() {
     }),
   );
   assert.equal(rejected.status, 400);
-  assert.match((await rejected.json()).error, /30 MB/);
+  assert.match((await rejected.json()).error, /20 MB/);
   console.log(
     "Long story preview, creation, append, persistence and TXT upload passed.",
   );

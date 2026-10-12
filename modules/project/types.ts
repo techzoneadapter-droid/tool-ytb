@@ -105,6 +105,7 @@ export type Settings = {
   intro?: string;
   outro?: string;
   logo?: string;
+  logoPosition?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   brandColor: string;
 };
 export type Project = {
@@ -360,5 +361,6 @@ export const defaults: Settings = {
   position: "bottom",
   humanCheck: false,
   musicVolume: 0.12,
+  logoPosition: "top-right",
   brandColor: "#6554d9",
 };

@@ -1,9 +1,11 @@
 import { codePath } from "../project/code-path";
 import { spawn } from "node:child_process";
-import { access, mkdir, unlink } from "node:fs/promises";
+import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { Settings } from "../project/types";
-import { duration } from "../videoRender/process";
+import { duration, run } from "../videoRender/process";
+import { chunks } from "../project/parser";
 
 export const edgeVoices = [
   {
@@ -74,7 +76,7 @@ async function runEdge(
           "Edge TTS quá thời gian. Kiểm tra kết nối mạng hoặc đổi engine giọng.",
         ),
       );
-    }, 120000);
+    }, 180000);
     child.stderr?.on("data", (chunk) => {
       error += String(chunk);
       if (error.length > 3000) error = error.slice(-3000);
@@ -102,8 +104,43 @@ export async function speakEdge(
   file: string,
   settings: Settings,
 ) {
+  const directory = path.dirname(file);
+  await mkdir(directory, { recursive: true });
+  const temporary: string[] = [];
   try {
-    await runEdge(text, file, settings);
+    const parts = chunks(text, 2500);
+    if (parts.length <= 1) {
+      await runEdge(text, file, settings);
+    } else {
+      const normalized: string[] = [];
+      for (const part of parts) {
+        const raw = path.join(directory, randomUUID() + ".mp3");
+        temporary.push(raw);
+        await runEdge(part, raw, settings);
+        normalized.push(raw);
+      }
+      const list = path.join(directory, randomUUID() + ".txt");
+      temporary.push(list);
+      await writeFile(
+        list,
+        normalized.map((f) => "file '" + path.basename(f) + "'").join("\n"),
+      );
+      await run(
+        [
+          "-y",
+          "-f",
+          "concat",
+          "-safe",
+          "0",
+          "-i",
+          path.basename(list),
+          "-c",
+          "copy",
+          file,
+        ],
+        directory,
+      );
+    }
     await access(file);
     const seconds = await duration(file);
     if (!(seconds > 0)) throw Error("Edge TTS trả file audio không hợp lệ.");
@@ -111,5 +148,7 @@ export async function speakEdge(
   } catch (error) {
     await unlink(file).catch(() => {});
     throw error;
+  } finally {
+    await Promise.all(temporary.map((f) => unlink(f).catch(() => {})));
   }
 }

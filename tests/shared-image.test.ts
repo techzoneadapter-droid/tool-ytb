@@ -105,8 +105,8 @@ test(
       for await (const chunk of req) buffers.push(Buffer.from(chunk));
       if (req.url === "/v1/audio/speech") {
         const body = JSON.parse(Buffer.concat(buffers).toString());
-        assert.equal(body.max_chars, 512);
-        assert.ok(body.input.length <= 512);
+        assert.equal(body.max_chars, 400);
+        assert.ok(body.input.length <= 400);
         calls.set(body.input, (calls.get(body.input) || 0) + 1);
         if (broken && body.input.includes("Failed")) {
           res.writeHead(503);

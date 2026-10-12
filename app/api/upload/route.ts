@@ -21,8 +21,8 @@ export async function POST(req: NextRequest) {
     const file = form.get("file");
     if (!(file instanceof File)) throw Error("Vui lòng chọn tệp cần tải lên.");
     const ext = path.extname(file.name).toLowerCase();
-    if (![".txt", ".docx"].includes(ext) && file.size > 30 * 1024 * 1024)
-      throw Error("Vui lòng chọn tệp có kích thước tối đa 30 MB.");
+    if (![".txt", ".docx"].includes(ext) && file.size > 20 * 1024 * 1024)
+      throw Error("Vui lòng chọn tệp có kích thước tối đa 20 MB.");
     const buffer = Buffer.from(await file.arrayBuffer());
     if (ext === ".txt")
       return NextResponse.json({ text: buffer.toString("utf8") });
@@ -46,9 +46,10 @@ export async function POST(req: NextRequest) {
       ([".png", ".jpg", ".jpeg", ".webp"].includes(ext) ? ".png" : ext);
     await mkdir(path.join(root, "assets"), { recursive: true });
     if (id.endsWith(".png"))
-      await sharp(buffer, { limitInputPixels: 40000000 })
-        .resize(1920, 1920, { fit: "inside", withoutEnlargement: true })
-        .png()
+      await sharp(buffer, { limitInputPixels: 25000000, sequentialRead: true })
+        .rotate()
+        .resize(1280, 1280, { fit: "inside", withoutEnlargement: true, fastShrinkOnLoad: true })
+        .png({ compressionLevel: 6, effort: 4 })
         .toFile(path.join(root, "assets", id));
     else await writeFile(path.join(root, "assets", id), buffer);
     put("upload", { id, createdAt: new Date().toISOString() });

@@ -141,6 +141,24 @@ export function AdvancedOptions({
             </div>
           ))}
         </div>
+        {s.logo && (
+          <label>
+            Vị trí logo
+            <select
+              value={s.logoPosition || "top-right"}
+              onChange={(e) =>
+                change({
+                  logoPosition: e.target.value as Settings["logoPosition"],
+                })
+              }
+            >
+              <option value="top-left">Trên cùng trái</option>
+              <option value="top-right">Trên cùng phải</option>
+              <option value="bottom-left">Dưới cùng trái</option>
+              <option value="bottom-right">Dưới cùng phải</option>
+            </select>
+          </label>
+        )}
         <label>
           Âm lượng nhạc nền
           <input

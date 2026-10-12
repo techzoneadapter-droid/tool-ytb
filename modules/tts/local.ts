@@ -213,7 +213,7 @@ export async function speakLocal(
   try {
     const normalized: string[] = [];
     const parts =
-      s.ttsProvider === "vieneu-local" ? chunks(text, 512) : chunks(text, 1500);
+      s.ttsProvider === "vieneu-local" ? chunks(text, 400) : chunks(text, 1200);
     const factor = Math.pow(2, s.pitch / 12);
     for (const [chunkIndex, part] of parts.entries()) {
       const raw = path.join(directory, randomUUID() + ".wav");
@@ -223,7 +223,7 @@ export async function speakLocal(
               directory,
               createHash("sha256")
                 .update(
-                  JSON.stringify(["vieneu-chunk-v1", vieneuURL(), voice, part]),
+                  JSON.stringify(["vieneu-chunk-v2", vieneuURL(), voice, part]),
                 )
                 .digest("hex") + ".wav",
             )
@@ -251,7 +251,7 @@ export async function speakLocal(
             voice,
             response_format: "wav",
             sample_rate: 24000,
-            max_chars: 512,
+            max_chars: 400,
           },
           voice,
           part,

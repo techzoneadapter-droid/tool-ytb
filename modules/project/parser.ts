@@ -57,12 +57,11 @@ export function sanitizeNarrationText(input: string) {
   if (cleaned !== input) console.debug(`TEXT_SANITIZED inputLength=${input.length} outputLength=${cleaned.length} removed=${Math.max(0, input.length - cleaned.length)}`);
   return cleaned;
 }
-export function chunks(text: string, max = 550): string[] {
+export function chunks(text: string, max = 480): string[] {
   const cleaned = cleanNarrationText(text);
   if (!cleaned) return [];
-  // Prefer complete spoken sentences. Unlike the old word loop, this keeps
-  // punctuation attached and never cuts through a Vietnamese word.
-  const sentences = cleaned.match(/[^.!?…\n]+[.!?…]*|[.!?…]+/gu) || [];
+  // Prefer complete spoken sentences. Keep punctuation attached and never cut through a Vietnamese word.
+  const sentences = cleaned.match(/[^.!?\u2026\n]+[.!?\u2026]*|[.!?\u2026]+/gu) || [];
   const out: string[] = [];
   let current = "";
   const flush = () => {
@@ -91,9 +90,6 @@ export function chunks(text: string, max = 550): string[] {
     for (const word of value.split(/\s+/u)) {
       if (word.length > max) {
         flush();
-        // Protect the engine's strict character limit even when importing
-        // malformed text with no spaces. Split only this exceptional case;
-        // never drop characters.
         for (let i = 0; i < word.length; i += max)
           out.push(word.slice(i, i + max));
       } else add(word);

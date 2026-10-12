@@ -169,9 +169,15 @@ export async function render(
     video = "sub";
   }
   if (logoIndex >= 0) {
+    const margin = 24;
+    let overlayExpr = `W-w-${margin}:${margin}`;
+    const pos = s.logoPosition || "top-right";
+    if (pos === "top-left") overlayExpr = `${margin}:${margin}`;
+    else if (pos === "bottom-left") overlayExpr = `${margin}:H-h-${margin}`;
+    else if (pos === "bottom-right") overlayExpr = `W-w-${margin}:H-h-${margin}`;
     filters.push(
       `[${logoIndex}:v]scale=100:-1[logo]`,
-      `[${video}][logo]overlay=W-w-24:24[branded]`,
+      `[${video}][logo]overlay=${overlayExpr}[branded]`,
     );
     video = "branded";
   }

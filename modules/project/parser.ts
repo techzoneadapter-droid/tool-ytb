@@ -57,7 +57,7 @@ export function sanitizeNarrationText(input: string) {
   if (cleaned !== input) console.debug(`TEXT_SANITIZED inputLength=${input.length} outputLength=${cleaned.length} removed=${Math.max(0, input.length - cleaned.length)}`);
   return cleaned;
 }
-export function chunks(text: string, max = 480): string[] {
+export function chunks(text: string, max = 240): string[] {
   const cleaned = cleanNarrationText(text);
   if (!cleaned) return [];
   // Prefer complete spoken sentences. Keep punctuation attached and never cut through a Vietnamese word.

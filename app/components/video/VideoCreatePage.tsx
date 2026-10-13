@@ -72,7 +72,9 @@ export function VideoCreatePage({
     setBusy(true);
     setError("");
     try {
-      if (!settings.fallbackImage) throw Error(uploadedImageRequired);
+      const missing = project.chapters.filter(c => selected.includes(c.id) && !c.scenes.every(scene => scene.imageSource === "chapter-upload" && scene.image));
+      if (missing.length && !settings.fallbackImage)
+        throw Error("Chưa có ảnh cho: " + missing.map(c => c.title).slice(0, 8).join(", ") + ". Hãy tải ảnh từng chương hoặc chọn ảnh chung.");
       if (
         ![
           "modal-vieneu",
@@ -232,6 +234,71 @@ export function VideoCreatePage({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function assignChapterImage(chapterId: string, file?: File) {
+    if (!project || !file || busy || active) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await upload(file);
+      if (!response.asset) throw Error("Ảnh không hợp lệ.");
+      await request({ action: "setChapterImages", projectId: project.id, assignments: [{ chapterId, image: response.asset }] });
+      await refresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function removeChapterImage(chapterId: string) {
+    if (!project || busy || active) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request({ action: "setChapterImages", projectId: project.id, assignments: [{ chapterId, image: null }] });
+      await refresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function uploadChapterImages(files: FileList | null) {
+    if (!project || !files?.length || busy || active) return;
+    const chapters = project.chapters.filter(c => selected.includes(c.id));
+    const chapterNumber = (value: string) => {
+      const m = value.match(/(?:ch(?:ương|uong|apter)?[\s._-]*)?(\d+)(?!.*\d)/iu);
+      return m ? Number(m[1]) : undefined;
+    };
+    const numbers = new Map<number, string[]>();
+    for (const chapter of chapters) {
+      const n = chapterNumber(chapter.title);
+      if (n !== undefined) numbers.set(n, [...(numbers.get(n) || []), chapter.id]);
+    }
+    const assignments: {chapterId: string; file: File}[] = [];
+    const unmatched: string[] = [];
+    const used = new Set<string>();
+    for (const file of Array.from(files)) {
+      const n = chapterNumber(file.name.replace(/\.[^.]+$/, ""));
+      const matches = n === undefined ? [] : (numbers.get(n) || []).filter(id => !used.has(id));
+      if (matches.length !== 1) { unmatched.push(file.name); continue; }
+      used.add(matches[0]);
+      assignments.push({chapterId: matches[0], file});
+    }
+    if (!assignments.length) {
+      setError("Không ghép được ảnh nào. Đặt tên ảnh theo số chương, ví dụ: Chuong_4.png, Chuong_5.jpg; hoặc chọn ảnh thủ công ở từng chương.");
+      return;
+    }
+    if (unmatched.length && !window.confirm("Có " + unmatched.length + " ảnh không ghép được chính xác theo số chương: " + unmatched.slice(0, 8).join(", ") + ". Chỉ tải " + assignments.length + " ảnh ghép đúng. Tiếp tục?")) return;
+    setBusy(true);
+    setError("");
+    try {
+      const saved: {chapterId: string; image: string}[] = [];
+      for (const assignment of assignments) {
+        const data = await upload(assignment.file);
+        if (!data.asset) throw Error("Ảnh " + assignment.file.name + " không hợp lệ.");
+        saved.push({chapterId: assignment.chapterId, image: data.asset});
+      }
+      await request({ action: "setChapterImages", projectId: project.id, assignments: saved });
+      await refresh();
+      if (unmatched.length) setError("Đã gán " + saved.length + " ảnh đúng chương. " + unmatched.length + " ảnh chưa ghép được; hãy kiểm tra và gán thủ công.");
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
   }
   return (
     <>
@@ -471,6 +538,33 @@ export function VideoCreatePage({
                       )}
                     </div>
                   }
+                  <div className="inset" aria-label="Ảnh riêng từng chương">
+                    <h3>Ảnh riêng cho từng video / chương</h3>
+                    <p>Chọn nhiều ảnh một lần. Tên ảnh phải chứa đúng số chương (ví dụ Chuong_4.png → Chương 4). Không tự ghép theo thứ tự để tránh nhầm nội dung.</p>
+                    <label className="button">
+                      <ImagePlus size={17} /> Thêm ảnh hàng loạt
+                      <input type="file" multiple accept=".png,.jpg,.jpeg,.webp" hidden disabled={busy || active}
+                        onChange={e => { void uploadChapterImages(e.target.files); e.target.value = ""; }} />
+                    </label>
+                    <div style={{maxHeight: 420, overflowY: "auto", marginTop: 12}}>
+                      {project.chapters.filter(c => selected.includes(c.id)).map(chapter => {
+                        const image = chapter.scenes.find(scene => scene.imageSource === "chapter-upload")?.image;
+                        return <div key={chapter.id} className="row between" style={{padding: "8px 0", borderBottom: "1px solid #e6e6ef", gap: 10}}>
+                          <div style={{minWidth: 0, flex: 1}}>
+                            <strong>{chapter.title}</strong>
+                            <small style={{display: "block"}}>{image ? "Đã gán ảnh riêng" : settings.fallbackImage ? "Đang dùng ảnh chung" : "Chưa có ảnh"}</small>
+                          </div>
+                          {image && <img src={fileURL(image)} alt={"Ảnh " + chapter.title} style={{width: 70, height: 44, objectFit: "cover", borderRadius: 6}} />}
+                          <label className="button" style={{cursor: busy || active ? "not-allowed" : "pointer"}}>
+                            {image ? "Đổi ảnh" : "Chọn ảnh"}
+                            <input type="file" accept=".png,.jpg,.jpeg,.webp" hidden disabled={busy || active}
+                              onChange={e => { void assignChapterImage(chapter.id, e.target.files?.[0]); e.target.value = ""; }} />
+                          </label>
+                          {image && <button type="button" disabled={busy || active} onClick={() => void removeChapterImage(chapter.id)}>Xóa</button>}
+                        </div>;
+                      })}
+                    </div>
+                  </div>
                   {settings.audioEnabled === false && (
                     <p className="notice">
                       Sử dụng lời đọc đã có. Cảnh thiếu lời đọc sẽ báo lỗi.

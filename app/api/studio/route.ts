@@ -573,6 +573,7 @@ export async function POST(req: NextRequest) {
       }
       for (const assignment of assignments) {
         const chapter = p.chapters.find(c => c.id === assignment.chapterId)!;
+        chapter.backgroundImage = assignment.image || undefined;
         for (const scene of chapter.scenes) {
           scene.image = assignment.image || undefined;
           scene.imageSource = assignment.image ? "chapter-upload" : undefined;

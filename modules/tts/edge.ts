@@ -99,6 +99,24 @@ async function runEdge(
   });
 }
 
+async function runEdgeRetry(text: string, file: string, settings: Settings) {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await unlink(file).catch(() => {});
+      await runEdge(text, file, settings);
+      const seconds = await duration(file);
+      if (!(seconds > 0)) throw Error("Edge trả audio rỗng hoặc không hợp lệ.");
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error : Error(String(error));
+      await unlink(file).catch(() => {});
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 2500));
+    }
+  }
+  throw Error("Edge TTS lỗi sau 3 lượt thử: " + (lastError?.message || "không rõ nguyên nhân"));
+}
+
 export async function speakEdge(
   text: string,
   file: string,
@@ -110,13 +128,13 @@ export async function speakEdge(
   try {
     const parts = chunks(text, 240);
     if (parts.length <= 1) {
-      await runEdge(text, file, settings);
+      await runEdgeRetry(text, file, settings);
     } else {
       const normalized: string[] = [];
       for (const part of parts) {
         const raw = path.join(directory, randomUUID() + ".mp3");
         temporary.push(raw);
-        await runEdge(part, raw, settings);
+        await runEdgeRetry(part, raw, settings);
         normalized.push(raw);
       }
       const list = path.join(directory, randomUUID() + ".txt");

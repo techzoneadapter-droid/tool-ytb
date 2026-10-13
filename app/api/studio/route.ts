@@ -785,7 +785,7 @@ export async function POST(req: NextRequest) {
         .enum(["audio", "image", "motion", "prepare", "render", "pipeline"])
         .parse(b.kind || (prepare ? "prepare" : "render"));
       if (kind === "image") throw Error(imageGenerationRemoved);
-      if (kind !== "audio" && !(await validImage(p.settings.fallbackImage)) && p.chapters.filter(c => ids.includes(c.id)).some(c => !c.scenes.length || c.scenes.some(scene => scene.imageSource !== "chapter-upload" || !scene.image || !assetExists(scene.image))))
+      if (kind !== "audio" && !(await validImage(p.settings.fallbackImage)) && p.chapters.filter(c => ids.includes(c.id)).some(c => !((c.backgroundImage && assetExists(c.backgroundImage)) || (c.scenes.length && c.scenes.every(scene => scene.imageSource === "chapter-upload" && !!scene.image && assetExists(scene.image))))))
         throw Error("Thiếu ảnh cho một hoặc nhiều chương đã chọn. Hãy gán ảnh riêng cho đủ các chương hoặc chọn ảnh dùng chung.");
       const selected = p.chapters.filter((c) => ids.includes(c.id));
       if (kind === "pipeline") {
@@ -808,6 +808,7 @@ export async function POST(req: NextRequest) {
                 : plan(chapter.text, p.settings.style)
             ).map((scene) => ({
               ...scene,
+              ...(chapter.backgroundImage ? { image: chapter.backgroundImage, imageSource: "chapter-upload" } : {}),
               prompt:
                 p.settings.imageEnabled === false
                   ? ""

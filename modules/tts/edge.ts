@@ -108,7 +108,7 @@ export async function speakEdge(
   await mkdir(directory, { recursive: true });
   const temporary: string[] = [];
   try {
-    const parts = chunks(text, 2500);
+    const parts = chunks(text, 240);
     if (parts.length <= 1) {
       await runEdge(text, file, settings);
     } else {

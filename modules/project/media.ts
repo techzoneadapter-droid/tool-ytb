@@ -61,7 +61,7 @@ export async function resolveSceneImage(
   settings?: Settings,
 ): Promise<string | undefined> {
   if (settings?.imageEnabled === false) {
-    if (scene.imageSource === "chapter-upload" && (await validImage(scene.image))) return scene.image;
+    if (scene.imageSource === "chapter-upload") return (await validImage(scene.image)) ? scene.image : undefined;
     return (await validImage(settings.fallbackImage))
       ? settings.fallbackImage
       : undefined;

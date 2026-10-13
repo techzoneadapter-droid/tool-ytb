@@ -2,9 +2,9 @@
 
 Next.js + TypeScript, SQLite, FFmpeg. Không tự tạo dự án mẫu; không có nhánh tạo giọng im lặng hay ảnh màu giả lập. Chức năng tách chương được giữ nguyên.
 
-## Chế độ hiện tại: một ảnh tải lên cho toàn bộ video
+## Chế độ hiện tại: một ảnh dùng chung hoặc ảnh riêng theo từng chương/video
 
-Trong **Tạo video → Ảnh cho toàn bộ video**, tải một ảnh PNG/JPG/WebP. App lưu ảnh theo từng dự án và sử dụng ảnh đó cho tất cả cảnh, chương và video của dự án; có thể thay hoặc xóa ảnh tại đây. Phải chọn ảnh hợp lệ trước khi chạy. Đổi ảnh sẽ làm mất hiệu lực cache video/ảnh động cũ khi dựng lại, audio hợp lệ được giữ lại.
+Trong **Tạo video**, có thể tải một ảnh PNG/JPG/WebP làm ảnh dùng chung hoặc chọn **Ảnh riêng cho từng video / chương → Thêm ảnh hàng loạt**. Đặt tên `Chuong_4.png`, `Chuong_5.jpg`, ... để app ghép theo số chương. Ảnh không khớp hoặc tên mơ hồ sẽ không được tự động gán nhầm; có thể chọn/đổi/xóa ảnh từng chương và xem ảnh thu nhỏ trước khi tạo. Ảnh riêng được ưu tiên hơn ảnh chung. Nếu chưa chọn ảnh chung thì mỗi chương được xuất phải có ảnh riêng hợp lệ. Thay ảnh chương chỉ làm mất hiệu lực video/ảnh động của chương đó; tệp lời đọc hợp lệ vẫn được giữ. Lệnh tạo nhiều video riêng theo các chương đã chọn dùng hàng đợi độc lập có sẵn.
 
 Ứng dụng không tạo ảnh bằng API, Flow hay engine local. Giao diện kết nối/tạo ảnh đã bỏ; endpoint ảnh cũ trả HTTP 410 và hàng đợi cũ cũng chuyển sang ảnh tải lên. Giọng đọc, phụ đề, nhạc, logo, intro/outro, tỷ lệ khung hình, ảnh động tùy chọn, tiến độ, retry, xuất từng chương/gộp video được giữ nguyên. Các mục Flow/API ảnh và báo cáo cũ bên dưới là tài liệu của phiên bản trước, không còn là hướng dẫn sử dụng tính năng tạo ảnh trong app hiện tại.
 

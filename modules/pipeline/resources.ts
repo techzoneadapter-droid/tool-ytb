@@ -19,6 +19,7 @@ export function ffmpegConcurrency(
   );
 }
 export function providerConcurrency(provider: string, fallback = 8) {
+  if (provider === "edge-online") return 1;
   return clamp(
     Number(
       process.env[

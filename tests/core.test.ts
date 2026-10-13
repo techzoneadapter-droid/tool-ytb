@@ -420,3 +420,11 @@ test("duplicate short chapter-one preface never becomes a second chapter one", (
   assert.match(chapters[0].text, /Ngày đầu tiên trời tối/);
   assert.doesNotMatch(chapters[0].text, /Giới thiệu ngắn/);
 });
+
+test("short TTS chunks preserve all Vietnamese text and stay within 240 characters", () => {
+  const source = ("Lâm Hạo bước vào điện đường. Anh nhìn trời rồi nói: Tu luyện không thể nóng vội! ").repeat(30);
+  const parts = chunks(source);
+  assert.ok(parts.length > 10);
+  assert.ok(parts.every((part) => part.length <= 240));
+  assert.equal(parts.join(" "), cleanNarrationText(source));
+});

@@ -275,7 +275,7 @@ export async function speakBatch(
     const limit =
       Number.isFinite(configured) && configured > 0
         ? Math.min(10, Math.max(1, configured))
-        : 6;
+        : 2;
     return runConcurrent(limit);
   }
 

@@ -213,7 +213,7 @@ export async function speakLocal(
   try {
     const normalized: string[] = [];
     const parts =
-      s.ttsProvider === "vieneu-local" ? chunks(text, 400) : chunks(text, 1200);
+      s.ttsProvider === "vieneu-local" ? chunks(text, 240) : chunks(text, 240);
     const factor = Math.pow(2, s.pitch / 12);
     for (const [chunkIndex, part] of parts.entries()) {
       const raw = path.join(directory, randomUUID() + ".wav");

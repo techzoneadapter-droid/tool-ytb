@@ -548,7 +548,7 @@ export function VideoCreatePage({
                     </label>
                     <div style={{maxHeight: 420, overflowY: "auto", marginTop: 12}}>
                       {project.chapters.filter(c => selected.includes(c.id)).map(chapter => {
-                        const image = chapter.scenes.find(scene => scene.imageSource === "chapter-upload")?.image;
+                        const image = chapter.backgroundImage || chapter.scenes.find(scene => scene.imageSource === "chapter-upload")?.image;
                         return <div key={chapter.id} className="row between" style={{padding: "8px 0", borderBottom: "1px solid #e6e6ef", gap: 10}}>
                           <div style={{minWidth: 0, flex: 1}}>
                             <strong>{chapter.title}</strong>

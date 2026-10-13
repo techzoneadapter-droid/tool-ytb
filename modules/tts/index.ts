@@ -271,12 +271,9 @@ export async function speakBatch(
   };
 
   if (s.ttsProvider === "edge-online") {
-    const configured = Number(process.env.EDGE_TTS_PARALLEL || 0);
-    const limit =
-      Number.isFinite(configured) && configured > 0
-        ? Math.min(10, Math.max(1, configured))
-        : 2;
-    return runConcurrent(limit);
+    // Edge Read Aloud is an unofficial online endpoint. Never let legacy
+    // environment settings saturate it with eight simultaneous connections.
+    return runConcurrent(1);
   }
 
   if (s.ttsProvider === "vieneu-local") {

@@ -76,7 +76,7 @@ async function runEdge(
           "Edge TTS quá thời gian. Kiểm tra kết nối mạng hoặc đổi engine giọng.",
         ),
       );
-    }, 180000);
+    }, 45000);
     child.stderr?.on("data", (chunk) => {
       error += String(chunk);
       if (error.length > 3000) error = error.slice(-3000);
@@ -101,7 +101,7 @@ async function runEdge(
 
 async function runEdgeRetry(text: string, file: string, settings: Settings) {
   let lastError: Error | undefined;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       await unlink(file).catch(() => {});
       await runEdge(text, file, settings);
@@ -111,10 +111,10 @@ async function runEdgeRetry(text: string, file: string, settings: Settings) {
     } catch (error) {
       lastError = error instanceof Error ? error : Error(String(error));
       await unlink(file).catch(() => {});
-      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 2500));
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, attempt * 2500));
     }
   }
-  throw Error("Edge TTS lỗi sau 3 lượt thử: " + (lastError?.message || "không rõ nguyên nhân"));
+  throw Error( "Edge TTS lỗi sau 2 lượt thử: "  + (lastError?.message || "không rõ nguyên nhân"));
 }
 
 export async function speakEdge(

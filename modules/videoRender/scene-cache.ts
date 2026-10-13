@@ -44,7 +44,7 @@ export function sceneRenderKey(scene: Scene, settings: Settings) {
         settings.audioEnabled,
         // A cached video from an AI image or a previous upload must not override the chosen image.
         ...(settings.imageEnabled === false
-          ? ["uploaded-image", settings.fallbackImage]
+          ? ["uploaded-image", scene.imageSource === "chapter-upload" ? scene.image : settings.fallbackImage]
           : []),
       ]),
     )

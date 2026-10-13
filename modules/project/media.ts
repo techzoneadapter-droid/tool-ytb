@@ -60,10 +60,12 @@ export async function resolveSceneImage(
   scene: Scene,
   settings?: Settings,
 ): Promise<string | undefined> {
-  if (settings?.imageEnabled === false)
+  if (settings?.imageEnabled === false) {
+    if (scene.imageSource === "chapter-upload" && (await validImage(scene.image))) return scene.image;
     return (await validImage(settings.fallbackImage))
       ? settings.fallbackImage
       : undefined;
+  }
   // Legacy jobs sometimes copied the common image into scene.image. Respect a changed/removed setting.
   const legacyShared = scene.imageSource === "shared";
   if (!legacyShared && scene.imageSource && (await validImage(scene.image)))

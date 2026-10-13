@@ -40,6 +40,7 @@ export type Scene = {
   approved: boolean;
 };
 export type Chapter = {
+  backgroundImage?: string;
   apiImageProgress?: { label: string; detail: string; updatedAt: string };
   imageAnalysis?: ChapterVisualAnalysis;
   apiImage?: ChapterAPIImage;

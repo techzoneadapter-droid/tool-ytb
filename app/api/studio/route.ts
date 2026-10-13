@@ -348,7 +348,8 @@ export async function POST(req: NextRequest) {
           ["pipeline", "prepare", "render", "motion"].includes(
             j.kind || (j.prepare ? "prepare" : "render"),
           ) &&
-          !(await validImage(settings.fallbackImage))
+          !(await validImage(settings.fallbackImage)) &&
+          get<Project>(j.projectId, "project").chapters.filter(c => j.chapterIds.includes(c.id)).some(c => c.scenes.some(scene => scene.imageSource !== "chapter-upload" || !scene.image || !assetExists(scene.image)))
         )
           throw Error(uploadedImageRequired);
         updateJob(j.id, {

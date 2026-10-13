@@ -554,6 +554,39 @@ export async function POST(req: NextRequest) {
       put("project", p);
       return NextResponse.json({ ok: true, removedTitle: first.title, chapters: p.chapters.length });
     }
+    if (b.action === "setChapterImages") {
+      if (list<Job>("job").some(job => job.projectId === p.id && ["queued", "audio", "images", "rendering", "paused"].includes(job.status)))
+        throw Error("Đợi tác vụ đang chạy hoàn tất trước khi thay ảnh chương.");
+      const assignments = z.array(z.object({
+        chapterId: z.string().uuid(),
+        image: z.string().regex(/^[a-f0-9-]+\.(png|jpg|jpeg|webp)$/).nullable(),
+      })).min(1).max(1000).parse(b.assignments);
+      if (new Set(assignments.map(a => a.chapterId)).size !== assignments.length)
+        throw Error("Một chương không được gán trùng nhiều ảnh.");
+      const uploaded = new Set(list<{id:string}>("upload").map(u => u.id));
+      for (const assignment of assignments) {
+        const chapter = p.chapters.find(c => c.id === assignment.chapterId);
+        if (!chapter) throw Error("Chương không tồn tại.");
+        if (assignment.image && (!uploaded.has(assignment.image) || !(await validImage(assignment.image))))
+          throw Error("Ảnh chương chưa được tải lên hoặc không hợp lệ.");
+      }
+      for (const assignment of assignments) {
+        const chapter = p.chapters.find(c => c.id === assignment.chapterId)!;
+        for (const scene of chapter.scenes) {
+          scene.image = assignment.image || undefined;
+          scene.imageSource = assignment.image ? "chapter-upload" : undefined;
+          scene.imageStatus = undefined;
+          scene.imageError = undefined;
+          scene.motion = undefined;
+          scene.motionStatus = undefined;
+          scene.motionError = undefined;
+          scene.flow = undefined;
+          scene.approved = false;
+        }
+      }
+      put("project", p);
+      return NextResponse.json({ ok: true, updated: assignments.length });
+    }
     if (b.action === "settings") {
       const settings = uploadedImageSettings(settingsSchema.parse(b.settings));
       if (
@@ -614,7 +647,7 @@ export async function POST(req: NextRequest) {
                     settings.customPrompt,
                     chapter.title + ": " + chapter.text,
                   );
-            if (scene.imageSource !== "upload") {
+            if (scene.imageSource !== "upload" && scene.imageSource !== "chapter-upload") {
               scene.image = undefined;
               scene.imageSource = undefined;
               scene.imageStatus = undefined;
@@ -750,8 +783,8 @@ export async function POST(req: NextRequest) {
         .enum(["audio", "image", "motion", "prepare", "render", "pipeline"])
         .parse(b.kind || (prepare ? "prepare" : "render"));
       if (kind === "image") throw Error(imageGenerationRemoved);
-      if (kind !== "audio" && !(await validImage(p.settings.fallbackImage)))
-        throw Error(uploadedImageRequired);
+      if (kind !== "audio" && !(await validImage(p.settings.fallbackImage)) && p.chapters.filter(c => ids.includes(c.id)).some(c => !c.scenes.length || c.scenes.some(scene => scene.imageSource !== "chapter-upload" || !scene.image || !assetExists(scene.image))))
+        throw Error("Thiếu ảnh cho một hoặc nhiều chương đã chọn. Hãy gán ảnh riêng cho đủ các chương hoặc chọn ảnh dùng chung.");
       const selected = p.chapters.filter((c) => ids.includes(c.id));
       if (kind === "pipeline") {
         for (const chapter of selected)

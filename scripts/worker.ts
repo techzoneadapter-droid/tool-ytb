@@ -180,8 +180,8 @@ async function main() {
                 `job=${job.id} IMAGE_MODE=SHARED fallbackImage=${s.fallbackImage || "missing"} imageGenerationSkipped=true`,
               );
               updateJob(job.id, {
-                imageMode: "shared",
-                sharedImageValid: await validImage(s.fallbackImage),
+                imageMode: scenes.every(scene => scene.imageSource === "chapter-upload") ? "chapter" : "shared",
+                sharedImageValid: await Promise.all(scenes.map(scene => resolveSceneImage(scene, s))).then(images => images.every(Boolean)),
               });
             }
             let partialResourceError = "";
@@ -283,7 +283,7 @@ async function main() {
               for (const scene of scenes) {
                 if (!(await resolveSceneImage(scene, s)))
                   throw Error(
-                    "Cảnh chưa có ảnh hợp lệ. Hãy chọn ảnh dùng chung trước khi render.",
+                    "Cảnh chưa có ảnh hợp lệ. Hãy tải ảnh riêng cho chương này hoặc chọn ảnh dùng chung trước khi render.",
                   );
               }
               updateJob(job.id, {

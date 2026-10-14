@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { isSameOrigin } from "@/modules/project/request";
-import { get, list, listRecent, put, remove } from "@/modules/project/store";
+import { get, list, listRecent, put, remove, updateJob } from "@/modules/project/store";
 import type { Job, Project, VideoRecord } from "@/modules/project/types";
 import {
   listVideos,
@@ -166,7 +166,22 @@ export async function POST(req: NextRequest) {
       snapshot: { settings: structuredClone(project.settings) },
     };
     put("job", job);
-    await startService("worker");
+    // Return immediately: an Electron button should never wait for worker startup.
+    // Any startup failure is preserved on this job, visible in the History tab.
+    void startService("worker").catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        if (get<Job>(job.id, "job").status === "queued")
+          updateJob(job.id, {
+            status: "error",
+            finishedAt: new Date().toISOString(),
+            message: "Không khởi động được tiến trình ghép video",
+            error: message,
+          });
+      } catch (storeError) {
+        console.error("Không thể cập nhật lỗi tác vụ ghép:", storeError);
+      }
+    });
     return NextResponse.json({ ok: true, job });
   } catch (error) {
     const message =

@@ -44,6 +44,7 @@ export function VideoManagerPage({
   const [player, setPlayer] = useState<VideoRecord>();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [mergeNotice, setMergeNotice] = useState("");
 
   const project = projects.find((p) => p.id === projectId) || projects[0];
   const visibleProjects = projects.filter((p) =>
@@ -59,11 +60,13 @@ export function VideoManagerPage({
     if (!response.ok) throw Error("Không đọc được thư viện video.");
     const snapshot = await response.json();
     if (version === libraryVersion.current) setLibrary(snapshot);
+    return snapshot as LibraryData;
   }
 
   useEffect(() => {
     let stopped = false;
     let polling = false;
+    let mergePolling = false;
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       if (stopped || polling) return;
@@ -73,12 +76,18 @@ export function VideoManagerPage({
       }
       polling = true;
       try {
-        await refresh();
+        const snapshot = await refresh();
+        const merging = snapshot.history.some((job) =>
+          job.kind === "merge-video" &&
+          ["queued", "audio", "images", "rendering"].includes(job.status),
+        );
+        if (merging) mergePolling = true;
+        else mergePolling = false;
       } catch (error) {
         if (!stopped) setError((error as Error).message);
       } finally {
         polling = false;
-        if (!stopped) timer = setTimeout(poll, subtab === "history" ? 12000 : 10000);
+        if (!stopped) timer = setTimeout(poll, mergePolling ? 2500 : subtab === "history" ? 12000 : 10000);
       }
     }
     const onVisibility = () => {
@@ -247,20 +256,20 @@ export function VideoManagerPage({
   }
 
   async function mergeSelected() {
+    if (operation.current) return;
     const chosen = latestVideos.filter((video) => selected.includes(video.id));
     if (chosen.length < 2) return;
-    const title =
-      prompt(
-        "Tên video sau khi ghép:",
-        chosen.length > 1
-          ? `${chosen[chosen.length - 1].title} - ${chosen[0].title}`
-          : "Video đã ghép",
-      ) || "Video đã ghép";
+    // Electron does not implement window.prompt: directly enqueue selected MP4s.
+    const title = `Ghép ${chosen.length} video - ${project?.name || "StoryFlow"}`.slice(0, 160);
     const ok = await mutate(
       { action: "merge", videoIds: chosen.map((video) => video.id), title },
       "merge",
     );
-    if (ok) setSelected([]);
+    if (ok) {
+      setSelected([]);
+      setMergeNotice(`Đã tiếp nhận ${chosen.length} video. Đang ghép trong nền; xem tiến độ bên dưới.`);
+      setSubtab("history");
+    }
   }
 
   function formatBytes(bytes: number) {
@@ -293,7 +302,12 @@ export function VideoManagerPage({
         <p>Xem, tải, tạo lại và ghép các video đã tạo theo từng dự án.</p>
       </header>
 
-      {error && <p className="notice error">{error}</p>}
+      {error && <p className="notice error" role="alert">{error}</p>}
+      {mergeNotice && (
+        <p className="notice" role="status">
+          {mergeNotice} Video gốc được giữ nguyên.
+        </p>
+      )}
 
       <div className="library-layout">
         <aside className="card library-projects">
@@ -817,6 +831,12 @@ function HistoryList({
                         ? `${group.paused} tạm dừng`
                         : "Đang xử lý"}
               </span>
+              {group.first?.kind === "merge-video" && group.total === 1 && group.running > 0 && (
+                <span>Đang ghép: {Math.max(0, Math.min(99, group.first.progress || 0))}%</span>
+              )}
+              {group.first?.kind === "merge-video" && group.done > 0 && (
+                <span>Đã xuất MP4. Quay lại tab Video để xem và tải.</span>
+              )}
               {group.errors.length > 0 && (
                 <details>
                   <summary>Chi tiết lỗi</summary>

@@ -29,23 +29,30 @@ async function launch() {
         stdio: ["ignore", "ignore", "ignore", "ipc"],
       },
     );
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
     const timer = setTimeout(
-      () => reject(Error("Chưa mở được trình cài VieNeu.")),
-      15000,
+      () => finish(Error("Trình cài VieNeu không phản hồi trong 60 giây. Kiểm tra data/vieneu-setup.json và data/vieneu-setup.log.")),
+      60000,
     );
     child.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+      finish(error);
     });
     child.once("exit", (code) => {
-      clearTimeout(timer);
-      if (code !== 0) reject(Error("Trình cài VieNeu chưa khởi động được."));
+      // A quick successful exit can race the IPC startup acknowledgement.
+      if (code === 0) finish();
+      else finish(Error("Trình cài VieNeu thoát sớm (" + code + "). Kiểm tra data/vieneu-setup.json và data/vieneu-setup.log."));
     });
     child.once("message", () => {
-      clearTimeout(timer);
-      child.disconnect();
+      if (child.connected) child.disconnect();
       child.unref();
-      resolve();
+      finish();
     });
   });
 }

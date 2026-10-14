@@ -238,7 +238,7 @@ export type TTSRequestProgress = {
 export type Job = {
   waitingResource?: string;
   ttsRequests?: Record<string, TTSRequestProgress>;
-  imageMode?: "shared";
+  imageMode?: "shared" | "chapter";
   sharedImageValid?: boolean;
   videoLibraryDeleted?: boolean;
   startedAt?: string;

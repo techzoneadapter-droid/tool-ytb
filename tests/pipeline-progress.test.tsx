@@ -83,7 +83,10 @@ test("progress recognizes API and legacy chapter masters; chapter error never sa
   ])
     assert.ok(!shared.includes(forbidden));
   job.sharedImageValid = false;
-  assert.ok(render().includes("Ảnh dùng chung không hợp lệ"));
+  assert.ok(render().includes("Có chương thiếu ảnh hợp lệ"));
+  job.imageMode = "chapter";
+  job.sharedImageValid = true;
+  assert.ok(render().includes("Ảnh: ✓ Ảnh riêng từng chương"));
   project.settings.imageEnabled = true;
   assert.ok(html.includes("Ảnh master chương"));
   assert.ok(html.includes("Character Bible"));

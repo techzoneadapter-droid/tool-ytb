@@ -32,9 +32,9 @@ function ensureLegacyIndex() {
     .finally(() => { migrationTask = undefined; });
 }
 
-export async function GET(req?: NextRequest) {
+export async function GET(req: NextRequest) {
   ensureLegacyIndex();
-  const includeHistory = req?.nextUrl.searchParams.get("history") === "1";
+  const includeHistory = req.nextUrl.searchParams.get("history") === "1";
   return NextResponse.json({
     videos: listVideos(),
     history: includeHistory

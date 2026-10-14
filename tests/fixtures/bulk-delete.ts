@@ -274,7 +274,7 @@ async function main() {
       await post(videosPOST, { action: "deleteMany", videoIds: [v.id] });
       assert.ok(get<Job>(jobId, "job").videoLibraryDeleted);
       const before = list<VideoRecord>("video").length;
-      await videosGET();
+      await videosGET(new NextRequest("http://localhost/api/videos"));
       assert.equal(list<VideoRecord>("video").length, before);
     },
   );

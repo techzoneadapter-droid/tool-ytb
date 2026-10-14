@@ -33,7 +33,10 @@ async function stopWorker() {
   if (!fs.existsSync(healthFile)) throw Error('Worker còn chạy nhưng thiếu heartbeat. Hãy thoát và mở lại app rồi thử lại.');
   const health = JSON.parse(fs.readFileSync(healthFile, 'utf8'));
   if (health.pid !== pid) throw Error('Không xác minh được worker. Hãy thoát và mở lại app rồi thử lại.');
-  if (!health.time || Date.now() - health.time > 30000) throw Error('Worker heartbeat đã cũ.');
+  // A stale heartbeat must not permanently block upgrades when there are no active jobs.
+  // The PID has already been verified against both the lock and heartbeat. Only then
+  // attempt a graceful stop; never use an unmatched or missing heartbeat to kill a PID.
+  if (!health.time || !Number.isFinite(health.time)) throw Error('Worker heartbeat không hợp lệ. Hãy khởi động lại ứng dụng.');
   try { process.kill(pid, 'SIGTERM'); } catch (e) { if (e.code !== 'ESRCH') throw e; }
   for (let i = 0; i < 100; i++) {
     try { process.kill(pid, 0); } catch { fs.rmSync(lock, { force: true }); return; }

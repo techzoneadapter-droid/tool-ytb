@@ -72,7 +72,7 @@ export function VideoCreatePage({
     setBusy(true);
     setError("");
     try {
-      const missing = project.chapters.filter(c => selected.includes(c.id) && !c.scenes.every(scene => scene.imageSource === "chapter-upload" && scene.image));
+      const missing = project.chapters.filter(c => selected.includes(c.id) && !(c.backgroundImage || (c.scenes.length && c.scenes.every(scene => scene.imageSource === "chapter-upload" && scene.image))));
       if (missing.length && !settings.fallbackImage)
         throw Error("Chưa có ảnh cho: " + missing.map(c => c.title).slice(0, 8).join(", ") + ". Hãy tải ảnh từng chương hoặc chọn ảnh chung.");
       if (

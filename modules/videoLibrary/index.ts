@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Job, Project, Scene, VideoRecord } from "../project/types";
 import { subtitles } from "../subtitle";
@@ -15,6 +15,10 @@ import { run, verifyVideo } from "../videoRender/process";
 
 const assets = path.join(root, "assets");
 
+function videoVersionKey(record: Pick<VideoRecord, "projectId" | "kind" | "sceneId" | "chapterIds">) {
+  return JSON.stringify([record.projectId, record.kind, record.sceneId || null, record.chapterIds]);
+}
+
 function videoMeta(data: any) {
   const stream = data.streams?.find(
     (s: { codec_type: string }) => s.codec_type === "video",
@@ -29,6 +33,7 @@ function videoMeta(data: any) {
 export async function createVideoRecord(
   job: Job,
   project: Project,
+  knownVersions?: Map<string, number>,
 ): Promise<VideoRecord> {
   if (!job.output || !job.verified || !assetExists(job.output))
     throw Error("Không thể lưu video chưa được xác minh.");
@@ -43,15 +48,12 @@ export async function createVideoRecord(
     : job.kind === "merge-video" || job.chapterIds.length > 1
       ? "merged"
       : "chapter";
-  const existing = list<VideoRecord>("video")
-    .filter(
-      (v) =>
-        v.projectId === project.id && v.kind === kind && v.sceneId === sceneId,
-    )
-    .filter(
-      (v) => JSON.stringify(v.chapterIds) === JSON.stringify(job.chapterIds),
-    );
-  const version = Math.max(0, ...existing.map((v) => v.version || 1)) + 1;
+  const key = videoVersionKey({ projectId: project.id, kind, sceneId, chapterIds: job.chapterIds });
+  const version = knownVersions
+    ? (knownVersions.get(key) || 0) + 1
+    : Math.max(0, ...list<VideoRecord>("video")
+        .filter((video) => videoVersionKey(video) === key)
+        .map((video) => video.version || 1)) + 1;
   const now = new Date().toISOString();
   const meta = videoMeta(probe);
   const record: VideoRecord = {
@@ -79,6 +81,7 @@ export async function createVideoRecord(
     sourceVideoIds: job.sourceVideoIds,
   };
   put("video", record as unknown as { id: string; [key: string]: unknown });
+  knownVersions?.set(key, version);
   return record;
 }
 
@@ -130,7 +133,13 @@ export async function createSceneVideoRecord(
 export async function migrateCompletedJobs() {
   // Recreate missing library indexes only from verified, existing job outputs.
   // Never delete, rename, or overwrite an MP4. Honour explicitly deleted videos.
-  const existingOutputs = new Set(list<VideoRecord>("video").map(v => v.output));
+  const existingVideos = list<VideoRecord>("video");
+  const existingOutputs = new Set(existingVideos.map(v => v.output));
+  const knownVersions = new Map<string, number>();
+  for (const video of existingVideos) {
+    const key = videoVersionKey(video);
+    knownVersions.set(key, Math.max(knownVersions.get(key) || 0, video.version || 1));
+  }
   const projects = new Map(list<Project>("project").map(p => [p.id, p]));
   for (const job of list<Job>("job")) {
     if (job.videoLibraryDeleted || !["done", "error"].includes(job.status)) continue;
@@ -150,7 +159,7 @@ export async function migrateCompletedJobs() {
         await createVideoRecord({
           ...job, ...output, verified: true, chapterIds: output.chapterIds,
           outputTitle: undefined,
-        }, project);
+        }, project, knownVersions);
         existingOutputs.add(output.output);
       } catch {
         // An invalid or inaccessible file must not become a fake completed video.
@@ -220,7 +229,11 @@ export function listVideos() {
   }));
 }
 
-export async function mergeVideoRecords(job: Job, project: Project) {
+export async function mergeVideoRecords(
+  job: Job,
+  project: Project,
+  onProgress?: (fraction: number) => void,
+) {
   const ids = job.sourceVideoIds || [];
   if (ids.length < 2) throw Error("Chọn ít nhất 2 video để ghép.");
   const all = list<VideoRecord>("video");
@@ -232,23 +245,19 @@ export async function mergeVideoRecords(job: Job, project: Project) {
   )
     throw Error("Một video nguồn không còn hợp lệ.");
 
+  const chapterPositions = new Map(project.chapters.map((chapter, index) => [chapter.id, index]));
+  const scenePositions = new Map(project.chapters.flatMap((chapter) =>
+    chapter.scenes.map((scene, index) => [scene.id, index] as const),
+  ));
   const ordered = (selected as VideoRecord[]).sort((a, b) => {
-    const ai = Math.min(
-      ...a.chapterIds
-        .map((id) => project.chapters.findIndex((x) => x.id === id))
-        .filter((x) => x >= 0),
+    const chapterPosition = (video: VideoRecord) => Math.min(
+      ...video.chapterIds.map((id) => chapterPositions.get(id) ?? Number.MAX_SAFE_INTEGER),
     );
-    const bi = Math.min(
-      ...b.chapterIds
-        .map((id) => project.chapters.findIndex((x) => x.id === id))
-        .filter((x) => x >= 0),
-    );
-    if (ai !== bi) return ai - bi;
-    const scenes = project.chapters[ai]?.scenes || [];
-    return (
-      scenes.findIndex((scene) => scene.id === a.sceneId) -
-      scenes.findIndex((scene) => scene.id === b.sceneId)
-    );
+    const chapterDiff = chapterPosition(a) - chapterPosition(b);
+    if (chapterDiff) return chapterDiff;
+    const sceneDiff = (scenePositions.get(a.sceneId || "") ?? Number.MAX_SAFE_INTEGER) -
+      (scenePositions.get(b.sceneId || "") ?? Number.MAX_SAFE_INTEGER);
+    return sceneDiff || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
   });
   const work = path.join(root, "work", "merge-" + job.id);
   await mkdir(work, { recursive: true });
@@ -270,53 +279,41 @@ export async function mergeVideoRecords(job: Job, project: Project) {
   const output = randomUUID() + ".mp4";
   const destination = path.join(assets, output);
   try {
-    await run([
-      "-y",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      listFile,
-      "-c",
-      "copy",
-      "-movflags",
-      "+faststart",
-      destination,
-    ]);
-    await verifyVideo(destination);
-  } catch {
+    try {
+      // Identical streams can be concatenated without an expensive re-encode.
+      await run([
+        "-y", "-f", "concat", "-safe", "0", "-i", listFile,
+        "-c", "copy", "-movflags", "+faststart", destination,
+      ]);
+      await verifyVideo(destination);
+    } catch {
+      await unlink(destination).catch(() => {});
+      const totalSeconds = ordered.reduce((sum, video) => sum + (video.duration || 0), 0);
+      let lastPercent = -1;
+      await run([
+        "-y", "-f", "concat", "-safe", "0", "-i", listFile,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:a", "aac", "-ar", "24000", "-ac", "1",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart", destination,
+      ], undefined, false, totalSeconds > 0 && onProgress
+        ? { seconds: totalSeconds, onProgress: (fraction) => {
+            const percent = Math.floor(fraction * 100);
+            if (percent > lastPercent) {
+              lastPercent = percent;
+              onProgress(fraction);
+            }
+          } }
+        : undefined);
+      await verifyVideo(destination);
+    }
+    return {
+      output,
+      chapterIds: [...new Set(ordered.flatMap((video) => video.chapterIds))],
+    };
+  } catch (error) {
     await unlink(destination).catch(() => {});
-    await run([
-      "-y",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      listFile,
-      "-c:v",
-      "libx264",
-      "-preset",
-      "fast",
-      "-crf",
-      "23",
-      "-c:a",
-      "aac",
-      "-ar",
-      "24000",
-      "-ac",
-      "1",
-      "-pix_fmt",
-      "yuv420p",
-      "-movflags",
-      "+faststart",
-      destination,
-    ]);
-    await verifyVideo(destination);
+    throw error;
+  } finally {
+    await rm(work, { recursive: true, force: true }).catch(() => {});
   }
-  return {
-    output,
-    chapterIds: [...new Set(ordered.flatMap((video) => video.chapterIds))],
-  };
 }

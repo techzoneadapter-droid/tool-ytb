@@ -144,6 +144,25 @@ async function main() {
         async () => {
           try {
             const p = get<Project>(job.projectId, "project");
+            const kind = job.kind || (job.prepare ? "prepare" : "render");
+            // Existing MP4 merging must not wait for TTS, images, or a project rewrite.
+            if (kind === "merge-video") {
+              updateJob(job.id, { status: "rendering", progress: 10, message: "Đang ghép các video đã chọn" });
+              const merged = await mergeVideoRecords(job, p, (fraction) => {
+                updateJob(job.id, {
+                  progress: Math.min(95, Math.floor(10 + fraction * 85)),
+                  message: "Đang mã hóa video ghép",
+                });
+              });
+              const completed: Job = {
+                ...job, ...merged, verified: true, progress: 100, status: "done",
+                finishedAt: new Date().toISOString(),
+                message: "Video ghép đã xuất và kiểm tra thành công",
+              };
+              await createVideoRecord(completed, p);
+              put("job", completed);
+              return;
+            }
             const saveProject = () => {
               mergeProjectChapters(p, job.chapterIds);
             };
@@ -173,7 +192,6 @@ async function main() {
               .filter(
                 (scene) => !job.sceneIds || job.sceneIds.includes(scene.id),
               );
-            const kind = job.kind || (job.prepare ? "prepare" : "render");
             if (kind === "image") throw Error(imageGenerationRemoved);
             if (s.imageEnabled === false) {
               console.log(
@@ -185,25 +203,6 @@ async function main() {
               });
             }
             let partialResourceError = "";
-
-            if (kind === "merge-video") {
-              updateJob(job.id, {
-                status: "rendering",
-                progress: 10,
-                message: "Đang ghép các video đã chọn",
-              });
-              const merged = await mergeVideoRecords(job, p);
-              job.chapterIds = merged.chapterIds;
-              job.output = merged.output;
-              job.verified = true;
-              job.progress = 100;
-              job.status = "done";
-              job.finishedAt = new Date().toISOString();
-              job.message = "Video ghép đã xuất và kiểm tra thành công";
-              put("job", job);
-              await createVideoRecord(job, p);
-              return;
-            }
 
             if (kind === "motion")
               scenes = scenes.filter((scene) => usesMotion(scene, s));

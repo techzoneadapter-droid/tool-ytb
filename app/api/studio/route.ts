@@ -51,8 +51,11 @@ const storySchema = z
   .min(1, "Vui lòng nhập nội dung truyện.");
 export const runtime = "nodejs";
 export async function GET() {
+  const projects = list<Project>("project");
+  const byId = new Map(projects.map((project) => [project.id, project]));
+  const active = new Set(["queued", "audio", "images", "rendering", "paused"]);
   return NextResponse.json({
-    projects: list<Project>("project").map((p) => ({
+    projects: projects.map((p) => ({
       ...p,
       settings: uploadedImageSettings(p.settings),
       chapters: p.chapters.map((c) => ({
@@ -61,15 +64,30 @@ export async function GET() {
       })),
     })),
     jobs: await Promise.all(
-      list<Job>("job").map(async (job) => ({
-        ...verifiedJob(job),
-        snapshot: {
-          ...job.snapshot,
-          settings: uploadedImageSettings(job.snapshot.settings),
-        },
-        sharedImageValid: await Promise.all(list<Project>("project").find(p => p.id === job.projectId)?.chapters.filter(c => job.chapterIds.includes(c.id)).flatMap(c => c.scenes).map(scene => resolveSceneImage(scene, job.snapshot.settings)) || []).then(images => images.length > 0 && images.every(Boolean)),
-        imageMode: list<Project>("project").find(p => p.id === job.projectId)?.chapters.filter(c => job.chapterIds.includes(c.id)).flatMap(c => c.scenes).every(scene => scene.imageSource === "chapter-upload") ? "chapter" : "shared",
-      })),
+      list<Job>("job").map(async (job) => {
+        const base = {
+          ...verifiedJob(job),
+          snapshot: {
+            ...job.snapshot,
+            settings: uploadedImageSettings(job.snapshot.settings),
+          },
+        };
+        // Finished jobs retain their last-known media state; probing each
+        // old scene on every poll is wasteful for multi-hundred-chapter projects.
+        if (!active.has(job.status)) return base;
+        const wanted = new Set(job.chapterIds);
+        const scenes = byId.get(job.projectId)?.chapters
+          .filter((chapter) => wanted.has(chapter.id))
+          .flatMap((chapter) => chapter.scenes) || [];
+        const valid = await Promise.all(
+          scenes.map((scene) => resolveSceneImage(scene, job.snapshot.settings)),
+        );
+        return {
+          ...base,
+          sharedImageValid: valid.length > 0 && valid.every(Boolean),
+          imageMode: scenes.every((scene) => scene.imageSource === "chapter-upload") ? "chapter" : "shared",
+        };
+      }),
     ),
     providers: await providerStatus(),
     presets: list("preset"),

@@ -6,7 +6,7 @@ export const root = path.resolve("data");
 mkdirSync(root, { recursive: true });
 const db = new DatabaseSync(path.join(root, "storyflow.sqlite"));
 db.exec(
-  "PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, kind TEXT NOT NULL, body TEXT NOT NULL)",
+  "PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, kind TEXT NOT NULL, body TEXT NOT NULL); CREATE INDEX IF NOT EXISTS records_kind_index ON records(kind)",
 );
 export function list<T>(kind: string): T[] {
   return (
@@ -15,6 +15,13 @@ export function list<T>(kind: string): T[] {
       .all(kind) as { body: string }[]
   ).map((r) => JSON.parse(r.body));
 }
+export function listRecent<T>(kind: string, limit = 250): T[] {
+  return (
+    db.prepare("SELECT body FROM records WHERE kind=? ORDER BY rowid DESC LIMIT ?")
+      .all(kind, Math.max(0, Math.floor(limit))) as { body: string }[]
+  ).map((row) => JSON.parse(row.body));
+}
+
 export function get<T>(id: string, kind: string): T {
   const r = db
     .prepare("SELECT body FROM records WHERE id=? AND kind=?")

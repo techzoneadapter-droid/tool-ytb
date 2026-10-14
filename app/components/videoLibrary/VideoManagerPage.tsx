@@ -15,7 +15,7 @@ import {
 import type { Job, Project, VideoRecord } from "@/modules/project/types";
 import { fileURL, request } from "../studio-api";
 
-type LibraryData = { videos: VideoRecord[]; history: Job[] };
+type LibraryData = { videos: VideoRecord[]; history: Job[]; indexing?: boolean };
 
 export function VideoManagerPage({
   projects,
@@ -52,17 +52,50 @@ export function VideoManagerPage({
 
   async function refresh() {
     const version = ++libraryVersion.current;
-    const response = await fetch("/api/videos", { cache: "no-store" });
+    const response = await fetch(
+      "/api/videos" + (subtab === "history" ? "?history=1" : ""),
+      { cache: "no-store" },
+    );
     if (!response.ok) throw Error("Không đọc được thư viện video.");
     const snapshot = await response.json();
     if (version === libraryVersion.current) setLibrary(snapshot);
   }
 
   useEffect(() => {
-    void refresh().catch((e) => setError((e as Error).message));
-    const timer = setInterval(() => void refresh().catch(() => {}), 3000);
-    return () => clearInterval(timer);
-  }, []);
+    let stopped = false;
+    let polling = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      if (stopped || polling) return;
+      if (document.hidden) {
+        timer = setTimeout(poll, 10000);
+        return;
+      }
+      polling = true;
+      try {
+        await refresh();
+      } catch (error) {
+        if (!stopped) setError((error as Error).message);
+      } finally {
+        polling = false;
+        if (!stopped) timer = setTimeout(poll, subtab === "history" ? 12000 : 10000);
+      }
+    }
+    const onVisibility = () => {
+      if (!document.hidden) {
+        clearTimeout(timer);
+        void poll();
+      }
+    };
+    void poll();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      ++libraryVersion.current;
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [subtab]);
 
   useEffect(() => {
     setSelected([]);
@@ -432,7 +465,9 @@ export function VideoManagerPage({
                     <div className="empty library-empty">
                       <Film size={34} />
                       <h2>Chưa có video</h2>
-                      <p>Tạo video đầu tiên cho dự án này.</p>
+                      <p>{library.indexing
+                        ? "Đang khôi phục danh sách video đã tạo từ dữ liệu cũ…"
+                        : "Tạo video đầu tiên cho dự án này."}</p>
                       <button
                         className="primary"
                         onClick={() => onCreate(project.id)}

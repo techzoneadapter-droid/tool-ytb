@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { isSameOrigin } from "@/modules/project/request";
-import { get, list, put, remove } from "@/modules/project/store";
+import { get, list, listRecent, put, remove } from "@/modules/project/store";
 import type { Job, Project, VideoRecord } from "@/modules/project/types";
 import {
   listVideos,
@@ -20,12 +20,28 @@ import { validImage } from "@/modules/project/media";
 
 export const runtime = "nodejs";
 
-export async function GET() {
-  await migrateCompletedJobs();
+// Import legacy MP4 records once in the background; never re-probe old MP4s
+// on every browser refresh. New renders are indexed by the worker directly.
+let migrationTask: Promise<void> | undefined;
+let migrationDone = false;
+function ensureLegacyIndex() {
+  if (migrationDone || migrationTask) return;
+  migrationTask = migrateCompletedJobs()
+    .then(() => { migrationDone = true; })
+    .catch((error) => console.error("Không thể đồng bộ video cũ:", error))
+    .finally(() => { migrationTask = undefined; });
+}
+
+export async function GET(req: NextRequest) {
+  ensureLegacyIndex();
+  const includeHistory = req.nextUrl.searchParams.get("history") === "1";
   return NextResponse.json({
     videos: listVideos(),
-    history: list<Job>("job").slice(0, 250),
-  });
+    history: includeHistory
+      ? listRecent<Job>("job", 250).map(({ snapshot, outputs, completedItems, ttsRequests, ...job }) => job)
+      : [],
+    indexing: !migrationDone,
+  }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(req: NextRequest) {

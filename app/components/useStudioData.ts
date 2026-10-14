@@ -5,12 +5,16 @@ export function useStudioData() {
   const [data, setData] = useState<StudioData>({ projects: [], jobs: [] });
   const [error, setError] = useState("");
   const version = useRef(0);
+  const hasActiveJobs = useRef(false);
   const refresh = useCallback(async () => {
     const id = ++version.current;
     const r = await fetch("/api/studio", { cache: "no-store" });
     if (!r.ok) throw Error("Không đọc được dữ liệu.");
     const snapshot = await r.json();
     if (id === version.current) {
+      hasActiveJobs.current = snapshot.jobs.some((job: { status: string }) =>
+        ["queued", "audio", "images", "rendering", "paused"].includes(job.status),
+      );
       setData(snapshot);
       setError("");
     }
@@ -24,7 +28,7 @@ export function useStudioData() {
       } catch {
         if (!stopped) setError("Mất kết nối. Đang thử kết nối lại…");
       }
-      if (!stopped) timer = setTimeout(poll, 2500);
+      if (!stopped) timer = setTimeout(poll, hasActiveJobs.current ? 3000 : 10000);
     }
     void poll();
     return () => {

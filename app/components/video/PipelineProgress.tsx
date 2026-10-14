@@ -176,8 +176,8 @@ export function PipelineProgress({
       {shared && (
         <div style={{ marginTop: 8 }}>
           {data.current.sharedImageValid === true
-            ? "Ảnh: ✓ Dùng ảnh chung"
-            : "Ảnh: ✕ Ảnh dùng chung không hợp lệ"}
+            ? (data.current.imageMode === "chapter" ? "Ảnh: ✓ Ảnh riêng từng chương" : "Ảnh: ✓ Dùng ảnh chung")
+            : "Ảnh: ✕ Có chương thiếu ảnh hợp lệ"}
         </div>
       )}
       {request && (
@@ -321,9 +321,9 @@ export function PipelineProgress({
                     <strong>{chapter.title}</strong>
                     {chapterStatus}
                     <span>
-                      {owningJob?.sharedImageValid === true
-                        ? "Ảnh: ✓ Dùng ảnh chung"
-                        : "Ảnh: ✕ Ảnh dùng chung không hợp lệ"}
+                      {chapter.backgroundImage || chapter.scenes.some(scene => scene.imageSource === "chapter-upload")
+                        ? "Ảnh: ✓ Ảnh riêng chương"
+                        : owningJob?.sharedImageValid === true ? "Ảnh: ✓ Dùng ảnh chung" : "Ảnh: ✕ Chưa có ảnh hợp lệ"}
                     </span>
                   </div>
                 );

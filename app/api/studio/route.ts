@@ -786,7 +786,7 @@ export async function POST(req: NextRequest) {
         .parse(b.kind || (prepare ? "prepare" : "render"));
       if (kind === "image") throw Error(imageGenerationRemoved);
       if (kind !== "audio" && !(await validImage(p.settings.fallbackImage)) && p.chapters.filter(c => ids.includes(c.id)).some(c => !((c.backgroundImage && assetExists(c.backgroundImage)) || (c.scenes.length && c.scenes.every(scene => scene.imageSource === "chapter-upload" && !!scene.image && assetExists(scene.image))))))
-        throw Error("Thiếu ảnh cho một hoặc nhiều chương đã chọn. Hãy gán ảnh riêng cho đủ các chương hoặc chọn ảnh dùng chung.");
+        throw Error("Vui lòng tải lên ảnh cho các chương đã chọn, gán ảnh riêng đúng từng chương hoặc tải một ảnh dùng chung.");
       const selected = p.chapters.filter((c) => ids.includes(c.id));
       if (kind === "pipeline") {
         for (const chapter of selected)

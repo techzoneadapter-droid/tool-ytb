@@ -32,7 +32,10 @@ else {
 }
 async function control(route, method = 'GET') {
   const response = await fetch(url + '/_storyflow/' + route, {
-    method, headers: { 'x-storyflow-token': token }, signal: AbortSignal.timeout(20000),
+    method, headers: { 'x-storyflow-token': token },
+    // Preparing an update may stop an idle worker and back up a large SQLite database.
+    // Keep short timeouts for status checks, but allow backup time to finish safely.
+    signal: AbortSignal.timeout(route === 'prepare-update' ? 10 * 60 * 1000 : 20000),
   });
   const result = await response.json();
   if (!response.ok) throw Error(result.error || 'Chưa chuẩn bị được dữ liệu để cập nhật.');

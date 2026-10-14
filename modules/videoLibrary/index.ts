@@ -128,30 +128,33 @@ export async function createSceneVideoRecord(
 }
 
 export async function migrateCompletedJobs() {
-  const existingJobs = new Set(
-    list<VideoRecord>("video")
-      .map((video) => video.sourceJobId)
-      .filter(Boolean),
-  );
+  // Recreate missing library indexes only from verified, existing job outputs.
+  // Never delete, rename, or overwrite an MP4. Honour explicitly deleted videos.
+  const existingOutputs = new Set(list<VideoRecord>("video").map(v => v.output));
+  const projects = new Map(list<Project>("project").map(p => [p.id, p]));
   for (const job of list<Job>("job")) {
-    if (
-      job.status !== "done" ||
-      job.videoLibraryDeleted ||
-      !job.verified ||
-      job.outputs?.length ||
-      !job.output ||
-      existingJobs.has(job.id) ||
-      !assetExists(job.output)
-    )
-      continue;
-    const project = list<Project>("project").find(
-      (p) => p.id === job.projectId,
-    );
+    if (job.videoLibraryDeleted || !["done", "error"].includes(job.status)) continue;
+    const project = projects.get(job.projectId);
     if (!project) continue;
-    try {
-      await createVideoRecord(job, project);
-    } catch {
-      // Old/missing files remain visible in job history, never fabricate a video record.
+    const outputs = job.outputs?.length
+      ? job.outputs.filter(item => item.verified).map(item => ({
+          chapterIds: item.chapterIds, output: item.output, srt: item.srt, vtt: item.vtt,
+        }))
+      : job.verified && job.output
+        ? [{ chapterIds: job.chapterIds, output: job.output, srt: job.srt, vtt: job.vtt }]
+        : [];
+    for (const output of outputs) {
+      if (!output.output || existingOutputs.has(output.output) || !assetExists(output.output))
+        continue;
+      try {
+        await createVideoRecord({
+          ...job, ...output, verified: true, chapterIds: output.chapterIds,
+          outputTitle: undefined,
+        }, project);
+        existingOutputs.add(output.output);
+      } catch {
+        // An invalid or inaccessible file must not become a fake completed video.
+      }
     }
   }
 }

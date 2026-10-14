@@ -48,7 +48,8 @@ export function VideoCreatePage({
       setSettings(
         uploadedImageSettings({ ...initialSettings, ...project.settings }),
       );
-      setSelected(project.chapters.map((c) => c.id));
+      // Never silently enqueue hundreds of chapters after reopening a project.
+      setSelected([]);
       setMotion(
         project.chapters
           .flatMap((c) => c.scenes)
@@ -189,9 +190,10 @@ export function VideoCreatePage({
     setBusy(true);
     setError("");
     try {
-      await Promise.all(
-        ids.map((id) => request({ action, id, projectId: project?.id })),
-      );
+      // Serialise cancellation writes to prevent SQLite contention during bulk stop.
+      for (const id of ids) {
+        await request({ action, id, projectId: project?.id });
+      }
       await refresh();
     } catch (e) {
       setError((e as Error).message);

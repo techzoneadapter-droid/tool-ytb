@@ -5,7 +5,7 @@ const clamp = (n: number, max: number) =>
   Math.min(max, Math.max(1, Math.floor(n) || 1));
 export function pipelineConcurrency(memory = os.freemem()) {
   return clamp(
-    Number(process.env.MAX_PARALLEL_VIDEOS || 8),
+    Number(process.env.MAX_PARALLEL_VIDEOS || 1),
     memory < 1024 ** 3 ? 2 : memory < 2 * 1024 ** 3 ? 4 : 12,
   );
 }

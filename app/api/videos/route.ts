@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { z } from "zod";
 import { isSameOrigin } from "@/modules/project/request";
-import { get, list, listRecent, put, remove, updateJob } from "@/modules/project/store";
+import { get, list, listRecent, put, remove, updateJob, root } from "@/modules/project/store";
+import { defaultRecoveryRoots, restoreMissingVideoFiles } from "@/modules/videoLibrary/recovery";
 import type { Job, Project, VideoRecord } from "@/modules/project/types";
 import {
   listVideos,
@@ -26,7 +28,11 @@ let migrationTask: Promise<void> | undefined;
 let migrationDone = false;
 function ensureLegacyIndex() {
   if (migrationDone || migrationTask) return;
-  migrationTask = migrateCompletedJobs()
+  migrationTask = (async () => {
+    const videos = list<VideoRecord>("video");
+    if (videos.length) await restoreMissingVideoFiles(videos, path.join(root, "assets"), defaultRecoveryRoots(root));
+    await migrateCompletedJobs();
+  })()
     .then(() => { migrationDone = true; })
     .catch((error) => console.error("Không thể đồng bộ video cũ:", error))
     .finally(() => { migrationTask = undefined; });
@@ -54,8 +60,21 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const action = z
-      .enum(["delete", "deleteMany", "regenerate", "merge", "clearHistory"])
+      .enum(["delete", "deleteMany", "regenerate", "merge", "clearHistory", "recover"])
       .parse(body.action);
+
+    if (action === "recover") {
+      const directory = z.string().trim().max(1024).optional().parse(body.directory);
+      if (directory && !path.isAbsolute(directory)) throw Error("Chọn đường dẫn thư mục tuyệt đối trên máy.");
+      const videos = list<VideoRecord>("video");
+      const report = await restoreMissingVideoFiles(
+        videos,
+        path.join(root, "assets"),
+        [...(directory ? [directory] : []), ...defaultRecoveryRoots(root)],
+      );
+      if (report.videosRestored) await migrateCompletedJobs();
+      return NextResponse.json({ ok: true, recovery: report });
+    }
 
     if (action === "deleteMany") {
       const ids = z

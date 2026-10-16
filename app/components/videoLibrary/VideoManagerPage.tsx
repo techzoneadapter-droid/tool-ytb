@@ -45,6 +45,8 @@ export function VideoManagerPage({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [mergeNotice, setMergeNotice] = useState("");
+  const [recoveryDirectory, setRecoveryDirectory] = useState("");
+  const [recoveryNotice, setRecoveryNotice] = useState("");
 
   const project = projects.find((p) => p.id === projectId) || projects[0];
   const visibleProjects = projects.filter((p) =>
@@ -178,6 +180,30 @@ export function VideoManagerPage({
     }
   }
 
+  async function recoverVideos() {
+    if (operation.current) return;
+    operation.current = true;
+    setBusy("recover");
+    setError("");
+    setRecoveryNotice("");
+    try {
+      const result = await request<{
+        recovery: { videosRestored: number; filesRestored: number; videosMissing: number; errors: string[] };
+      }>({ action: "recover", directory: recoveryDirectory.trim() || undefined }, "/api/videos");
+      const info = result.recovery;
+      setRecoveryNotice(
+        `Đã khôi phục ${info.videosRestored} video (${info.filesRestored} tệp). ${info.videosMissing} video vẫn chưa tìm thấy MP4 trong các thư mục đã quét.` +
+        (info.errors.length ? ` Có ${info.errors.length} lỗi truy cập tệp.` : ""),
+      );
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      operation.current = false;
+      setBusy("");
+    }
+  }
+
   async function removeVideo(video: VideoRecord) {
     if (
       !confirm(
@@ -307,6 +333,28 @@ export function VideoManagerPage({
         <p className="notice" role="status">
           {mergeNotice} Video gốc được giữ nguyên.
         </p>
+      )}
+
+      {library.videos.some((video) => !video.verified) && (
+        <div className="notice" role="region" aria-label="Khôi phục video sau khi chuyển máy">
+          <strong>Khôi phục video từ máy cũ</strong>
+          <p>Lịch sử đã có, nhưng một số MP4 chưa nằm trong thư mục data/assets. StoryFlow tự tìm trong các bản sao lưu ổ D/E/F. Nếu cần, nhập thêm thư mục có chứa video cũ (ví dụ D:&#92;ổ F&#92;YTB).</p>
+          <div className="row">
+            <input
+              aria-label="Thư mục chứa video cũ"
+              placeholder="D:\\ổ F\\YTB"
+              value={recoveryDirectory}
+              onChange={(e) => setRecoveryDirectory(e.target.value)}
+              style={{ flex: 1, minWidth: 180 }}
+              disabled={!!busy}
+            />
+            <button className="primary" disabled={!!busy} onClick={() => void recoverVideos()}>
+              <RefreshCw size={16} />
+              {busy === "recover" ? "Đang tìm MP4…" : "Tìm và khôi phục video cũ"}
+            </button>
+          </div>
+          {recoveryNotice && <p role="status">{recoveryNotice}</p>}
+        </div>
       )}
 
       <div className="library-layout">

@@ -3,11 +3,22 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 const clamp = (n: number, max: number) =>
   Math.min(max, Math.max(1, Math.floor(n) || 1));
-export function pipelineConcurrency(memory = os.freemem()) {
-  return clamp(
-    Number(process.env.MAX_PARALLEL_VIDEOS || 1),
-    memory < 1024 ** 3 ? 2 : memory < 2 * 1024 ** 3 ? 4 : 12,
-  );
+export function pipelineConcurrency(
+  memory = os.freemem(),
+  cpus = os.availableParallelism?.() || os.cpus().length,
+  totalMemory = os.totalmem(),
+) {
+  const cap = memory < 1024 ** 3 ? 2 : memory < 2 * 1024 ** 3 ? 4 : 12;
+  // Respect explicit user limits. Default now adapts to newer multi-core machines.
+  const override = Number(process.env.MAX_PARALLEL_VIDEOS);
+  if (process.env.MAX_PARALLEL_VIDEOS && Number.isFinite(override) && override > 0)
+    return clamp(override, cap);
+  // Video jobs still share separate FFmpeg and TTS resource gates.
+  // Reserve memory for local speech models, UI, and the OS.
+  const cpuBudget = Math.max(1, Math.floor(cpus / 3));
+  const memoryBudget = Math.max(1, Math.floor(totalMemory / (4 * 1024 ** 3)));
+  const freeBudget = memory < 1024 ** 3 ? 1 : memory < 3 * 1024 ** 3 ? 2 : 6;
+  return Math.min(6, cap, cpuBudget, memoryBudget, freeBudget);
 }
 export function ffmpegConcurrency(
   cpus = os.cpus().length,

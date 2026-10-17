@@ -111,3 +111,52 @@ export async function restoreMissingVideoFiles(
   }
   return report;
 }
+
+
+/**
+ * Restore chapter images, narration and branding assets for projects imported
+ * from a different drive. Database rows contain UUID basenames; an existing
+ * mp4 alone does not imply its source images/audio are present.
+ * Never edits SQLite or overwrites an existing asset.
+ */
+export async function restoreMissingProjectAssets(
+  filenames: (string | undefined)[],
+  destination: string,
+  searchRoots: string[],
+) {
+  const safe = /^[a-f0-9-]+\.(png|jpg|jpeg|webp|wav|mp3|mp4|srt|vtt)$/i;
+  const names = [...new Set(filenames.filter((n): n is string => !!n && safe.test(n)))];
+  const roots = [...new Set(searchRoots.flatMap(candidates).map(p => path.resolve(p)))];
+  const targetRoot = path.resolve(destination);
+  const sourceDirs: string[] = [];
+  for (const dir of roots) {
+    if (dir === targetRoot) continue;
+    try { if ((await stat(dir)).isDirectory()) sourceDirs.push(dir); } catch {}
+  }
+  await mkdir(targetRoot, { recursive: true });
+  let recovered = 0;
+  const stillMissing: string[] = [];
+  for (const name of names) {
+    const target = path.join(targetRoot, name);
+    if (await safeStat(target)) continue;
+    for (const dir of sourceDirs) {
+      const source = path.join(dir, name);
+      if (!(await safeStat(source))) continue;
+      try {
+        try { await link(source, target); }
+        catch (e) {
+          const error = e as NodeJS.ErrnoException;
+          if (error.code === "EEXIST") break;
+          if (!["EXDEV", "EPERM", "ENOTSUP"].includes(error.code || "")) throw e;
+          await copyFile(source, target, constants.COPYFILE_EXCL);
+        }
+        recovered++;
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EEXIST") break;
+      }
+    }
+    if (!(await safeStat(target))) stillMissing.push(name);
+  }
+  return { recovered, stillMissing, searched: sourceDirs.length };
+}

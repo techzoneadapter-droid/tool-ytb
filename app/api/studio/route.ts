@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
       const text = cleanNarrationText(structure.body);
       const chapters = b.splitChapters === false
         ? [{ title: "Chương 1" }]
-        : parseChapters(text).map((c) => ({ title: c.title }));
+        : parseChapters(text).map((c) => ({ title: c.title, length: c.text.length, sample: c.text.slice(0, 240) }));
       return NextResponse.json(b.action === "previewStructure"
         ? { chapters, synopsis: structure.summary, storyTitle: structure.title }
         : chapters);
@@ -245,7 +245,8 @@ export async function POST(req: NextRequest) {
         b.splitChapters === false
           ? [{ id: randomUUID(), title: "Chương 1", text, scenes: [] }]
           : parseChapters(text);
-      const chapters = parsedChapters.map((chapter) => ({
+      const omitted = new Set<number>(Array.isArray(b.omittedChapterIndices) ? z.array(z.number().int().nonnegative()).max(10000).parse(b.omittedChapterIndices) : []);
+      const chapters = parsedChapters.filter((_, i) => !omitted.has(i)).map((chapter) => ({
         ...chapter,
         scenes: (settings.splitScenes === false
           ? [
@@ -271,6 +272,7 @@ export async function POST(req: NextRequest) {
                 ),
         })),
       }));
+      if (!chapters.length) throw Error("Cần giữ lại ít nhất một chương.");
       const project: Project = {
         id: randomUUID(),
         name: projectNameSchema.parse(b.name),

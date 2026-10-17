@@ -21,7 +21,9 @@ export function StoryImportPage({
   const [name, setName] = useState(""),
     [text, setText] = useState(""),
     [split, setSplit] = useState(true),
-    [chapters, setChapters] = useState<{ title: string }[]>([]),
+    [chapters, setChapters] = useState<{ title: string; length?: number; sample?: string }[]>([]),
+    [omitted, setOmitted] = useState<number[]>([]),
+    [showAllChapters, setShowAllChapters] = useState(false),
     [synopsis, setSynopsis] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -31,10 +33,11 @@ export function StoryImportPage({
   useEffect(() => {
     let active = true;
     setChapters([]);
+    setOmitted([]);
     setSynopsis("");
     if (!text.trim()) return;
     const timer = setTimeout(() => {
-      request<{ chapters: { title: string }[]; synopsis: string }>({
+      request<{ chapters: { title: string; length?: number; sample?: string }[]; synopsis: string }>({
         action: "previewStructure",
         text,
         splitChapters: split,
@@ -81,6 +84,7 @@ export function StoryImportPage({
         name,
         text,
         splitChapters: split,
+        omittedChapterIndices: omitted,
       });
       setCreated(p);
       await refresh();
@@ -223,6 +227,42 @@ export function StoryImportPage({
                 ))}
               </ol>
             </details>
+          )}
+          {chapters.length > 0 && split && (
+            <section className="chapter-preview" aria-label="Kiểm tra chương nghi ngờ">
+              <h3>Kiểm tra chương rác trước khi tạo dự án</h3>
+              <p className="muted">Các chương đáng ngờ chỉ được cảnh báo, không tự xóa. Tích chọn để bỏ qua khi tạo dự án. Nội dung gốc không bị thay đổi.</p>
+              {(() => {
+                const numberOf = (title: string) => /^\\s*(?:chương|chapter|tập|phần)\\s+(\\d+)\\b/i.exec(title)?.[1];
+                const counts = new Map<string, number>();
+                chapters.forEach(c => { const n = numberOf(c.title); if (n) counts.set(n, (counts.get(n) || 0) + 1); });
+                const flagged = chapters.map((c, i) => {
+                  const reasons: string[] = [];
+                  const n = numberOf(c.title);
+                  if (n && (counts.get(n) || 0) > 1) reasons.push("Trùng số chương");
+                  if ((c.length ?? 0) < 100) reasons.push("Nội dung quá ngắn");
+                  if (/^(?:chương|chapter|tập|phần)\\s+\\d+\\s*$/i.test(c.title) && (c.length ?? 0) < 400) reasons.push("Tiêu đề trống hoặc phần mở đầu ngắn");
+                  if (/quảng cáo|truy cập website|đọc truyện tại|nguồn truyện|ủng hộ tác giả|website:/i.test(c.sample || "")) reasons.push("Có dấu hiệu quảng cáo");
+                  return { ...c, i, reasons };
+                });
+                const visible = showAllChapters ? flagged : flagged.filter(c => c.reasons.length > 0);
+                return <>
+                  <p><strong>{flagged.filter(c => c.reasons.length).length} chương nghi ngờ</strong> / {chapters.length} chương · Đã chọn bỏ qua {omitted.length}</p>
+                  <div className="row">
+                    <button type="button" className="text-button" onClick={() => setShowAllChapters(!showAllChapters)}>{showAllChapters ? "Chỉ xem cảnh báo" : "Xem tất cả chương"}</button>
+                    <button type="button" className="text-button" onClick={() => setOmitted([])}>Bỏ toàn bộ lựa chọn xóa</button>
+                  </div>
+                  <div style={{ maxHeight: 340, overflowY: "auto" }}>
+                    {visible.map(c => <label key={c.i} style={{ display: "block", padding: 8, borderBottom: "1px solid #ddd" }}>
+                      <input type="checkbox" checked={omitted.includes(c.i)} onChange={e => setOmitted(old => e.target.checked ? [...old, c.i] : old.filter(i => i !== c.i))} />
+                      {" "}Chương {c.i + 1}: <strong>{c.title}</strong> · {c.length ?? 0} ký tự
+                      {c.reasons.length > 0 && <span style={{ color: "#a45b00" }}> — {c.reasons.join(", ")}</span>}
+                      <details><summary>Xem nội dung phát hiện</summary><p style={{ whiteSpace: "pre-wrap" }}>{c.sample || "(Không có nội dung)"}</p></details>
+                    </label>)}
+                  </div>
+                </>;
+              })()}
+            </section>
           )}
           {error && (
             <p className="notice error" role="alert">

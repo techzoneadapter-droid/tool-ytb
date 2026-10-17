@@ -107,6 +107,9 @@ export type Settings = {
   outro?: string;
   logo?: string;
   logoPosition?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  logoWidthPercent?: number;
+  logoOpacity?: number;
+  musicFadeSeconds?: number;
   brandColor: string;
 };
 export type Project = {
@@ -363,5 +366,8 @@ export const defaults: Settings = {
   humanCheck: false,
   musicVolume: 0.12,
   logoPosition: "top-right",
+  logoWidthPercent: 18,
+  logoOpacity: 1,
+  musicFadeSeconds: 2,
   brandColor: "#6554d9",
 };

@@ -49,6 +49,7 @@ import { duration, verifyVideo } from "../modules/videoRender/process";
 import { assets, render } from "../modules/videoRender";
 import { makeMotion, usesMotion } from "../modules/providers/local-workers";
 import { createVideoRecord, mergeVideoRecords } from "../modules/videoLibrary";
+import { defaultRecoveryRoots, restoreMissingProjectAssets } from "../modules/videoLibrary/recovery";
 const lockPath = path.join(root, "worker.lock");
 
 async function splitLegacyPipelineJobs() {
@@ -177,6 +178,32 @@ async function main() {
                   scene.motionError = undefined;
                 }
             const s = uploadedImageSettings(job.snapshot.settings);
+            // PC migrations often bring back the SQLite rows before their matching
+            // uploaded PNG/JPG and MP3/WAV assets. Recover source media by UUID name.
+            if (["pipeline", "prepare", "render"].includes(kind)) {
+              const chapters = p.chapters.filter(c => job.chapterIds.includes(c.id));
+              const filenames = [
+                s.fallbackImage, s.intro, s.outro, s.logo, s.music,
+                ...chapters.flatMap(c => [
+                  c.backgroundImage,
+                  ...c.scenes.flatMap(scene => [scene.image, scene.audio, scene.motion]),
+                ]),
+              ];
+              const found = await restoreMissingProjectAssets(
+                filenames, assets, defaultRecoveryRoots(root),
+              );
+              if (found.recovered) console.log(`StoryFlow: recovered ${found.recovered} source assets for job ${job.id}`);
+              // Repair old chapter assignments where chapter.backgroundImage exists
+              // but previously planned scenes lost their imageSource on import.
+              for (const chapter of chapters) {
+                if (!chapter.backgroundImage || !assetExists(chapter.backgroundImage)) continue;
+                for (const scene of chapter.scenes) {
+                  if (scene.imageSource === "upload") continue;
+                  scene.image = chapter.backgroundImage;
+                  scene.imageSource = "chapter-upload";
+                }
+              }
+            }
             job.snapshot.settings = s;
             updateJob(job.id, { snapshot: job.snapshot });
             if (s.imageEnabled !== false)

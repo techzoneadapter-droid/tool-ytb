@@ -5,6 +5,7 @@ import { root } from "../project/store";
 import type { Scene, Settings } from "../project/types";
 import { subtitles } from "../subtitle";
 import { run, duration } from "./process";
+import { encodeWithFallback } from "./encoder";
 import { usesMotion } from "../providers/local-workers";
 import { assetExists, resolveSceneImage } from "../project/media";
 import { cachedSceneVideo } from "./scene-cache";
@@ -23,8 +24,8 @@ export async function render(
   async function bumper(asset: string, label: string) {
     const input = path.join(assets, asset);
     const d = await duration(input);
-    await run(
-      [
+    await encodeWithFallback(
+      (videoArgs) => [
         "-y",
         "-i",
         input,
@@ -40,10 +41,7 @@ export async function render(
         normal,
         "-t",
         String(d),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "ultrafast",
+        ...videoArgs,
         "-c:a",
         "aac",
         "-ar",
@@ -53,6 +51,8 @@ export async function render(
         `${label}.mp4`,
       ],
       work,
+      undefined,
+      true,
     );
     segments.push(`${label}.mp4`);
     return d;
@@ -75,8 +75,8 @@ export async function render(
       assetExists(scene.motion)
         ? scene.motion
         : undefined;
-    await run(
-      [
+    await encodeWithFallback(
+      (videoArgs) => [
         "-y",
         ...(motion
           ? ["-stream_loop", "-1"]
@@ -94,10 +94,7 @@ export async function render(
         normal,
         "-t",
         String(scene.duration),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "ultrafast",
+        ...videoArgs,
         "-c:a",
         "aac",
         "-ar",
@@ -107,11 +104,11 @@ export async function render(
         `scene-${i}.mp4`,
       ],
       work,
-      false,
       {
         seconds: scene.duration,
         onProgress: (n) => checkpoint(((i + n) / scenes.length) * 0.6),
       },
+      true,
     );
     segments.push(`scene-${i}.mp4`);
   }
@@ -189,29 +186,38 @@ export async function render(
     audio = "mix";
   }
   if (filters.length) args.push("-filter_complex", filters.join(";"));
-  args.push(
+  const tail = [
     "-map",
     video.includes(":") ? video : `[${video}]`,
     "-map",
     audio.includes(":") ? audio : `[${audio}]`,
-    "-c:v",
-    "libx264",
-    "-preset",
-    "fast",
-    "-crf",
-    "23",
-    "-c:a",
-    "aac",
-    "-movflags",
-    "+faststart",
+    "-c:a", "aac",
+    "-movflags", "+faststart",
     "-shortest",
     path.join(assets, `${id}.mp4`),
-  );
+  ];
   checkpoint(0.65);
-  await run(args, work, false, {
+  const runtime = {
     seconds: await duration(path.join(work, "joined.mp4")),
-    onProgress: (n) => checkpoint(0.65 + n * 0.34),
-  });
+    onProgress: (n: number) => checkpoint(0.65 + n * 0.34),
+  };
+  if (!filters.length) {
+    // No subtitles/branding/music: segments already contain H.264 + AAC.
+    // Avoid an expensive second full-length encoding altogether.
+    await run([...args, "-c", "copy", "-movflags", "+faststart", tail[tail.length - 1]], work, false, runtime);
+    checkpoint(0.99);
+  } else {
+    await encodeWithFallback((videoArgs) => [
+      ...args,
+      "-map", video.includes(":") ? video : `[${video}]`,
+      "-map", audio.includes(":") ? audio : `[${audio}]`,
+      ...videoArgs,
+      "-c:a", "aac",
+      "-movflags", "+faststart",
+      "-shortest",
+      path.join(assets, `${id}.mp4`),
+    ], work, runtime);
+  }
   return {
     output: `${id}.mp4`,
     srt: s.burnSubtitles ? `${id}.srt` : undefined,

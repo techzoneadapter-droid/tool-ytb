@@ -159,6 +159,23 @@ export function AdvancedOptions({
             </select>
           </label>
         )}
+        {s.logo && (
+          <div className="fields">
+            <label>Kích thước logo: {s.logoWidthPercent ?? 18}% chiều rộng video
+              <input type="range" min={5} max={100} step={1} value={s.logoWidthPercent ?? 18} onChange={(e) => change({ logoWidthPercent: Number(e.target.value) })} />
+            </label>
+            <label>Độ rõ logo: {Math.round((s.logoOpacity ?? 1) * 100)}%
+              <input type="range" min={0.1} max={1} step={0.05} value={s.logoOpacity ?? 1} onChange={(e) => change({ logoOpacity: Number(e.target.value) })} />
+            </label>
+            <div style={{ position: "relative", width: 320, maxWidth: "100%", aspectRatio: s.aspect === "16:9" ? "16 / 9" : "9 / 16", background: "#202432", borderRadius: 8, overflow: "hidden" }} aria-label="Xem trước kích thước và vị trí logo">
+              <img src={fileURL(s.logo)} alt="Xem trước logo" style={{ position: "absolute", width: `${s.logoWidthPercent ?? 18}%`, height: "auto", opacity: s.logoOpacity ?? 1, ...(s.logoPosition?.startsWith("bottom") ? { bottom: "3%" } : { top: "3%" }), ...(s.logoPosition?.endsWith("left") ? { left: "3%" } : { right: "3%" }) }} />
+            </div>
+          </div>
+        )}
+        {s.music && <p className="muted">Nhạc nền tự động lặp khi video dài hơn, hoặc cắt khi video ngắn hơn. Giữ nguyên thời lượng video và giọng đọc.</p>}
+        {s.music && <label>Fade-out nhạc nền (giây)
+          <input type="number" min={0} max={30} step={0.5} value={s.musicFadeSeconds ?? 2} onChange={(e) => change({ musicFadeSeconds: Math.max(0, Math.min(30, Number(e.target.value) || 0)) })} />
+        </label>}
         <label>
           Âm lượng nhạc nền
           <input

@@ -6,7 +6,9 @@ import { findEngineVoice, voiceKey } from "@/modules/tts/catalog";
 import { localStatus } from "@/modules/tts/local";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { get, list, put, remove, updateJob } from "@/modules/project/store";
+import { get, list, put, remove, updateJob, root } from "@/modules/project/store";
+import path from "node:path";
+import { defaultRecoveryRoots, restoreMissingProjectAssets } from "@/modules/videoLibrary/recovery";
 import { defaults, type Project, type Job } from "@/modules/project/types";
 import {
   parseChapters,
@@ -803,8 +805,32 @@ export async function POST(req: NextRequest) {
         .enum(["audio", "image", "motion", "prepare", "render", "pipeline"])
         .parse(b.kind || (prepare ? "prepare" : "render"));
       if (kind === "image") throw Error(imageGenerationRemoved);
-      if (kind !== "audio" && !(await validImage(p.settings.fallbackImage)) && p.chapters.filter(c => ids.includes(c.id)).some(c => !((c.backgroundImage && assetExists(c.backgroundImage)) || (c.scenes.length && c.scenes.every(scene => scene.imageSource === "chapter-upload" && !!scene.image && assetExists(scene.image))))))
-        throw Error("Vui lòng tải lên ảnh cho các chương đã chọn, gán ảnh riêng đúng từng chương hoặc tải một ảnh dùng chung.");
+      // Before validating an imported project, recover renamed-drive media
+      // that still exists in the old workspace under the same UUID basename.
+      const selectedChapters = p.chapters.filter(c => ids.includes(c.id));
+      if (kind !== "audio") {
+        await restoreMissingProjectAssets(
+          [p.settings.fallbackImage, ...selectedChapters.flatMap(c => [
+            c.backgroundImage, ...c.scenes.flatMap(scene => [scene.image, scene.audio]),
+          ])],
+          path.join(root, "assets"),
+          defaultRecoveryRoots(root),
+        );
+        const hasShared = await validImage(p.settings.fallbackImage);
+        if (!hasShared) {
+          const missing: string[] = [];
+          for (const chapter of selectedChapters) {
+            const own = await validImage(chapter.backgroundImage);
+            if (own) continue;
+            const all = chapter.scenes.length > 0 && (await Promise.all(chapter.scenes.map(
+              scene => scene.imageSource === "chapter-upload" && validImage(scene.image),
+            ))).every(Boolean);
+            if (!all) missing.push(chapter.title);
+          }
+          if (missing.length)
+            throw Error("Thiếu ảnh thật cho " + missing.length + " chương: " + missing.slice(0, 5).join(", ") + ". Hãy tải ảnh riêng đúng chương hoặc ảnh chung; nếu vừa chuyển máy hãy kiểm tra thư mục backup data/assets.");
+        }
+      }
       const selected = p.chapters.filter((c) => ids.includes(c.id));
       if (kind === "pipeline") {
         for (const chapter of selected)

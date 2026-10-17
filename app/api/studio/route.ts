@@ -951,16 +951,24 @@ export async function POST(req: NextRequest) {
         put("job", j);
         return j;
       });
-      try {
-        await startService("worker");
-      } catch (e) {
-        for (const j of jobs)
-          updateJob(j.id, {
-            status: "error",
-            error: String(e),
-            message: "Worker chưa khởi động được",
-          });
-      }
+      // Return the accepted job IDs immediately. Waiting synchronously for
+      // local AI/worker startup makes bulk creation appear frozen on Windows.
+      // Failure is still recorded on each queued job for the UI to display.
+      void startService("worker").catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        for (const j of jobs) {
+          try {
+            if (get<Job>(j.id, "job").status === "queued")
+              updateJob(j.id, {
+                status: "error",
+                error: message,
+                message: "Worker chưa khởi động được — xem Chi tiết",
+              });
+          } catch (storeError) {
+            console.error("Không ghi được lỗi worker:", storeError);
+          }
+        }
+      });
       return NextResponse.json(jobs);
     }
     throw Error("Thao tác không hợp lệ");

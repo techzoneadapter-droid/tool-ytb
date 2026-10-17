@@ -167,20 +167,26 @@ export async function render(
   }
   if (logoIndex >= 0) {
     const margin = 24;
+    const logoPercent = Math.max(5, Math.min(100, Number(s.logoWidthPercent ?? 18) || 18));
+    const logoWidth = Math.round(w * logoPercent / 100);
+    const opacity = Math.max(0, Math.min(1, Number(s.logoOpacity ?? 1)));
     let overlayExpr = `W-w-${margin}:${margin}`;
     const pos = s.logoPosition || "top-right";
     if (pos === "top-left") overlayExpr = `${margin}:${margin}`;
     else if (pos === "bottom-left") overlayExpr = `${margin}:H-h-${margin}`;
     else if (pos === "bottom-right") overlayExpr = `W-w-${margin}:H-h-${margin}`;
     filters.push(
-      `[${logoIndex}:v]scale=100:-1[logo]`,
+      `[${logoIndex}:v]format=rgba,scale=${logoWidth}:-1:flags=lanczos,colorchannelmixer=aa=${opacity}[logo]`,
       `[${video}][logo]overlay=${overlayExpr}[branded]`,
     );
     video = "branded";
   }
   if (musicIndex >= 0) {
+    const totalSeconds = await duration(path.join(work, "joined.mp4"));
+    const fade = Math.max(0, Math.min(totalSeconds / 2, Number(s.musicFadeSeconds ?? 2) || 0));
+    const fadeFilter = fade > 0 ? `,afade=t=out:st=${Math.max(0, totalSeconds - fade)}:d=${fade}` : "";
     filters.push(
-      `[${musicIndex}:a]volume=${s.musicVolume}[bg]`,
+      `[${musicIndex}:a]atrim=duration=${totalSeconds},asetpts=PTS-STARTPTS,volume=${Math.max(0, Math.min(1, Number(s.musicVolume) || 0))}${fadeFilter}[bg]`,
       `[0:a][bg]amix=inputs=2:duration=first:normalize=0[mix]`,
     );
     audio = "mix";

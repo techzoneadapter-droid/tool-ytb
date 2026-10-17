@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { restoreMissingVideoFiles } from "../modules/videoLibrary/recovery";
+import { restoreMissingVideoFiles, restoreMissingProjectAssets } from "../modules/videoLibrary/recovery";
 
 test("recovers moved MP4 and subtitle without editing source or touching missing records", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "storyflow-recover-"));
@@ -50,4 +50,27 @@ test("never recovers wrong-sized or unsafe filenames", async (t) => {
   );
   assert.equal(r.filesRestored, 0);
   assert.equal(r.videosMissing, 1);
+});
+
+
+test("restores chapter-specific images and narration after workspace relocation without changing existing files", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "storyflow-images-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const old = path.join(root, "old", "data", "assets");
+  const next = path.join(root, "new", "data", "assets");
+  await mkdir(old, { recursive: true });
+  await mkdir(next, { recursive: true });
+  const image1 = "11111111-2222-4444-aaaa-111111111111.png";
+  const image2 = "22222222-2222-4444-aaaa-111111111111.png";
+  const audio = "33333333-2222-4444-aaaa-111111111111.mp3";
+  await writeFile(path.join(old, image1), "old 1");
+  await writeFile(path.join(old, image2), "old 2");
+  await writeFile(path.join(old, audio), "speech");
+  await writeFile(path.join(next, image1), "newer image");
+  const report = await restoreMissingProjectAssets([image1, image2, audio, "../escape.png", image2], next, [path.join(root, "old")]);
+  assert.equal(report.recovered, 2);
+  assert.deepEqual(report.stillMissing, []);
+  assert.equal(await readFile(path.join(next, image1), "utf8"), "newer image");
+  assert.equal(await readFile(path.join(next, image2), "utf8"), "old 2");
+  assert.equal(await readFile(path.join(next, audio), "utf8"), "speech");
 });

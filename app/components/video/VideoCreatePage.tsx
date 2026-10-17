@@ -264,7 +264,9 @@ export function VideoCreatePage({
     if (!project || !files?.length || busy || active) return;
     const chapters = project.chapters.filter(c => selected.includes(c.id));
     const chapterNumber = (value: string) => {
-      const m = value.match(/(?:ch(?:ương|uong|apter)?[\s._-]*)?(\d+)(?!.*\d)/iu);
+      // A chapter title can contain dates and additional numbers. Only use
+      // the leading chapter number to avoid swapping photos across chapters.
+      const m = value.trim().match(/^(?:(?:ch(?:ương|uong)|chapter)[\s._:#-]*)?(\d+)(?!\d)/iu);
       return m ? Number(m[1]) : undefined;
     };
     const numbers = new Map<number, string[]>();
@@ -290,11 +292,17 @@ export function VideoCreatePage({
     setBusy(true);
     setError("");
     try {
+      // Concurrent uploads in bounded groups preserve the chapter-file mapping
+      // and reduce wait time for 10–100 separate chapter images.
       const saved: {chapterId: string; image: string}[] = [];
-      for (const assignment of assignments) {
-        const data = await upload(assignment.file);
-        if (!data.asset) throw Error("Ảnh " + assignment.file.name + " không hợp lệ.");
-        saved.push({chapterId: assignment.chapterId, image: data.asset});
+      for (let offset = 0; offset < assignments.length; offset += 3) {
+        const group = assignments.slice(offset, offset + 3);
+        const uploaded = await Promise.all(group.map(async assignment => {
+          const data = await upload(assignment.file);
+          if (!data.asset) throw Error("Ảnh " + assignment.file.name + " không hợp lệ.");
+          return { chapterId: assignment.chapterId, image: data.asset };
+        }));
+        saved.push(...uploaded);
       }
       await request({ action: "setChapterImages", projectId: project.id, assignments: saved });
       await refresh();

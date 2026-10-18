@@ -45,6 +45,7 @@ export function VideoManagerPage({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [mergeNotice, setMergeNotice] = useState("");
+  const [mergeWithBumpers, setMergeWithBumpers] = useState(false);
   const [recoveryDirectory, setRecoveryDirectory] = useState("");
   const [recoveryNotice, setRecoveryNotice] = useState("");
 
@@ -288,7 +289,7 @@ export function VideoManagerPage({
     // Electron does not implement window.prompt: directly enqueue selected MP4s.
     const title = `Ghép ${chosen.length} video - ${project?.name || "StoryFlow"}`.slice(0, 160);
     const ok = await mutate(
-      { action: "merge", videoIds: chosen.map((video) => video.id), title },
+      { action: "merge", videoIds: chosen.map((video) => video.id), title, mergeWithBumpers },
       "merge",
     );
     if (ok) {
@@ -498,6 +499,9 @@ export function VideoManagerPage({
                     />
                     {selected.length > 0 && (
                       <small>Đã chọn {selected.length} video</small>
+                    )}
+                    {selected.length >= 2 && (project?.settings.intro || project?.settings.outro) && (
+                      <label className="check"><input type="checkbox" checked={mergeWithBumpers} onChange={(e) => setMergeWithBumpers(e.target.checked)} /> Ghép thêm Intro + Outro (chỉ thêm một lần vào đầu/cuối)</label>
                     )}
                     {selected.length >= 2 && (
                       <button

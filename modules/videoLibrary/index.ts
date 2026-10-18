@@ -11,7 +11,8 @@ import {
   removeProjects,
 } from "../project/store";
 import { assetExists } from "../project/media";
-import { run, verifyVideo } from "../videoRender/process";
+import { run, verifyVideo, duration } from "../videoRender/process";
+import { encodeWithFallback } from "../videoRender/encoder";
 
 const assets = path.join(root, "assets");
 
@@ -261,15 +262,40 @@ export async function mergeVideoRecords(
   });
   const work = path.join(root, "work", "merge-" + job.id);
   await mkdir(work, { recursive: true });
+  const bumpers: { intro?: string; outro?: string } = {};
+  if (job.mergeWithBumpers) {
+    const first = await verifyVideo(path.join(assets, ordered[0].output));
+    const videoStream = first.streams.find((s: { codec_type: string }) => s.codec_type === "video");
+    const width = Number(videoStream?.width) || 1280;
+    const height = Number(videoStream?.height) || 720;
+    for (const label of ["intro", "outro"] as const) {
+      const asset = job.snapshot.settings[label];
+      if (!asset) continue;
+      if (!assetExists(asset)) throw Error(`Không tìm thấy ${label} trong tài nguyên dự án.`);
+      const source = path.join(assets, asset);
+      const probe = await verifyVideo(source, false);
+      const hasAudio = probe.streams.some((s: { codec_type: string }) => s.codec_type === "audio");
+      const seconds = await duration(source);
+      const target = path.join(work, label + ".mp4");
+      await encodeWithFallback((videoArgs) => [
+        "-y", "-i", source,
+        ...(hasAudio ? [] : ["-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono"]),
+        "-map", "0:v:0", "-map", hasAudio ? "0:a:0" : "1:a:0",
+        "-vf", `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=25,format=yuv420p`,
+        "-t", String(seconds), ...videoArgs, "-c:a", "aac", "-ar", "24000", "-ac", "1", target,
+      ], work, undefined, true);
+      await verifyVideo(target);
+      bumpers[label] = target;
+    }
+  }
   const listFile = path.join(work, "concat.txt");
   await writeFile(
     listFile,
-    ordered
+    [ ...(bumpers.intro ? [bumpers.intro] : []), ...ordered.map((video) => path.join(assets, video.output)), ...(bumpers.outro ? [bumpers.outro] : []) ]
       .map(
-        (video) =>
+        (file) =>
           "file '" +
-          path
-            .join(assets, video.output)
+          file
             .replaceAll("\\", "/")
             .replaceAll("'", "'\\''") +
           "'",

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { root } from "../project/store";
 import type { Scene, Settings } from "../project/types";
 import { subtitles } from "../subtitle";
-import { run, duration } from "./process";
+import { run, duration, verifyVideo } from "./process";
 import { encodeWithFallback } from "./encoder";
 import { usesMotion } from "../providers/local-workers";
 import { assetExists, resolveSceneImage } from "../project/media";
@@ -24,19 +24,18 @@ export async function render(
   async function bumper(asset: string, label: string) {
     const input = path.join(assets, asset);
     const d = await duration(input);
+    const probe = await verifyVideo(input, false);
+    const hasAudio = probe.streams?.some((stream: { codec_type: string }) => stream.codec_type === "audio");
     await encodeWithFallback(
       (videoArgs) => [
         "-y",
         "-i",
         input,
-        "-f",
-        "lavfi",
-        "-i",
-        "anullsrc=r=24000:cl=mono",
+        ...(hasAudio ? [] : ["-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono"]),
         "-map",
         "0:v:0",
         "-map",
-        "1:a:0",
+        hasAudio ? "0:a:0" : "1:a:0",
         "-vf",
         normal,
         "-t",

@@ -286,6 +286,10 @@ export function VideoManagerPage({
     if (operation.current) return;
     const chosen = latestVideos.filter((video) => selected.includes(video.id));
     if (chosen.length < 2) return;
+    if (mergeWithBumpers && !project?.settings.intro && !project?.settings.outro) {
+      setError("Dự án chưa có Intro/Outro. Vào Tạo video để thêm Intro hoặc Outro trước khi ghép.");
+      return;
+    }
     // Electron does not implement window.prompt: directly enqueue selected MP4s.
     const title = `Ghép ${chosen.length} video - ${project?.name || "StoryFlow"}`.slice(0, 160);
     const ok = await mutate(
@@ -500,7 +504,7 @@ export function VideoManagerPage({
                     {selected.length > 0 && (
                       <small>Đã chọn {selected.length} video</small>
                     )}
-                    {selected.length >= 2 && (project?.settings.intro || project?.settings.outro) && (
+                    {selected.length >= 2 && (
                       <label className="check"><input type="checkbox" checked={mergeWithBumpers} onChange={(e) => setMergeWithBumpers(e.target.checked)} /> Ghép thêm Intro + Outro (chỉ thêm một lần vào đầu/cuối)</label>
                     )}
                     {selected.length >= 2 && (

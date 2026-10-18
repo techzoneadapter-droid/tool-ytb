@@ -174,6 +174,7 @@ export async function POST(req: NextRequest) {
       projectId,
       chapterIds,
       sourceVideoIds: ids,
+      mergeWithBumpers: body.mergeWithBumpers === true,
       outputTitle:
         z.string().trim().min(1).max(160).optional().parse(body.title) ||
         "Video đã ghép",

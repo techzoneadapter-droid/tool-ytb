@@ -294,6 +294,7 @@ export type Job = {
     | "render"
     | "merge-video";
   sourceVideoIds?: string[];
+  mergeWithBumpers?: boolean;
   outputTitle?: string;
   outputMode?: "separate" | "merged";
   outputs?: {

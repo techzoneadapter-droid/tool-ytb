@@ -42,5 +42,5 @@ Write-Output 'STORYFLOW_SETUP:dependencies'
 Checked $uv @('pip','install','--python',$python,'vieneu==3.8.3','fastapi>=0.115,<1','uvicorn>=0.30,<1','python-multipart>=0.0.20,<1')
 Checked $python @('-c','import vieneu, apps.openai_speech, onnxruntime')
 Write-Output 'VIENEU_DEPENDENCIES_READY'
-'{"version":"3.8.3"}' | Set-Content -LiteralPath (Join-Path $engine 'installed.json') -Encoding UTF8
 Write-Output 'STORYFLOW_SETUP:model'
+# installed.json is written by setup-vieneu.ts only after engine health and voice checks pass.

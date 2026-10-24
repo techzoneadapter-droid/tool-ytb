@@ -11,6 +11,7 @@ import {
 import { codePath } from "../modules/project/code-path";
 import { vieneuPaths } from "../modules/providers/vieneu-paths";
 import { findEngineVoice } from "../modules/tts/catalog";
+import { probeVieneuReady, vieneuReadyMessage } from "../modules/providers/vieneu-health";
 
 const lock = path.resolve("data/vieneu-setup.lock");
 const status = path.resolve("data/vieneu-setup.json");
@@ -77,6 +78,22 @@ async function main() {
     await save("running", "python");
     process.send?.({ type: "started" });
     const runtime = vieneuPaths();
+    // Reuse the running healthy server even if a prior installer reported
+    // spawn UNKNOWN. Never reinstall packages while the model is serving.
+    const live = await probeVieneuReady();
+    if (live) {
+      if (runtime.managed && existsSync(runtime.python))
+        await writeFile(
+          path.join(runtime.directory, "installed.json"),
+          JSON.stringify({
+            version: "3.8.3",
+            verifiedAt: new Date().toISOString(),
+            voice: live.voiceId,
+          }),
+        );
+      await save("done", "ready", vieneuReadyMessage(live));
+      return;
+    }
     const repair = process.argv.includes("--repair");
     const usable =
       !repair &&
@@ -92,8 +109,18 @@ async function main() {
           "Môi trường VieNeu bên ngoài chưa đủ thư viện. Kiểm tra VIENEU_REPO_DIR hoặc bỏ cấu hình này để ứng dụng tự cài VieNeu.",
         );
       await new Promise<void>((resolve, reject) => {
-        const child = spawn(
+        const systemPowerShell = path.join(
+          process.env.SystemRoot || "C:\\Windows",
+          "System32",
+          "WindowsPowerShell",
+          "v1.0",
           "powershell.exe",
+        );
+        const command = existsSync(systemPowerShell)
+          ? systemPowerShell
+          : "powershell.exe";
+        const child = spawn(
+          command,
           [
             "-NoProfile",
             "-ExecutionPolicy",
@@ -126,8 +153,14 @@ async function main() {
         };
         child.stdout.on("data", output);
         child.stderr.on("data", output);
-        child.on("error", reject);
-        child.on("exit", (code) =>
+        child.once("error", (error: NodeJS.ErrnoException) =>
+          reject(
+            Error(
+              `Không mở được PowerShell để cài VieNeu (${error.code || "UNKNOWN"}: ${error.message}). Kiểm tra quyền chạy PowerShell trong Windows; model và truyện vẫn được giữ nguyên.`,
+            ),
+          ),
+        );
+        child.once("close", (code) =>
           code === 0
             ? resolve()
             : reject(

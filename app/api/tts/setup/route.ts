@@ -4,6 +4,7 @@ import path from "node:path";
 import { alive } from "@/modules/providers/services";
 import { isSameOrigin } from "@/modules/project/request";
 import { launchVieneuSetup } from "@/modules/providers/vieneu-setup";
+import { probeVieneuReady, vieneuReadyMessage } from "@/modules/providers/vieneu-health";
 
 export const runtime = "nodejs";
 const lock = path.resolve("data/vieneu-setup.lock");
@@ -24,6 +25,16 @@ export async function GET() {
     status.detail =
       "Cài đặt bị gián đoạn. Bấm Cài và khởi động VieNeu để tiếp tục.";
   }
+  // The engine can finish after the installer has recorded a stale spawn error.
+  // Always trust live health + the actual Ngọc Huyền catalogue over that error.
+  if (status.state !== "running") {
+    const live = await probeVieneuReady();
+    if (live) {
+      status.state = "done";
+      status.stage = "ready";
+      status.detail = vieneuReadyMessage(live);
+    }
+  }
   return NextResponse.json({ ...status, log: log.slice(-4000) });
 }
 export async function POST(req: NextRequest) {
@@ -37,7 +48,16 @@ export async function POST(req: NextRequest) {
       throw Error("Tác vụ không hợp lệ.");
     if (process.platform !== "win32")
       throw Error("Cài VieNeu tự động hiện dành cho Windows.");
-    // Manual install is also a repair action for previously incomplete environments.
+    // Do not reinstall packages (or spawn PowerShell) if the engine is already
+    // serving healthy requests, even when an earlier setup logged an error.
+    const live = await probeVieneuReady();
+    if (live)
+      return NextResponse.json({
+        ok: true,
+        state: "done",
+        stage: "ready",
+        detail: vieneuReadyMessage(live),
+      });
     await launchVieneuSetup(true);
     return NextResponse.json({ ok: true, state: "running" }, { status: 202 });
   } catch (error) {

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { NextRequest } from "next/server";
 import { POST } from "../app/api/tts/setup/route";
+import { findEngineVoice } from "../modules/tts/catalog";
 
 test("VieNeu setup rejects cross-origin and unsupported actions before spawning installers", async () => {
   const cross = await POST(
@@ -65,4 +66,15 @@ test("managed VieNeu environment survives code updates and retains legacy/custom
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("Ngọc Huyền saved slug resolves to the actual VieNeu v3 Turbo voice ID", () => {
+  const voices = [
+    { id: "Hải Đăng", name: "Hải Đăng" },
+    { id: "Ngọc Huyền", name: "Ngọc Huyền", aliases: ["ngoc-huyen"] },
+  ];
+  assert.equal(findEngineVoice(voices, "ngoc_huyen")?.id, "Ngọc Huyền");
+  assert.equal(findEngineVoice(voices, "Ngọc Huyền")?.id, "Ngọc Huyền");
+  assert.equal(findEngineVoice(voices, "NGOC-HUYEN")?.id, "Ngọc Huyền");
+  assert.equal(findEngineVoice(voices, "nonexistent"), undefined);
 });

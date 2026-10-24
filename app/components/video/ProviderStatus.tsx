@@ -121,8 +121,13 @@ export function ProviderStatus({
     setDetail("");
     try {
       if (service === "vieneu") {
-        await request({ action: "install" }, "/api/tts/setup");
-        setTtsSetup({ state: "running", stage: "python" });
+        const result = await request<{
+          state: string;
+          stage?: string;
+          detail?: string;
+        }>({ action: "install" }, "/api/tts/setup");
+        setTtsSetup(result);
+        if (result.state === "done") await refresh();
         return;
       }
       await request({ action: "startService", service });

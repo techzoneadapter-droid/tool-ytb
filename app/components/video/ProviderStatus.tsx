@@ -28,9 +28,12 @@ export function ProviderStatus({
   }>();
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
+  const vieneuReadyRef = useRef(!!p?.local.vieneu.ready);
+  vieneuReadyRef.current = !!p?.local.vieneu.ready;
   useEffect(() => {
     let active = true;
     let lastState = "";
+    let lastReadyRefresh = 0;
     const poll = async () => {
       try {
         const response = await fetch("/api/tts/setup");
@@ -38,8 +41,15 @@ export function ProviderStatus({
         const result = await response.json();
         if (!active) return;
         setTtsSetup(result);
-        if (result.state === "done" && lastState !== "done")
+        if (
+          result.state === "done" &&
+          (lastState !== "done" ||
+            (!vieneuReadyRef.current &&
+              Date.now() - lastReadyRefresh >= 10000))
+        ) {
+          lastReadyRefresh = Date.now();
           await refreshRef.current();
+        }
         lastState = result.state;
       } catch {}
     };

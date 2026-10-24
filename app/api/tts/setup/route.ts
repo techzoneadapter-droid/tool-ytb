@@ -37,7 +37,8 @@ export async function POST(req: NextRequest) {
       throw Error("Tác vụ không hợp lệ.");
     if (process.platform !== "win32")
       throw Error("Cài VieNeu tự động hiện dành cho Windows.");
-    await launchVieneuSetup();
+    // Manual install is also a repair action for previously incomplete environments.
+    await launchVieneuSetup(true);
     return NextResponse.json({ ok: true, state: "running" }, { status: 202 });
   } catch (error) {
     return NextResponse.json(

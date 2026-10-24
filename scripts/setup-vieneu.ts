@@ -10,10 +10,42 @@ import {
 } from "../modules/providers/services";
 import { codePath } from "../modules/project/code-path";
 import { vieneuPaths } from "../modules/providers/vieneu-paths";
+import { findEngineVoice } from "../modules/tts/catalog";
 
 const lock = path.resolve("data/vieneu-setup.lock");
 const status = path.resolve("data/vieneu-setup.json");
 const log = path.resolve("data/vieneu-setup.log");
+
+// Recover from interrupted Python/package installs, not just missing .venv.
+async function canLoadVieneu(python: string, cwd: string): Promise<boolean> {
+  if (!existsSync(python)) return false;
+  return new Promise((resolve) => {
+    const child = spawn(
+      python,
+      ["-c", "import vieneu, apps.openai_speech, onnxruntime"],
+      {
+        cwd,
+        windowsHide: true,
+        shell: false,
+        env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+        stdio: "ignore",
+      },
+    );
+    let finished = false;
+    const finish = (ok: boolean) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(false);
+    }, 30000);
+    child.once("error", () => finish(false));
+    child.once("exit", (code) => finish(code === 0));
+  });
+}
 let writes = Promise.resolve();
 function save(state: string, stage: string, detail?: string) {
   writes = writes.then(async () => {
@@ -45,16 +77,19 @@ async function main() {
     await save("running", "python");
     process.send?.({ type: "started" });
     const runtime = vieneuPaths();
-    if (
-      !existsSync(runtime.python) ||
-      (runtime.managed &&
-        !existsSync(path.join(runtime.directory, "installed.json")))
-    ) {
+    const repair = process.argv.includes("--repair");
+    const usable =
+      !repair &&
+      existsSync(runtime.python) &&
+      (!runtime.managed ||
+        existsSync(path.join(runtime.directory, "installed.json"))) &&
+      (await canLoadVieneu(runtime.python, runtime.directory));
+    if (!usable) {
       if (process.platform !== "win32")
         throw Error("Cài VieNeu tự động hiện dành cho Windows.");
       if (!runtime.managed)
         throw Error(
-          "VIENEU_REPO_DIR đang trỏ đến môi trường riêng chưa tồn tại. Kiểm tra cấu hình này trước.",
+          "Môi trường VieNeu bên ngoài chưa đủ thư viện. Kiểm tra VIENEU_REPO_DIR hoặc bỏ cấu hình này để ứng dụng tự cài VieNeu.",
         );
       await new Promise<void>((resolve, reject) => {
         const child = spawn(
@@ -112,10 +147,20 @@ async function main() {
     const voices = await response.json();
     if (!response.ok || !Array.isArray(voices.data) || !voices.data.length)
       throw Error("VieNeu chưa trả danh sách giọng hợp lệ.");
+    const ngocHuyen = findEngineVoice(voices.data, "ngoc_huyen");
+    if (!ngocHuyen)
+      throw Error(
+        "VieNeu đã mở nhưng chưa có giọng Ngọc Huyền trong danh mục thực tế. Kiểm tra model VieNeu v3 Turbo và nhật ký vieneu.log.",
+      );
+    if (runtime.managed)
+      await writeFile(
+        path.join(runtime.directory, "installed.json"),
+        JSON.stringify({ version: "3.8.3", verifiedAt: new Date().toISOString(), voice: ngocHuyen.id }),
+      );
     await save(
       "done",
       "ready",
-      `VieNeu đã sẵn sàng · ${voices.data.length} giọng.`,
+      `VieNeu đã sẵn sàng · ${voices.data.length} giọng, có Ngọc Huyền (${ngocHuyen.id}).`,
     );
   } catch (error) {
     await save(

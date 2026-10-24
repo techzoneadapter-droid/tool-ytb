@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { NextRequest } from "next/server";
 import { POST } from "../app/api/tts/setup/route";
 import { findEngineVoice } from "../modules/tts/catalog";
+import { probeVieneuReady, vieneuReadyMessage } from "../modules/providers/vieneu-health";
 
 test("VieNeu setup rejects cross-origin and unsupported actions before spawning installers", async () => {
   const cross = await POST(
@@ -77,4 +78,53 @@ test("Ngọc Huyền saved slug resolves to the actual VieNeu v3 Turbo voice ID"
   assert.equal(findEngineVoice(voices, "Ngọc Huyền")?.id, "Ngọc Huyền");
   assert.equal(findEngineVoice(voices, "NGOC-HUYEN")?.id, "Ngọc Huyền");
   assert.equal(findEngineVoice(voices, "nonexistent"), undefined);
+});
+
+test("already-running VieNeu with real Ngọc Huyền voice is reusable without reinstall", async () => {
+  const calls: string[] = [];
+  const fakeFetch = (async (target: URL | string | Request) => {
+    const path = new URL(String(target)).pathname;
+    calls.push(path);
+    const body =
+      path === "/health"
+        ? { status: "ok", backend: "onnx" }
+        : {
+            data: [
+              { id: "Hải Đăng", name: "Hải Đăng" },
+              { id: "Ngọc Huyền", aliases: ["ngoc-huyen"] },
+            ],
+          };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  const live = await probeVieneuReady(fakeFetch);
+  assert.deepEqual(live, { voiceId: "Ngọc Huyền", voiceCount: 2 });
+  assert.ok(vieneuReadyMessage(live!).includes("Ngọc Huyền"));
+  assert.deepEqual(calls.sort(), ["/health", "/v1/voices"]);
+});
+
+test("unhealthy VieNeu or a catalogue missing Ngọc Huyền must not be reported ready", async () => {
+  const unhealthy = (async (target: URL | string | Request) =>
+    new Response(
+      JSON.stringify(
+        new URL(String(target)).pathname === "/health"
+          ? { status: "error" }
+          : { data: [{ id: "Ngọc Huyền" }] },
+      ),
+      { status: 200 },
+    )) as typeof fetch;
+  assert.equal(await probeVieneuReady(unhealthy), null);
+
+  const missingVoice = (async (target: URL | string | Request) =>
+    new Response(
+      JSON.stringify(
+        new URL(String(target)).pathname === "/health"
+          ? { status: "ok" }
+          : { data: [{ id: "Hải Đăng" }] },
+      ),
+      { status: 200 },
+    )) as typeof fetch;
+  assert.equal(await probeVieneuReady(missingVoice), null);
 });

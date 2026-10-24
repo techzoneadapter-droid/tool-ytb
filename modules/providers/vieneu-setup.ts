@@ -5,7 +5,7 @@ import { alive } from "./services";
 import { codePath } from "../project/code-path";
 const lock = path.resolve("data/vieneu-setup.lock");
 let launching: Promise<void> | undefined;
-async function launch() {
+async function launch(repair = false) {
   if (await alive(lock)) return;
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
@@ -14,6 +14,7 @@ async function launch() {
         "--import",
         pathToFileURL(codePath("node_modules/tsx/dist/loader.mjs")).href,
         codePath("scripts/setup-vieneu.ts"),
+        ...(repair ? ["--repair"] : []),
       ],
       {
         cwd: process.cwd(),
@@ -56,8 +57,8 @@ async function launch() {
     });
   });
 }
-export async function launchVieneuSetup() {
-  launching ||= launch().finally(() => {
+export async function launchVieneuSetup(repair = false) {
+  launching ||= launch(repair).finally(() => {
     launching = undefined;
   });
   await launching;
